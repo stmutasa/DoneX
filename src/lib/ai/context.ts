@@ -1,10 +1,9 @@
 import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { projectsRepo, settingsRepo, statsRepo, tasksRepo } from "@/lib/db/repos";
-import { getTodayEvents } from "@/lib/google/calendar";
-import { addDaysToDateKey, isoFromLocal, localDateKey, localTimeKey } from "@/lib/utils";
+import { addDaysToDateKey, localDateKey, localTimeKey } from "@/lib/utils";
 import type { CalendarEvent, StatsSummary, Task } from "@/lib/types";
-import { describeDue } from "@/lib/ai/tools";
+import { describeDue, instantOf, utcFromLocal } from "@/lib/ai/tools";
 
 const MAX_DIGEST_LINES = 40;
 
@@ -32,15 +31,16 @@ export function taskLine(task: Task, tz: string, projects: Map<string, string>):
 
 export function buildTaskDigest(tz: string, todayKey: string): string {
   const projects = new Map(projectsRepo.list(true).map((p) => [p.id, p.name]));
-  const startOfToday = isoFromLocal(todayKey, "00:00", tz);
-  const weekEnd = isoFromLocal(addDaysToDateKey(todayKey, 8), "00:00", tz);
+  const startOfToday = instantOf(utcFromLocal(todayKey, "00:00", tz));
+  const weekEnd = instantOf(utcFromLocal(addDaysToDateKey(todayKey, 8), "00:00", tz));
 
   const todayTasks = tasksRepo.list({ view: "today" });
-  const overdue = todayTasks.filter((t) => t.dueAt !== null && t.dueAt < startOfToday);
-  const dueToday = todayTasks.filter((t) => !(t.dueAt !== null && t.dueAt < startOfToday));
+  const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
+  const overdue = todayTasks.filter(isOverdue);
+  const dueToday = todayTasks.filter((t) => !isOverdue(t));
   const upcoming = tasksRepo
     .list({ view: "upcoming" })
-    .filter((t) => t.dueAt !== null && t.dueAt < weekEnd);
+    .filter((t) => t.dueAt !== null && instantOf(t.dueAt) < weekEnd);
   const anytime = tasksRepo.list({ view: "anytime" });
 
   const sections: { heading: string; tasks: Task[]; cap: number }[] = [
@@ -94,6 +94,8 @@ export function buildStatsLine(stats: StatsSummary): string {
 
 export async function safeTodayEvents(): Promise<CalendarEvent[]> {
   try {
+    // Imported lazily: the Google module is server-only, this one is not.
+    const { getTodayEvents } = await import("@/lib/google/calendar");
     return await getTodayEvents();
   } catch {
     return [];

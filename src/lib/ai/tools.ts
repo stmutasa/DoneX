@@ -7,7 +7,6 @@ import {
   statsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
-import { getTodayEvents } from "@/lib/google/calendar";
 import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, newId, nowIso } from "@/lib/utils";
 import type { PlanBlock, Priority, RecurrenceRule, Task } from "@/lib/types";
 import { asArray, asNumber, asRecord, asString } from "@/lib/ai/json";
@@ -86,6 +85,19 @@ function readTags(args: Record<string, unknown>): string[] | undefined {
 }
 
 /**
+ * UTC ISO for a local wall-clock moment. `isoFromLocal` goes through TZDate,
+ * whose toISOString() emits an offset form ("…-04:00"); the DB stores UTC.
+ */
+export function utcFromLocal(dateLocal: string, time: string, tz: string): string {
+  return new Date(isoFromLocal(dateLocal, time, tz)).toISOString();
+}
+
+/** Epoch millis, for comparing stored timestamps regardless of ISO form. */
+export function instantOf(iso: string): number {
+  return new Date(iso).getTime();
+}
+
+/**
  * Models emit due dates in several shapes. Bare dates become all-day local
  * days; zone-less datetimes are read as wall-clock time in the user's tz.
  */
@@ -99,11 +111,11 @@ export function parseDueInput(
   if (!value || /^(null|none|never)$/i.test(value)) return { dueAt: null, allDay: false };
 
   const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(value);
-  if (dateOnly) return { dueAt: isoFromLocal(dateOnly[1], "00:00", tz), allDay: true };
+  if (dateOnly) return { dueAt: utcFromLocal(dateOnly[1], "00:00", tz), allDay: true };
 
   const naive = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value);
   const zoned = /(Z|z|[+-]\d{2}:?\d{2})$/.test(value);
-  if (naive && !zoned) return { dueAt: isoFromLocal(naive[1], naive[2], tz), allDay: false };
+  if (naive && !zoned) return { dueAt: utcFromLocal(naive[1], naive[2], tz), allDay: false };
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return { dueAt: null, allDay: false };
@@ -605,6 +617,8 @@ export const TOOLS: ToolSpec[] = [
     },
     async run(_args, ctx) {
       try {
+        // Imported lazily: the Google module is server-only, the registry is not.
+        const { getTodayEvents } = await import("@/lib/google/calendar");
         const events = await getTodayEvents();
         return {
           payload: {

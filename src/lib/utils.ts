@@ -33,11 +33,11 @@ export function isoWeekKey(date: Date | string, tz: string): string {
   return `${getISOWeekYear(t)}-W${String(getISOWeek(t)).padStart(2, "0")}`;
 }
 
-/** Build an ISO instant for a local wall-clock date+time in tz */
+/** Build a UTC (Z-form) ISO instant for a local wall-clock date+time in tz */
 export function isoFromLocal(dateLocal: string, time: string, tz: string): string {
   const [y, m, d] = dateLocal.split("-").map(Number);
   const [hh, mm] = time.split(":").map(Number);
-  return new TZDate(y, m - 1, d, hh, mm, 0, tz).toISOString();
+  return new Date(new TZDate(y, m - 1, d, hh, mm, 0, tz).getTime()).toISOString();
 }
 
 export function addDaysToDateKey(dateLocal: string, days: number): string {

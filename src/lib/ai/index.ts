@@ -12,66 +12,20 @@
  *  - aiConfigured(): true when the active provider has a key
  *  - autoPickModelIfNeeded(): choose newest sensible model when unset
  */
-import type {
-  AIProviderKind,
-  Briefing,
-  DayPlan,
-  InboxItem,
-  ModelInfo,
-  WeeklyReview,
-} from "@/lib/types";
+export type { ChatTurnInput } from "@/lib/ai/chat";
 
-export interface ChatTurnInput {
-  conversationId: string | null;
-  message: string;
-  mode: "chat" | "voice";
-}
+export { runChatTurn } from "@/lib/ai/chat";
 
-const NOT_IMPLEMENTED = "AI engine not implemented yet";
+export {
+  generateBriefing,
+  generateDayPlan,
+  generateWeeklyReview,
+  triageInboxItem,
+} from "@/lib/ai/generate";
 
-export function runChatTurn(_input: ChatTurnInput): ReadableStream<Uint8Array> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function generateBriefing(
-  _dateLocal: string,
-  _opts: { force?: boolean } = {}
-): Promise<Briefing> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function generateDayPlan(
-  _dateLocal: string,
-  _opts: { force?: boolean } = {}
-): Promise<DayPlan> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function generateWeeklyReview(
-  _weekKey: string,
-  _opts: { force?: boolean } = {}
-): Promise<WeeklyReview> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function triageInboxItem(_id: string): Promise<InboxItem> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function listModels(_provider: AIProviderKind): Promise<ModelInfo[]> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export async function testProvider(
-  _provider: AIProviderKind
-): Promise<{ ok: boolean; message: string }> {
-  throw new Error(NOT_IMPLEMENTED);
-}
-
-export function aiConfigured(): boolean {
-  return false;
-}
-
-export async function autoPickModelIfNeeded(): Promise<void> {
-  // no-op in stub
-}
+export {
+  aiConfigured,
+  autoPickModelIfNeeded,
+  listModels,
+  testProvider,
+} from "@/lib/ai/adapters";

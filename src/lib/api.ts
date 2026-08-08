@@ -135,7 +135,7 @@ export const authApi = {
 
 // ── Tasks ─────────────────────────────────────────────────────────────────
 
-export type TaskCreateInput = TaskDraft | { quick: string };
+export type TaskCreateInput = TaskDraft | { quick: string; projectId?: string | null };
 
 export const tasksApi = {
   list: (filter: TaskListFilter = {}) => request<{ tasks: Task[] }>(keys.tasks(filter)),
