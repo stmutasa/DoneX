@@ -121,19 +121,28 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           {label}
         </FieldLabel>
       ) : null}
-      <select
-        ref={ref}
-        id={inputId}
-        className={cn(FIELD_BASE, "h-11 appearance-none bg-no-repeat pr-9", className)}
-        style={{
-          backgroundImage:
-            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>\")",
-          backgroundPosition: "right 12px center",
-        }}
-        {...rest}
-      >
-        {children}
-      </select>
+      <div className="relative">
+        <select
+          ref={ref}
+          id={inputId}
+          className={cn(FIELD_BASE, "h-11 appearance-none pr-9", className)}
+          {...rest}
+        >
+          {children}
+        </select>
+        <svg
+          viewBox="0 0 24 24"
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </div>
     </div>
   );
 });

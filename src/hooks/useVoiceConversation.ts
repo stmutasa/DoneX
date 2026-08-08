@@ -54,6 +54,8 @@ export function useVoiceConversation(
   const phaseRef = useRef<VoicePhase>("idle");
   const sessionRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const silentCyclesRef = useRef(0);
+  const restartTimerRef = useRef<number | null>(null);
   const optsRef = useRef(options);
   optsRef.current = options;
 
@@ -114,7 +116,7 @@ export function useVoiceConversation(
 
       if (failure) {
         optsRef.current.onError?.(failure);
-        setPhase(sessionRef.current ? "idle" : "idle");
+        setPhase("idle");
         return;
       }
 
@@ -147,14 +149,33 @@ export function useVoiceConversation(
 
   useEffect(() => {
     rec.onFinal((text) => {
+      silentCyclesRef.current = 0;
       void runTurnRef.current(text);
     });
   }, [rec]);
 
-  // Recognition ended without a result → drop back to idle.
+  // Recognition ended without a result. While a hands-free session is live,
+  // quietly restart listening so pauses on a walk don't end the conversation;
+  // give up after ~8 empty cycles (≈ a minute of silence) or on a mic error.
   useEffect(() => {
-    if (!rec.listening && phaseRef.current === "listening") setPhase("idle");
-  }, [rec.listening, setPhase]);
+    if (rec.listening || phaseRef.current !== "listening") return;
+    if (!sessionRef.current || rec.error) {
+      setPhase("idle");
+      return;
+    }
+    silentCyclesRef.current += 1;
+    if (silentCyclesRef.current > 8) {
+      sessionRef.current = false;
+      setPhase("idle");
+      return;
+    }
+    restartTimerRef.current = window.setTimeout(() => {
+      if (sessionRef.current && phaseRef.current === "listening") rec.start();
+    }, 250);
+    return () => {
+      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
+    };
+  }, [rec, rec.listening, rec.error, setPhase]);
 
   // Mic level meter — only while actually listening.
   useEffect(() => {
@@ -214,12 +235,14 @@ export function useVoiceConversation(
 
   const start = useCallback(() => {
     sessionRef.current = true;
+    silentCyclesRef.current = 0;
     tts.cancel();
     beginListening();
   }, [beginListening, tts]);
 
   const stop = useCallback(() => {
     sessionRef.current = false;
+    if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
     abortRef.current?.abort();
     abortRef.current = null;
     tts.cancel();
@@ -229,6 +252,7 @@ export function useVoiceConversation(
 
   const interrupt = useCallback(() => {
     sessionRef.current = true;
+    silentCyclesRef.current = 0;
     tts.cancel();
     abortRef.current?.abort();
     abortRef.current = null;

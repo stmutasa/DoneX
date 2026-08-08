@@ -22,7 +22,7 @@ export function QuickAddSheet({
   projectId?: string | null;
   onAdded?: (task: Task) => void;
 }) {
-  const { create } = useTaskMutations();
+  const { create, save } = useTaskMutations();
   const toast = useToast();
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -45,7 +45,11 @@ export function QuickAddSheet({
     const value = text.trim();
     if (!value) return;
     setSaving(true);
-    const task = await create({ quick: value, projectId: projectId ?? undefined });
+    let task = await create({ quick: value, projectId: projectId ?? undefined });
+    // The quick parser only sees the text, so scope it to the project explicitly.
+    if (task && projectId && task.projectId !== projectId) {
+      task = (await save(task.id, { projectId })) ?? task;
+    }
     setSaving(false);
     if (task) {
       toast.success(`Added “${task.title}”`);

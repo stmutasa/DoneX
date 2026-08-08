@@ -69,8 +69,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           type="button"
           onClick={() => setQuickOpen(true)}
           aria-label="Quick add task"
-          className="fixed right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-sunrise text-on-accent shadow-lift transition-transform active:scale-95 lg:right-8 lg:bottom-8"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)" }}
+          className="fixed right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-sunrise text-on-accent shadow-lift transition-transform active:scale-95 bottom-[calc(env(safe-area-inset-bottom,0px)+84px)] lg:bottom-8 lg:right-8"
         >
           <IconPlus className="h-6 w-6" strokeWidth={2.2} />
         </button>

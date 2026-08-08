@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion, type PanInfo } from "framer-motion";
+import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./Button";
 import { IconX } from "./icons";
@@ -40,6 +40,7 @@ export function Sheet({
 }: SheetProps) {
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const dragControls = useDragControls();
 
   useEffect(() => setMounted(true), []);
 
@@ -83,7 +84,8 @@ export function Sheet({
             role="dialog"
             aria-modal="true"
             drag="y"
-            dragDirectionLock
+            dragListener={false}
+            dragControls={dragControls}
             dragConstraints={{ top: 0, bottom: 0 }}
             dragElastic={{ top: 0, bottom: 0.6 }}
             onDragEnd={onDragEnd}
@@ -98,26 +100,40 @@ export function Sheet({
               className,
             )}
           >
-            <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-stroke-strong sm:hidden" />
-            {title || actions ? (
-              <div className="flex items-start gap-3 px-5 pb-3 pt-3 sm:pt-5">
-                <div className="min-w-0 flex-1">
-                  <h2 className="truncate text-lg font-semibold tracking-tight text-ink">{title}</h2>
-                  {subtitle ? <p className="mt-0.5 text-[13px] text-muted">{subtitle}</p> : null}
+            <div
+              className="shrink-0 touch-none"
+              onPointerDown={(e) => dragControls.start(e)}
+              style={{ cursor: "grab" }}
+            >
+              <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-stroke-strong sm:hidden" />
+              {title || actions ? (
+                <div className="flex items-start gap-3 px-5 pb-3 pt-3 sm:pt-5">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-lg font-semibold tracking-tight text-ink">
+                      {title}
+                    </h2>
+                    {subtitle ? <p className="mt-0.5 text-[13px] text-muted">{subtitle}</p> : null}
+                  </div>
+                  <div
+                    className="flex shrink-0 items-center gap-1"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    style={{ cursor: "auto" }}
+                  >
+                    {actions}
+                    <IconButton label="Close" onClick={onClose} size="sm">
+                      <IconX />
+                    </IconButton>
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {actions}
-                  <IconButton label="Close" onClick={onClose} size="sm">
-                    <IconX />
-                  </IconButton>
-                </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-4">
               {children}
             </div>
             {footer ? (
-              <div className="shrink-0 border-t border-stroke bg-elev px-5 py-3 pb-safe">{footer}</div>
+              <div className="shrink-0 border-t border-stroke bg-elev px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
+                {footer}
+              </div>
             ) : (
               <div className="pb-safe" />
             )}

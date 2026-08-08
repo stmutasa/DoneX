@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import type { Project, Task } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
 import { dueLabel, isOverdue } from "@/lib/format";
@@ -142,12 +141,12 @@ export function TaskItem({
         </div>
       </button>
 
-      <motion.span
+      <span
         aria-hidden="true"
         className="mt-1 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100"
       >
         <IconChevronRight className="h-4 w-4" />
-      </motion.span>
+      </span>
     </div>
   );
 }

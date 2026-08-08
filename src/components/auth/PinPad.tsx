@@ -34,11 +34,11 @@ export function PinPad({
     <button
       type="button"
       onClick={() => inputRef.current?.focus()}
-      className="flex w-full flex-col items-center gap-3 rounded-2xl py-2"
+      className="relative flex w-full flex-col items-center rounded-2xl py-3"
       aria-label={label}
       tabIndex={-1}
     >
-      <div className="flex items-center justify-center gap-3">
+      <div className="flex items-center justify-center gap-3 rounded-full border border-transparent px-5 py-3 transition-colors duration-200 [button:focus-within_&]:border-stroke-strong">
         {Array.from({ length: PIN_MAX }).map((_, i) => {
           const filled = i < value.length;
           return (
@@ -69,7 +69,7 @@ export function PinPad({
         onKeyDown={(e) => {
           if (e.key === "Enter" && value.length >= PIN_MIN) onSubmit?.();
         }}
-        className="h-11 w-full max-w-[220px] rounded-xl border border-stroke bg-sunken text-center text-2xl tracking-[0.5em] text-ink outline-none focus:border-stroke-strong"
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
       />
     </button>
   );

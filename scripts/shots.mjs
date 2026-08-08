@@ -1,7 +1,7 @@
 // Captures screenshots of a running DoneX instance for design review.
 // Usage: node scripts/shots.mjs [baseUrl] [pin]
 import { chromium } from "playwright-core";
-import { mkdirSync, readdirSync } from "fs";
+import { mkdirSync, readdirSync, statSync } from "fs";
 
 const BASE = process.argv[2] || "http://localhost:3000";
 const PIN = process.argv[3] || "1234";
@@ -9,28 +9,22 @@ const OUT = new URL("../shots/", import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
 
 function findChromium() {
-  const roots = ["/opt/pw-browsers"];
-  for (const root of roots) {
-    try {
-      for (const dir of readdirSync(root)) {
-        if (dir.startsWith("chromium")) {
-          const candidates = [
-            `${root}/${dir}/chrome-linux/chrome`,
-            `${root}/${dir}/chrome-linux64/chrome`,
-            `${root}/${dir}`,
-          ];
-          for (const c of candidates) {
-            try {
-              readdirSync(c);
-            } catch {
-              return c; // it's a file (or missing — launch will tell us)
-            }
-          }
-        }
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers";
+  const candidates = [];
+  try {
+    for (const dir of readdirSync(root)) {
+      if (!dir.startsWith("chromium")) continue;
+      for (const rel of ["chrome-linux/chrome", "chrome-linux64/chrome", "chrome-linux/headless_shell"]) {
+        candidates.push(`${root}/${dir}/${rel}`);
       }
+    }
+  } catch {}
+  for (const c of candidates) {
+    try {
+      if (statSync(c).isFile()) return c;
     } catch {}
   }
-  return "/opt/pw-browsers/chromium";
+  throw new Error(`No chromium executable found under ${root}`);
 }
 
 const browser = await chromium.launch({ executablePath: findChromium() });
