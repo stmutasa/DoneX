@@ -1,0 +1,207 @@
+/**
+ * Background loop (60s tick) started from src/instrumentation.ts.
+ * Every step is independently guarded — the loop must never die.
+ */
+import "server-only";
+import { setInterval as setNodeInterval, setTimeout as setNodeTimeout } from "node:timers";
+import {
+  completionsRepo,
+  googleRepo,
+  projectsRepo,
+  settingsRepo,
+  tasksRepo,
+} from "@/lib/db/repos";
+import { aiConfigured, generateBriefing, generateWeeklyReview } from "@/lib/ai";
+import { scanGmail } from "@/lib/google/gmail";
+import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
+import { addDaysToDateKey, isoWeekKey, localDateKey, localTimeKey, nowIso } from "@/lib/utils";
+import type { AppSettings, Briefing, WeeklyReview } from "@/lib/types";
+
+const TICK_MS = 60_000;
+const FIRST_TICK_DELAY_MS = 5_000;
+const GMAIL_SCAN_INTERVAL_MS = 60 * 60 * 1000;
+
+const KV_LAST_BRIEFING_DAY = "sched.lastBriefingDay";
+const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
+const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
+
+const globalForScheduler = globalThis as unknown as { __donexSchedulerStarted?: boolean };
+let ticking = false;
+
+export function startScheduler(): void {
+  if (globalForScheduler.__donexSchedulerStarted) return;
+  globalForScheduler.__donexSchedulerStarted = true;
+
+  setNodeTimeout(() => void tick(), FIRST_TICK_DELAY_MS).unref();
+  setNodeInterval(() => void tick(), TICK_MS).unref();
+  console.log("[scheduler] started");
+}
+
+async function tick(): Promise<void> {
+  if (ticking) return;
+  ticking = true;
+  try {
+    const settings = settingsRepo.getApp();
+    const now = new Date();
+    await runReminders(settings);
+    await runMorningBriefing(settings, now);
+    await runWeeklyReview(settings, now);
+    await runGmailScan(settings);
+  } catch (err) {
+    console.error("[scheduler] tick", err);
+  } finally {
+    ticking = false;
+  }
+}
+
+// ── 1. Task reminders ──────────────────────────────────────────────────────
+
+async function runReminders(settings: AppSettings): Promise<void> {
+  try {
+    if (!settings.notifications.remindersEnabled) return;
+    if (!hasPushSubscriptions()) return;
+
+    const due = tasksRepo.dueForReminder(nowIso());
+    if (due.length === 0) return;
+
+    const projectNames = new Map(projectsRepo.list(true).map((p) => [p.id, p.name]));
+    for (const task of due) {
+      const parts: string[] = [];
+      if (task.dueAt) parts.push(`Due at ${formatLocalTime(task.dueAt, settings.tz)}`);
+      const project = task.projectId ? projectNames.get(task.projectId) : undefined;
+      if (project) parts.push(project);
+      await sendPushToAll({
+        title: `⏰ ${task.title}`,
+        body: parts.join(" · ") || "Due now",
+        url: "/today",
+        tag: `task-${task.id}`,
+      });
+      tasksRepo.markNotified(task.id);
+    }
+  } catch (err) {
+    console.error("[scheduler] reminders", err);
+  }
+}
+
+// ── 2. Morning briefing ────────────────────────────────────────────────────
+
+async function runMorningBriefing(settings: AppSettings, now: Date): Promise<void> {
+  try {
+    if (!settings.notifications.briefingEnabled) return;
+
+    const tz = settings.tz;
+    if (localTimeKey(now, tz) !== normalizeTime(settings.notifications.briefingTime)) return;
+
+    const dateLocal = localDateKey(now, tz);
+    if (settingsRepo.getKV(KV_LAST_BRIEFING_DAY) === dateLocal) return;
+    settingsRepo.setKV(KV_LAST_BRIEFING_DAY, dateLocal); // claim the slot first
+
+    let briefing: Briefing | null = null;
+    if (aiConfigured()) {
+      try {
+        briefing = await generateBriefing(dateLocal);
+      } catch (err) {
+        console.error("[scheduler] briefing generation", err);
+      }
+    }
+
+    const openToday = tasksRepo.list({ view: "today" }).length;
+    await sendPushToAll({
+      title: briefing?.greeting || "Good morning ☀️",
+      body: briefing?.narrative || `${openToday} tasks on deck today.`,
+      url: "/today",
+    });
+  } catch (err) {
+    console.error("[scheduler] briefing", err);
+  }
+}
+
+// ── 3. Weekly review ───────────────────────────────────────────────────────
+
+async function runWeeklyReview(settings: AppSettings, now: Date): Promise<void> {
+  try {
+    if (!settings.notifications.weeklyReviewEnabled) return;
+
+    const tz = settings.tz;
+    const dateLocal = localDateKey(now, tz);
+    if (localWeekday(dateLocal) !== settings.notifications.weeklyDay) return;
+    if (localTimeKey(now, tz) !== normalizeTime(settings.notifications.weeklyTime)) return;
+
+    const weekKey = isoWeekKey(now, tz);
+    if (settingsRepo.getKV(KV_LAST_REVIEW_WEEK) === weekKey) return;
+    settingsRepo.setKV(KV_LAST_REVIEW_WEEK, weekKey);
+
+    let review: WeeklyReview | null = null;
+    if (aiConfigured()) {
+      try {
+        review = await generateWeeklyReview(weekKey);
+      } catch (err) {
+        console.error("[scheduler] review generation", err);
+      }
+    }
+
+    const completed =
+      review?.completedCount ??
+      completionsRepo.countRange(addDaysToDateKey(dateLocal, -6), dateLocal);
+    await sendPushToAll({
+      title: "Your week in review",
+      body: firstSentence(review?.narrative) || `${completed} task(s) completed this week.`,
+      url: "/review",
+    });
+  } catch (err) {
+    console.error("[scheduler] weekly review", err);
+  }
+}
+
+// ── 4. Gmail scan ──────────────────────────────────────────────────────────
+
+async function runGmailScan(settings: AppSettings): Promise<void> {
+  try {
+    if (!settings.google.gmailScanEnabled) return;
+    if (!googleRepo.get()) return;
+
+    const last = settingsRepo.getKV(KV_LAST_GMAIL_SCAN);
+    const lastMs = last ? Date.parse(last) : NaN;
+    if (Number.isFinite(lastMs) && Date.now() - lastMs < GMAIL_SCAN_INTERVAL_MS) return;
+    settingsRepo.setKV(KV_LAST_GMAIL_SCAN, nowIso());
+
+    const created = await scanGmail();
+    if (created > 0) {
+      await sendPushToAll({
+        title: "Inbox",
+        body: `${created} new item(s) to triage`,
+        url: "/inbox",
+      });
+    }
+  } catch (err) {
+    console.error("[scheduler] gmail scan", err);
+  }
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+/** "7:00" → "07:00" so comparisons against localTimeKey() are exact. */
+function normalizeTime(value: string): string {
+  const [hh = "", mm = ""] = value.trim().split(":");
+  return `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}`;
+}
+
+function formatLocalTime(iso: string, tz: string): string {
+  const [hh, mm] = localTimeKey(iso, tz).split(":").map(Number);
+  const suffix = hh >= 12 ? "PM" : "AM";
+  const hour12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${hour12}:${String(mm).padStart(2, "0")} ${suffix}`;
+}
+
+/** 0=Sun … 6=Sat for a local "YYYY-MM-DD" key */
+function localWeekday(dateLocal: string): number {
+  const [y, m, d] = dateLocal.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+function firstSentence(text: string | undefined): string {
+  if (!text) return "";
+  const trimmed = text.trim();
+  const match = trimmed.match(/^[\s\S]*?[.!?](?=\s|$)/);
+  return (match ? match[0] : trimmed).slice(0, 200).trim();
+}
