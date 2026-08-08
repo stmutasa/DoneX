@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── DoneX design tokens ───────────────────────────────────────────────
+   Identity: calm, warm, focused. A "sunrise" amber→coral accent over a
+   deep ink dark theme and a warm paper light theme. */
+
+:root,
+[data-theme="light"] {
+  --bg: #f7f5f1;
+  --bg-elev: #ffffff;
+  --bg-sunken: #efece6;
+  --border: rgba(24, 26, 32, 0.08);
+  --border-strong: rgba(24, 26, 32, 0.16);
+  --text: #1b1e24;
+  --text-muted: #5b6270;
+  --text-faint: #99a0ac;
+  --accent: #e8590c;
+  --accent-soft: rgba(232, 89, 12, 0.12);
+  --accent-glow: rgba(240, 101, 41, 0.25);
+  --on-accent: #ffffff;
+  --grad-a: #f59f00;
+  --grad-b: #f0442e;
+  --ok: #2f9e44;
+  --warn: #e8a002;
+  --danger: #e03131;
+  --shadow-soft: 0 6px 24px rgba(35, 31, 24, 0.07);
+  --shadow-lift: 0 12px 40px rgba(35, 31, 24, 0.13);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0b0e13;
+  --bg-elev: #12161d;
+  --bg-sunken: #070a0e;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #edeff3;
+  --text-muted: #9aa3af;
+  --text-faint: #5c6470;
+  --accent: #ffa94d;
+  --accent-soft: rgba(255, 169, 77, 0.13);
+  --accent-glow: rgba(255, 150, 79, 0.22);
+  --on-accent: #1c1106;
+  --grad-a: #ffb454;
+  --grad-b: #ff6b6b;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --shadow-soft: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 16px 48px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Thin, quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Safe-area padding helpers for installed PWA */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Gradient text helper */
+.text-sunrise {
+  background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Card baseline */
+.card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-soft);
+}
+
+/* Focus rings */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Strike-through fade for completed tasks */
+.task-done-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+  color: var(--text-faint);
+  transition: color 240ms ease;
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-sunken) 25%,
+    var(--bg-elev) 50%,
+    var(--bg-sunken) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 12px;
+}

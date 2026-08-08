@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+data
+shots
+*.db
+.env
+.env.local
+README.md
+docs
