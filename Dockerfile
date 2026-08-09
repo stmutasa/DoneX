@@ -41,16 +41,22 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 
+# gosu: start as root so the entrypoint can claim the volume mount for the
+# app user, then drop privileges with correct signal handling.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
 # Next's standalone output already contains a pruned node_modules with
 # better-sqlite3's native binding traced in — no separate copy needed.
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 
-# Volume mount point for the SQLite database (see DATA_DIR).
-RUN mkdir -p /data && chown -R node:node /data
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && mkdir -p /data && chown -R node:node /data
 
-USER node
 EXPOSE 3000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]
