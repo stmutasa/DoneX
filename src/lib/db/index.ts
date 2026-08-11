@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   tags TEXT DEFAULT '[]',
   parent_id TEXT,
   recurrence TEXT,
+  location TEXT,
   sort REAL DEFAULT 0,
   notified_at TEXT,
   completed_at TEXT,
@@ -130,6 +131,16 @@ export function dataDir(): string {
   return process.env.DATA_DIR || path.join(process.cwd(), "data");
 }
 
+/** Additive column migrations for databases created by older builds. */
+function migrate(db: Database.Database): void {
+  const taskCols = new Set(
+    (db.pragma("table_info(tasks)") as { name: string }[]).map((c) => c.name)
+  );
+  if (!taskCols.has("location")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN location TEXT");
+  }
+}
+
 function open(): Database.Database {
   const dir = dataDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -137,6 +148,7 @@ function open(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 

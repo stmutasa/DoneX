@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { applyUpdate, isUpdateAvailable } from "@/lib/version";
 
-const CHECK_EVERY_MS = 10 * 60_000;
+const CHECK_EVERY_MS = 5 * 60_000;
 
 /**
  * Installed PWAs resume from memory and navigate client-side, so a deployed
@@ -23,13 +23,20 @@ export function UpdateBanner() {
 
   useEffect(() => {
     void check();
+    // Belt and braces: visibilitychange misses some resume paths on installed
+    // PWAs, so also listen for window focus and network recovery.
     const onVisible = () => {
       if (document.visibilityState === "visible") void check();
     };
+    const onSignal = () => void check();
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onSignal);
+    window.addEventListener("online", onSignal);
     const id = window.setInterval(() => void check(), CHECK_EVERY_MS);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onSignal);
+      window.removeEventListener("online", onSignal);
       window.clearInterval(id);
     };
   }, [check]);

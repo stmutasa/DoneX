@@ -41,6 +41,8 @@ const EXPECTED_TOOLS = [
   "append_checklist",
   "list_notes",
   "get_calendar_today",
+  "get_nearby_errands",
+  "set_task_location",
   "get_stats",
   "save_day_plan",
 ];

@@ -48,7 +48,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
     weeklyDay: 0,
     weeklyTime: "18:00",
   },
-  google: { clientId: "", clientSecret: "", gmailScanEnabled: false, gmailQuery: "" },
+  google: {
+    clientId: "",
+    clientSecret: "",
+    gmailScanEnabled: false,
+    gmailQuery: "",
+    mapsApiKey: "",
+  },
+  lastLocation: null,
   ingestToken: "",
   vapid: null,
   onboardedAt: null,
@@ -145,6 +152,7 @@ interface TaskRow {
   tags: string;
   parent_id: string | null;
   recurrence: string | null;
+  location: string | null;
   sort: number;
   notified_at: string | null;
   completed_at: string | null;
@@ -165,6 +173,7 @@ function rowToTask(r: TaskRow): Task {
     tags: JSON.parse(r.tags || "[]"),
     parentId: r.parent_id,
     recurrence: r.recurrence ? JSON.parse(r.recurrence) : null,
+    location: r.location ? JSON.parse(r.location) : null,
     sort: r.sort,
     completedAt: r.completed_at,
     createdAt: r.created_at,
@@ -260,8 +269,8 @@ export const tasksRepo = {
     const now = nowIso();
     getDb()
       .prepare(
-        `INSERT INTO tasks(id,title,notes,status,priority,due_at,all_day,project_id,tags,parent_id,recurrence,sort,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO tasks(id,title,notes,status,priority,due_at,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         id,
@@ -275,6 +284,7 @@ export const tasksRepo = {
         JSON.stringify(draft.tags ?? []),
         draft.parentId ?? null,
         draft.recurrence ? JSON.stringify(draft.recurrence) : null,
+        draft.location ? JSON.stringify(draft.location) : null,
         Date.now(),
         now,
         now
@@ -297,6 +307,7 @@ export const tasksRepo = {
       ["tags", "tags", (v) => JSON.stringify(v ?? [])],
       ["parentId", "parent_id", (v) => v],
       ["recurrence", "recurrence", (v) => (v ? JSON.stringify(v) : null)],
+      ["location", "location", (v) => (v ? JSON.stringify(v) : null)],
       ["sort", "sort", (v) => v],
     ];
     for (const [key, col, conv] of map) {
@@ -382,6 +393,16 @@ export const tasksRepo = {
     getDb().prepare("UPDATE tasks SET notified_at=? WHERE id=?").run(nowIso(), id);
   },
 
+  /** Open, top-level tasks that carry a location. */
+  located(): Task[] {
+    const rows = getDb()
+      .prepare(
+        "SELECT * FROM tasks WHERE status='open' AND parent_id IS NULL AND location IS NOT NULL LIMIT 200"
+      )
+      .all() as TaskRow[];
+    return rows.map(rowToTask);
+  },
+
   allTags(): string[] {
     const rows = getDb()
       .prepare("SELECT tags FROM tasks WHERE status='open'")
@@ -448,6 +469,24 @@ export const completionsRepo = {
       .get(fromKey, toKey) as { c: number };
     return row.c;
   },
+  /** Completed entries grouped newest-day-first for the Logbook. */
+  logbook(fromKey: string, toKey: string): { dateLocal: string; entries: { taskId: string; title: string; completedAt: string }[] }[] {
+    const rows = getDb()
+      .prepare(
+        "SELECT task_id, title, completed_at, date_local FROM completions WHERE date_local >= ? AND date_local <= ? ORDER BY completed_at DESC LIMIT 500"
+      )
+      .all(fromKey, toKey) as { task_id: string; title: string; completed_at: string; date_local: string }[];
+    const byDay = new Map<string, { taskId: string; title: string; completedAt: string }[]>();
+    for (const r of rows) {
+      const list = byDay.get(r.date_local) ?? [];
+      list.push({ taskId: r.task_id, title: r.title, completedAt: r.completed_at });
+      byDay.set(r.date_local, list);
+    }
+    return [...byDay.entries()]
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([dateLocal, entries]) => ({ dateLocal, entries }));
+  },
+
   listRange(fromKey: string, toKey: string): { title: string; dateLocal: string }[] {
     const rows = getDb()
       .prepare(

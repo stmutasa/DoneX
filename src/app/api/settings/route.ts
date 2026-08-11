@@ -32,6 +32,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       gmailScanEnabled: google.gmailScanEnabled,
       gmailQuery: google.gmailQuery,
       clientSecret: { set: !!google.clientSecret, last4: last4(google.clientSecret) },
+      mapsApiKey: { set: !!google.mapsApiKey, last4: last4(google.mapsApiKey) },
     },
     pushConfigured: !!vapid,
   };
@@ -67,6 +68,7 @@ const googlePatchSchema = z.object({
   clientSecret: z.string().optional(),
   gmailScanEnabled: z.boolean().optional(),
   gmailQuery: z.string().max(300).optional(),
+  mapsApiKey: z.string().optional(),
 });
 
 const patchSchema = z.object({
@@ -108,8 +110,10 @@ export async function PATCH(req: NextRequest) {
   }
   if (data.google) {
     const google = { ...data.google };
-    if (google.clientSecret === "") delete google.clientSecret;
-    else if (google.clientSecret === "__clear__") google.clientSecret = "";
+    for (const key of ["clientSecret", "mapsApiKey"] as const) {
+      if (google[key] === "") delete google[key];
+      else if (google[key] === "__clear__") google[key] = "";
+    }
     patch.google = google;
   }
 

@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { format } from "date-fns";
 import { fetcher, keys, projectsApi, tasksApi } from "@/lib/api";
-import type { Priority, Project, RecurrenceRule, Task, TaskDraft } from "@/lib/types";
+import type {
+  Priority,
+  Project,
+  RecurrenceRule,
+  Task,
+  TaskDraft,
+  TaskLocation,
+} from "@/lib/types";
 import { toDateInput } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAutoGrow } from "@/hooks/useAutoGrow";
@@ -15,6 +22,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { IconCheck, IconPlus, IconTrash, IconX } from "@/components/ui/icons";
+import { LocationField } from "./LocationField";
 import { RecurrenceBuilder } from "./RecurrenceBuilder";
 import { TagInput } from "./TagInput";
 import { useTaskMutations } from "./useTaskMutations";
@@ -40,6 +48,7 @@ interface FormState {
   projectId: string;
   tags: string[];
   recurrence: RecurrenceRule | null;
+  location: TaskLocation | null;
 }
 
 function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState {
@@ -56,6 +65,7 @@ function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState 
     projectId: src?.projectId ?? "",
     tags: src?.tags ?? [],
     recurrence: src?.recurrence ?? null,
+    location: src?.location ?? null,
   };
 }
 
@@ -129,6 +139,7 @@ export function TaskEditor({
     projectId: form.projectId || null,
     tags: form.tags,
     recurrence: form.recurrence,
+    location: form.location,
   });
 
   const submit = async () => {
@@ -368,6 +379,11 @@ export function TaskEditor({
               </Button>
             </div>
           )}
+        </div>
+
+        <div>
+          <FieldLabel>Location</FieldLabel>
+          <LocationField value={form.location} onChange={(loc) => set("location", loc)} />
         </div>
 
         <TagInput

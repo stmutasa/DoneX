@@ -18,6 +18,8 @@ export interface VoiceConversationOptions {
   autoListen: boolean;
   voiceURI?: string;
   rate?: number;
+  /** Current position, when the session managed to get a fix. */
+  location?: { lat: number; lng: number } | null;
   onConversationId?: (id: string) => void;
   onError?: (message: string) => void;
 }
@@ -94,6 +96,7 @@ export function useVoiceConversation(
           conversationId: optsRef.current.conversationId,
           message,
           mode: "voice",
+          location: optsRef.current.location ?? null,
         },
         {
           onToken: (chunk) => {

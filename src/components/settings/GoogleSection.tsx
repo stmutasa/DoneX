@@ -8,6 +8,7 @@ import { relativeTime } from "@/lib/format";
 import { DEFAULT_GMAIL_QUERY } from "@/lib/google/queries";
 import { Button } from "@/components/ui/Button";
 import { Input, SwitchRow } from "@/components/ui/Field";
+import { SectionLabel } from "@/components/ui/Misc";
 
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
@@ -61,6 +62,7 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
 
   const [clientId, setClientId] = useState(settings.google.clientId);
   const [secretDraft, setSecretDraft] = useState("");
+  const [mapsDraft, setMapsDraft] = useState("");
   const [queryDraft, setQueryDraft] = useState(settings.google.gmailQuery);
   const [origin, setOrigin] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -266,6 +268,46 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
           {status?.configured ? "Connect Google" : "Add credentials first"}
         </Button>
       )}
+
+      <Divider />
+
+      <div>
+        <SectionLabel>Maps &amp; places</SectionLabel>
+        <p className="mb-2.5 px-1 text-[13px] leading-relaxed text-muted">
+          Powers task locations and the Nearby screen. Google Cloud → Credentials → Create API key,
+          and enable the Places API (New).{" "}
+          <a
+            href="https://console.cloud.google.com/google/maps-apis/api-list"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 font-medium text-accent"
+          >
+            Maps APIs <IconExternal className="h-3.5 w-3.5" />
+          </a>
+        </p>
+        <Input
+          label="Maps API key"
+          hint={settings.google.mapsApiKey.set ? "Saved" : undefined}
+          type="password"
+          autoComplete="off"
+          value={mapsDraft}
+          placeholder={maskPlaceholder(settings.google.mapsApiKey, "AIza…")}
+          onChange={(e) => setMapsDraft(e.target.value)}
+        />
+        {mapsDraft.trim() ? (
+          <Button
+            size="sm"
+            variant="primary"
+            className="mt-2"
+            onClick={async () => {
+              const ok = await patch({ google: { mapsApiKey: mapsDraft.trim() } }, "Maps key saved");
+              if (ok) setMapsDraft("");
+            }}
+          >
+            Save key
+          </Button>
+        ) : null}
+      </div>
     </SettingsCard>
   );
 }

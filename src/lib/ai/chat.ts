@@ -1,4 +1,5 @@
-import { conversationsRepo, settingsRepo } from "@/lib/db/repos";
+import { conversationsRepo, settingsRepo, tasksRepo } from "@/lib/db/repos";
+import { distanceLabel, haversineKm, nowIso } from "@/lib/utils";
 import type {
   ChatMessageRecord,
   ChatStreamEvent,
@@ -27,6 +28,25 @@ export interface ChatTurnInput {
   conversationId: string | null;
   message: string;
   mode: "chat" | "voice";
+  /** client position for this turn — enables nearby-errand awareness */
+  location?: { lat: number; lng: number } | null;
+}
+
+/** "You are 0.3 mi from CVS (Pick up prescription)" lines for the system
+ *  prompt, so walk-mode replies can volunteer what's close without a tool
+ *  round-trip. Empty when nothing is within ~2.5km. */
+function nearbyDigest(location: { lat: number; lng: number } | null | undefined): string {
+  if (!location) return "";
+  const located = tasksRepo.located();
+  if (located.length === 0) return "";
+  const lines = located
+    .map((t) => ({ t, km: haversineKm(location, t.location!) }))
+    .filter(({ km }) => km <= 2.5)
+    .sort((a, b) => a.km - b.km)
+    .slice(0, 6)
+    .map(({ t, km }) => `- ${distanceLabel(km)} away: ${t.location!.name} — task “${t.title}” (id ${t.id})`);
+  if (lines.length === 0) return "";
+  return `\n\nNEARBY ERRANDS RIGHT NOW (mention naturally when relevant — e.g. something on their route):\n${lines.join("\n")}`;
 }
 
 export function conversationTitleFrom(message: string): string {
@@ -122,11 +142,16 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
         const turns = historyTurns(prior);
         pushUserText(turns, message);
 
+        // Remember the freshest fix so briefings/tools can use it later too.
+        if (input.location) {
+          settingsRepo.updateApp({ lastLocation: { ...input.location, at: nowIso() } });
+        }
+
         const ctx = await buildAssistantContext();
-        const system = chatSystemPrompt(ctx, input.mode);
+        const system = chatSystemPrompt(ctx, input.mode) + nearbyDigest(input.location);
         const cfg = await readyConfig();
         const adapter = adapterFor(cfg.kind);
-        const tctx = toolContext(tz);
+        const tctx = toolContext(tz, input.location);
 
         let full = "";
 

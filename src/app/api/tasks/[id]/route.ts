@@ -23,6 +23,15 @@ const patchSchema = z.object({
     })
     .nullable()
     .optional(),
+  location: z
+    .object({
+      name: z.string().min(1).max(200),
+      address: z.string().max(400),
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .nullable()
+    .optional(),
   sort: z.number().optional(),
 });
 

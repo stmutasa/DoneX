@@ -51,6 +51,28 @@ export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
+/** Great-circle distance in km between two coordinates. */
+export function haversineKm(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number {
+  const R = 6371;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+/** "0.3 mi" / "1.2 mi" — the US-facing label used across nearby features. */
+export function distanceLabel(km: number): string {
+  const miles = km * 0.621371;
+  if (miles < 0.1) return `${Math.round(miles * 5280)} ft`;
+  return `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`;
+}
+
 /** Map with bounded concurrency; every result settles (never throws). */
 export async function mapLimit<T, R>(
   items: T[],

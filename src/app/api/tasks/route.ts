@@ -23,6 +23,16 @@ const recurrenceSchema = z
   .nullable()
   .optional();
 
+const locationSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    address: z.string().max(400),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  })
+  .nullable()
+  .optional();
+
 const draftSchema = z.object({
   title: z.string(),
   notes: z.string().optional(),
@@ -33,6 +43,7 @@ const draftSchema = z.object({
   tags: z.array(z.string()).optional(),
   parentId: z.string().nullable().optional(),
   recurrence: recurrenceSchema,
+  location: locationSchema,
 });
 
 export async function GET(req: NextRequest) {

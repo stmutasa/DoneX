@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
-import { fetcher, keys, settingsApi } from "@/lib/api";
+import { fetcher, keys, locationApi, settingsApi } from "@/lib/api";
 import type { MaskedSettings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useVoiceConversation } from "@/hooks/useVoiceConversation";
@@ -38,6 +38,7 @@ export default function VoicePage() {
   const [autoListen, setAutoListen] = useState(false);
   const [showText, setShowText] = useState(false);
   const [textDraft, setTextDraft] = useState("");
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
     try {
@@ -51,11 +52,32 @@ export default function VoicePage() {
     if (settings) setAutoListen(settings.voice.autoListen);
   }, [settings]);
 
+  // One fix per session — walk mode keeps working if it's denied or times out.
+  useEffect(() => {
+    if (!active || coords) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    let cancelled = false;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (cancelled) return;
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setCoords(next);
+        void locationApi.report(next.lat, next.lng).catch(() => {});
+      },
+      () => {},
+      { timeout: 8000, maximumAge: 300_000 },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [active, coords]);
+
   const voice = useVoiceConversation({
     conversationId,
     autoListen,
     voiceURI: settings?.voice.voiceURI || undefined,
     rate: settings?.voice.rate ?? 1,
+    location: coords,
     onConversationId: (id) => {
       setConversationId(id);
       try {

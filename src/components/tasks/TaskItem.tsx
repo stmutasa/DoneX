@@ -5,7 +5,13 @@ import type { Project, Task } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
 import { dueLabel, isOverdue } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { IconChevronRight, IconCheck, IconFlag, IconRepeat } from "@/components/ui/icons";
+import {
+  IconChevronRight,
+  IconCheck,
+  IconFlag,
+  IconMapPin,
+  IconRepeat,
+} from "@/components/ui/icons";
 import { ProgressRing } from "@/components/ui/Misc";
 import { useTaskMutations } from "./useTaskMutations";
 
@@ -110,6 +116,13 @@ export function TaskItem({
                 aria-hidden="true"
               />
               {project.icon} {project.name}
+            </span>
+          ) : null}
+
+          {task.location ? (
+            <span className="inline-flex items-center gap-1">
+              <IconMapPin className="h-3 w-3" />
+              {task.location.name}
             </span>
           ) : null}
 

@@ -5,6 +5,8 @@ import {
   IconChat,
   IconFolder,
   IconInbox,
+  IconLogbook,
+  IconMapPin,
   IconNote,
   IconSliders,
   IconSun,
@@ -23,12 +25,14 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/notes", label: "Notes", Icon: IconNote },
   { href: "/projects", label: "Projects", Icon: IconFolder },
   { href: "/inbox", label: "Inbox", Icon: IconInbox },
+  { href: "/nearby", label: "Nearby", Icon: IconMapPin },
+  { href: "/logbook", label: "Logbook", Icon: IconLogbook },
   { href: "/review", label: "Review", Icon: IconChart },
   { href: "/settings", label: "Settings", Icon: IconSliders },
 ];
 
 export const MORE_ITEMS: NavItem[] = NAV_ITEMS.filter((i) =>
-  ["/projects", "/inbox", "/review", "/settings"].includes(i.href),
+  ["/projects", "/inbox", "/nearby", "/logbook", "/review", "/settings"].includes(i.href),
 );
 
 export function isActive(pathname: string, href: string): boolean {

@@ -14,8 +14,11 @@ import type {
   GoogleStatus,
   InboxItem,
   InboxStatus,
+  LogbookDay,
   MaskedSettings,
   ModelInfo,
+  NearbyTask,
+  PlaceResult,
   Note,
   NotificationSettings,
   PlanBlock,
@@ -276,6 +279,7 @@ export interface ChatStreamBody {
   conversationId?: string | null;
   message: string;
   mode: "chat" | "voice";
+  location?: { lat: number; lng: number } | null;
 }
 
 export interface ChatStreamDone {
@@ -458,4 +462,29 @@ export const googleApi = {
 
 export const calendarApi = {
   today: () => request<{ events: CalendarEvent[]; connected: boolean }>(keys.calendarToday()),
+};
+
+// ── Places / nearby / location / logbook ──────────────────────────────────
+
+export const placesApi = {
+  search: (q: string, near?: { lat: number; lng: number } | null) =>
+    request<{ places: PlaceResult[] }>(
+      `/api/places/search${query({ q, lat: near?.lat, lng: near?.lng })}`,
+    ),
+};
+
+export const locationApi = {
+  report: (lat: number, lng: number) =>
+    request<{ ok: true }>("/api/location", { method: "POST", body: JSON.stringify({ lat, lng }) }),
+};
+
+export const nearbyApi = {
+  list: (near?: { lat: number; lng: number } | null) =>
+    request<{ tasks: NearbyTask[]; located: number }>(
+      `/api/nearby${query({ lat: near?.lat, lng: near?.lng })}`,
+    ),
+};
+
+export const logbookApi = {
+  list: (days = 30) => request<{ days: LogbookDay[] }>(`/api/logbook${query({ days })}`),
 };

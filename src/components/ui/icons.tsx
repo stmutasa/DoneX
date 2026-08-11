@@ -270,6 +270,18 @@ export const IconList = (p: P) => (
     <path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />
   </Svg>
 );
+export const IconMapPin = (p: P) => (
+  <Svg {...p}>
+    <path d="M20 10.4c0 5.3-6.2 10.7-7.4 11.7a.9.9 0 0 1-1.2 0C10.2 21.1 4 15.7 4 10.4a8 8 0 0 1 16 0Z" />
+    <circle cx="12" cy="10.3" r="2.8" />
+  </Svg>
+);
+export const IconLogbook = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a2.5 2.5 0 0 1 0-5H20" />
+    <path d="m9 9.5 2 2 4-4" />
+  </Svg>
+);
 export const IconWand = (p: P) => (
   <Svg {...p}>
     <path d="m3 21 12-12" />

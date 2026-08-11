@@ -113,6 +113,7 @@ export async function generateBriefing(
       dueToday: digestLines(dueToday, tz, 16),
       streak: stats.streakDays,
       doneYesterday,
+      weather: await safeWeatherLine(tz),
     }),
     900
   );
@@ -369,6 +370,21 @@ export function parseTriageDecision(
   }
 
   return { decision, reason, duplicateOf, update, task, note };
+}
+
+/** Weather for the briefing, keyed off the last client-reported position
+ *  (< 24h old). Imported lazily: the weather module is server-only. */
+async function safeWeatherLine(tz: string): Promise<string> {
+  try {
+    const last = settingsRepo.getApp().lastLocation;
+    if (!last) return "";
+    const age = Date.now() - Date.parse(last.at);
+    if (!Number.isFinite(age) || age > 24 * 60 * 60 * 1000) return "";
+    const { todayWeatherLine } = await import("@/lib/weather");
+    return await todayWeatherLine(last.lat, last.lng, tz);
+  } catch {
+    return "";
+  }
 }
 
 /** Sent-mail context, imported lazily: the Google module is server-only. */

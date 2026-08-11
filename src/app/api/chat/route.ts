@@ -9,6 +9,9 @@ const bodySchema = z.object({
   conversationId: z.string().min(1).nullish(),
   message: z.string().trim().min(1).max(8000),
   mode: z.enum(["chat", "voice"]).default("chat"),
+  location: z
+    .object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) })
+    .nullish(),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -34,6 +37,7 @@ export async function POST(req: Request): Promise<Response> {
     conversationId: parsed.data.conversationId ?? null,
     message: parsed.data.message,
     mode: parsed.data.mode,
+    location: parsed.data.location ?? null,
   });
 
   return new Response(stream, {

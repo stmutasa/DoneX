@@ -43,6 +43,7 @@ export function briefingPrompt(input: {
   dueToday: string;
   streak: number;
   doneYesterday: number;
+  weather: string;
 }): string {
   return `Write this morning's briefing for the DoneX user.
 
@@ -56,7 +57,7 @@ ${input.overdue || "(nothing overdue)"}
 
 TODAY'S CALENDAR
 ${input.ctx.calendarList}
-
+${input.weather ? `\nWEATHER TODAY\n${input.weather}\n` : ""}
 MOMENTUM
 ${input.ctx.statsLine}. Current streak ${input.streak} day(s); ${input.doneYesterday} task(s) completed yesterday.
 
@@ -65,7 +66,7 @@ Return JSON exactly like:
 
 Rules:
 - "greeting" is time-of-day aware for ${input.ctx.timeLabel} (e.g. "Good morning"), energetic but calm, max 6 words.
-- "narrative" is 2–4 sentences. Name the specific work ahead. If there is overdue work mention it gently, once, without scolding. Never mention weather. No markdown, no lists, no emojis.
+- "narrative" is 2–4 sentences. Name the specific work ahead. If there is overdue work mention it gently, once, without scolding. ${input.weather ? "Weave in the weather only when it usefully shapes the day (rain before an outdoor errand, a perfect morning for the jog) — one short clause at most." : "Never mention weather."} No markdown, no lists, no emojis.
 - "focusTaskIds" holds 1–3 task ids copied verbatim from the lists above — the ones worth doing first. Use [] only when there is genuinely nothing open.`;
 }
 

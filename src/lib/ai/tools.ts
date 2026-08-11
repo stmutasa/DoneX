@@ -4,6 +4,7 @@ import {
   notesRepo,
   plansRepo,
   projectsRepo,
+  settingsRepo,
   statsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
@@ -28,6 +29,8 @@ export interface JsonSchema {
 export interface ToolContext {
   tz: string;
   todayKey: string;
+  /** client-reported position for this turn, when available */
+  location?: { lat: number; lng: number } | null;
 }
 
 export interface ToolOutcome {
@@ -207,6 +210,11 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
   priority: { type: "integer", description: "0 none, 1 low, 2 medium, 3 high", minimum: 0, maximum: 3 },
   projectName: { type: "string", description: "Project name; created when it does not exist" },
   tags: { type: "array", description: "Plain tag words, no # prefix", items: { type: "string" } },
+  locationQuery: {
+    type: "string",
+    description:
+      "Real-world place to attach (searched on Google Places), e.g. \"CVS on Main St\". Only when the user names a physical place for the errand.",
+  },
   recurrence: {
     type: "object",
     description: "Repeat rule; omit for one-off tasks",
@@ -255,11 +263,27 @@ export const TOOLS: ToolSpec[] = [
         : "";
       return `Added ${quote(title)}${suffix}`;
     },
-    run(args, ctx) {
+    async run(args, ctx) {
       const title = readString(args, "title");
       if (!title) return { ok: false, payload: { error: "title is required" } };
       const due = parseDueInput(args.dueAt, ctx.tz);
       const allDay = readBoolean(args, "allDay") ?? due?.allDay ?? false;
+
+      // Best-effort place resolution — a failed lookup never blocks the task.
+      let location: Task["location"] = null;
+      let locationNote: string | undefined;
+      const locationQuery = readString(args, "locationQuery");
+      if (locationQuery) {
+        try {
+          const { searchPlaces } = await import("@/lib/google/places");
+          const here = ctx.location ?? (await lastKnownLocation());
+          location = (await searchPlaces(locationQuery, here))[0] ?? null;
+          if (!location) locationNote = `No place found for "${locationQuery}"`;
+        } catch (err) {
+          locationNote = err instanceof Error ? err.message : "Place search failed";
+        }
+      }
+
       const task = tasksRepo.create({
         title,
         notes: readString(args, "notes") ?? "",
@@ -269,10 +293,12 @@ export const TOOLS: ToolSpec[] = [
         projectId: resolveProject(readString(args, "projectName")),
         tags: readTags(args) ?? [],
         recurrence: parseRecurrence(args.recurrence) ?? null,
+        location,
       });
+      const placeSuffix = location ? ` · 📍 ${location.name}` : "";
       return {
-        label: `Added ${quote(task.title)}${task.dueAt ? ` · ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : ""}`,
-        payload: { created: compactTask(task, ctx.tz) },
+        label: `Added ${quote(task.title)}${task.dueAt ? ` · ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : ""}${placeSuffix}`,
+        payload: { created: compactTask(task, ctx.tz), locationNote },
       };
     },
   },
@@ -638,6 +664,93 @@ export const TOOLS: ToolSpec[] = [
   },
 
   {
+    name: "get_nearby_errands",
+    description:
+      "Open tasks that have a place attached, sorted by distance from the user's current position. Use during walks or when the user asks what's nearby / on their route.",
+    parameters: { type: "object", properties: {} },
+    mutating: false,
+    label() {
+      return "Checked nearby errands";
+    },
+    async run(_args, ctx) {
+      const located = tasksRepo.located();
+      if (located.length === 0) {
+        return { payload: { count: 0, note: "No tasks have locations attached yet" } };
+      }
+      const here = ctx.location ?? (await lastKnownLocation());
+      if (!here) {
+        return {
+          payload: {
+            count: located.length,
+            note: "The user's current position is unknown — list places without distances",
+            errands: located.map((t) => ({ title: t.title, place: t.location!.name })),
+          },
+        };
+      }
+      const { haversineKm, distanceLabel } = await import("@/lib/utils");
+      const errands = located
+        .map((t) => ({ task: t, km: haversineKm(here, t.location!) }))
+        .sort((a, b) => a.km - b.km)
+        .slice(0, 10)
+        .map(({ task, km }) => ({
+          id: task.id,
+          title: task.title,
+          place: task.location!.name,
+          address: task.location!.address,
+          distance: distanceLabel(km),
+          withinWalk: km <= 1.6,
+        }));
+      return { payload: { count: errands.length, errands } };
+    },
+  },
+
+  {
+    name: "set_task_location",
+    description:
+      "Attach a real-world place to an existing task (or change it) by searching Google Places, e.g. \"CVS on Main Street\". Requires the Maps key in Settings.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Existing task id" },
+        query: { type: "string", description: "Place to search for, include city/street when known" },
+      },
+      required: ["id", "query"],
+    },
+    mutating: true,
+    label(args) {
+      const q = readString(args, "query") ?? "location";
+      return `Set location · ${q}`;
+    },
+    async run(args, ctx) {
+      const id = readString(args, "id");
+      const query = readString(args, "query");
+      if (!id || !query) return { ok: false, payload: { error: "id and query are required" } };
+      const task = tasksRepo.get(id);
+      if (!task) return { ok: false, payload: { error: "No task with that id" } };
+      try {
+        // Imported lazily: the Google module is server-only, the registry is not.
+        const { searchPlaces } = await import("@/lib/google/places");
+        const here = ctx.location ?? (await lastKnownLocation());
+        const results = await searchPlaces(query, here);
+        const place = results[0];
+        if (!place) {
+          return { ok: false, payload: { error: `No place found for "${query}"` } };
+        }
+        tasksRepo.update(id, { location: place });
+        return {
+          label: `Pinned ${quote(task.title)} to ${place.name}`,
+          payload: { attached: { name: place.name, address: place.address } },
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          payload: { error: err instanceof Error ? err.message : "Place search failed" },
+        };
+      }
+    },
+  },
+
+  {
     name: "get_stats",
     description: "Completion streak, today's counts and the last 7 days of activity.",
     parameters: { type: "object", properties: {} },
@@ -756,6 +869,18 @@ export function findTool(name: string): ToolSpec | undefined {
   return TOOLS.find((t) => t.name === name);
 }
 
-export function toolContext(tz: string): ToolContext {
-  return { tz, todayKey: localDateKey(new Date(), tz) };
+export function toolContext(
+  tz: string,
+  location?: { lat: number; lng: number } | null,
+): ToolContext {
+  return { tz, todayKey: localDateKey(new Date(), tz), location: location ?? null };
+}
+
+/** Falls back to the most recent client-reported position (< 2h old). */
+async function lastKnownLocation(): Promise<{ lat: number; lng: number } | null> {
+  const last = settingsRepo.getApp().lastLocation;
+  if (!last) return null;
+  const age = Date.now() - Date.parse(last.at);
+  if (!Number.isFinite(age) || age > 2 * 60 * 60 * 1000) return null;
+  return { lat: last.lat, lng: last.lng };
 }

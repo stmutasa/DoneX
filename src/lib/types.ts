@@ -22,6 +22,13 @@ export interface RecurrenceRule {
   byMonthDay?: number;
 }
 
+export interface TaskLocation {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -36,6 +43,7 @@ export interface Task {
   /** parent task id → this is a subtask */
   parentId: string | null;
   recurrence: RecurrenceRule | null;
+  location: TaskLocation | null;
   sort: number;
   completedAt: string | null;
   createdAt: string;
@@ -54,6 +62,7 @@ export interface TaskDraft {
   tags?: string[];
   parentId?: string | null;
   recurrence?: RecurrenceRule | null;
+  location?: TaskLocation | null;
 }
 
 export type TaskPatch = Partial<TaskDraft> & { sort?: number };
@@ -257,6 +266,15 @@ export interface GoogleSettings {
   gmailScanEnabled: boolean;
   /** Gmail search override; empty uses the built-in default */
   gmailQuery: string;
+  /** Google Maps Platform key (Places API) for task locations */
+  mapsApiKey: string;
+}
+
+/** Most recent coordinates any signed-in client reported. */
+export interface LastLocation {
+  lat: number;
+  lng: number;
+  at: string; // ISO
 }
 
 export interface AppSettings {
@@ -269,6 +287,7 @@ export interface AppSettings {
   google: GoogleSettings;
   ingestToken: string;
   vapid: { publicKey: string; privateKey: string } | null;
+  lastLocation: LastLocation | null;
   onboardedAt: string | null;
 }
 
@@ -281,7 +300,10 @@ export interface MaskedSettings
     anthropicKey: SecretMark;
     customKey: SecretMark;
   };
-  google: Omit<GoogleSettings, "clientSecret"> & { clientSecret: SecretMark };
+  google: Omit<GoogleSettings, "clientSecret" | "mapsApiKey"> & {
+    clientSecret: SecretMark;
+    mapsApiKey: SecretMark;
+  };
   pushConfigured: boolean;
 }
 
@@ -320,6 +342,27 @@ export interface GoogleStatus {
   scopes: string[];
   /** so silent background scan failures are visible in Settings */
   gmailScan: GmailScanState;
+}
+
+// ── Places / nearby / logbook ──────────────────────────────────────────────
+
+export interface PlaceResult {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+}
+
+/** GET /api/nearby response entry */
+export interface NearbyTask {
+  task: Task;
+  distanceKm: number;
+}
+
+/** GET /api/logbook response entry */
+export interface LogbookDay {
+  dateLocal: string;
+  entries: { taskId: string; title: string; completedAt: string }[];
 }
 
 // ── Model registry ─────────────────────────────────────────────────────────

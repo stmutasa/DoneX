@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { parseTriageDecision } from "@/lib/ai/generate";
-import { mapLimit } from "@/lib/utils";
+import { distanceLabel, haversineKm, mapLimit } from "@/lib/utils";
+
+describe("haversineKm / distanceLabel", () => {
+  it("computes a known distance (NYC → Philadelphia ≈ 130km)", () => {
+    const km = haversineKm({ lat: 40.7128, lng: -74.006 }, { lat: 39.9526, lng: -75.1652 });
+    expect(km).toBeGreaterThan(120);
+    expect(km).toBeLessThan(140);
+  });
+
+  it("is zero for identical points", () => {
+    expect(haversineKm({ lat: 40, lng: -74 }, { lat: 40, lng: -74 })).toBe(0);
+  });
+
+  it("labels short distances in feet and longer in miles", () => {
+    expect(distanceLabel(0.05)).toMatch(/ft$/);
+    expect(distanceLabel(0.8)).toBe("0.5 mi");
+    expect(distanceLabel(20)).toMatch(/^\d+ mi$/);
+  });
+});
 
 describe("parseTriageDecision", () => {
   it("normalizes a full task decision", () => {
