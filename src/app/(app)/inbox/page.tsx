@@ -12,6 +12,7 @@ import { EmptyState, PageHeader, SkeletonRows } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
 import { IconChevronDown, IconPlus, IconSparkles } from "@/components/ui/icons";
 import { InboxCard } from "@/components/inbox/InboxCard";
+import { ReasonSheet, type ReasonMode } from "@/components/inbox/ReasonSheet";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 
 export default function InboxPage() {
@@ -29,6 +30,9 @@ export default function InboxPage() {
   const [suggestingId, setSuggestingId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InboxItem | null>(null);
+  const [reasonTarget, setReasonTarget] = useState<{ item: InboxItem; mode: ReasonMode } | null>(
+    null,
+  );
 
   const items = data?.items ?? [];
   const fresh = useMemo(() => items.filter((i) => i.status === "new"), [items]);
@@ -116,6 +120,26 @@ export default function InboxPage() {
     setEditingItem(null);
   };
 
+  const submitReason = async (reason: string) => {
+    if (!reasonTarget) return;
+    const { item, mode } = reasonTarget;
+    try {
+      if (mode === "dismiss") {
+        await inboxApi.resolve(item.id, { action: "dismiss", reason });
+        toast.success("Dismissed — triage will remember that");
+      } else {
+        const { learned } = await inboxApi.restore(item.id, reason || undefined);
+        toast.success(
+          learned ? "Restored — triage will remember that" : "Restored to your inbox",
+        );
+      }
+      await refreshAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save that");
+      throw err;
+    }
+  };
+
   return (
     <Page>
       <PageHeader
@@ -175,6 +199,7 @@ export default function InboxPage() {
                 onResolve={(payload) => resolve(item, payload)}
                 onEdit={setEditingItem}
                 onSuggest={suggest}
+                onDismissBecause={(target) => setReasonTarget({ item: target, mode: "dismiss" })}
               />
             ))}
           </AnimatePresence>
@@ -229,6 +254,15 @@ export default function InboxPage() {
                             : ""}
                       </span>
                     </span>
+                    {item.status === "dismissed" ? (
+                      <button
+                        type="button"
+                        onClick={() => setReasonTarget({ item, mode: "restore" })}
+                        className="shrink-0 self-center rounded-full px-2.5 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                      >
+                        Restore…
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </motion.ul>
@@ -236,6 +270,14 @@ export default function InboxPage() {
           </AnimatePresence>
         </section>
       ) : null}
+
+      <ReasonSheet
+        mode={reasonTarget?.mode ?? "dismiss"}
+        open={!!reasonTarget}
+        itemPreview={reasonTarget?.item.content ?? ""}
+        onClose={() => setReasonTarget(null)}
+        onSubmit={submitReason}
+      />
 
       <TaskEditor
         open={!!editingItem}

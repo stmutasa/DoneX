@@ -29,6 +29,7 @@ import type {
   TaskListFilter,
   TaskPatch,
   ToolActivity,
+  TriageFeedback,
   VoiceSettings,
   WeeklyReview,
 } from "@/lib/types";
@@ -220,6 +221,8 @@ export interface InboxResolvePayload {
   action: "task" | "note" | "dismiss";
   task?: TaskDraft;
   note?: { title: string; content: string };
+  /** dismiss only — recorded as a triage lesson */
+  reason?: string;
 }
 
 export const inboxApi = {
@@ -231,9 +234,20 @@ export const inboxApi = {
       body: JSON.stringify({ content, source: "quick" }),
     }),
   resolve: (id: string, payload: InboxResolvePayload) =>
-    request<{ ok: true; taskId?: string }>(`/api/inbox/${id}/resolve`, {
+    request<{ ok: true; taskId?: string; learned?: boolean }>(`/api/inbox/${id}/resolve`, {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  restore: (id: string, reason?: string) =>
+    request<{ ok: true; learned: boolean }>(`/api/inbox/${id}/restore`, {
+      method: "POST",
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+  lessons: () => request<{ lessons: TriageFeedback[] }>("/api/inbox/feedback"),
+  removeLesson: (id: string) =>
+    request<{ ok: true }>("/api/inbox/feedback", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
     }),
   triage: (id?: string) =>
     request<{ items: InboxItem[]; kept?: number; dismissed?: number; updated?: number }>(

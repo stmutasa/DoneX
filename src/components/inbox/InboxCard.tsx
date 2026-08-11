@@ -20,12 +20,14 @@ export function InboxCard({
   onResolve,
   onEdit,
   onSuggest,
+  onDismissBecause,
   suggesting,
 }: {
   item: InboxItem;
   onResolve: (payload: InboxResolvePayload) => Promise<void>;
   onEdit: (item: InboxItem) => void;
   onSuggest: (item: InboxItem) => void;
+  onDismissBecause: (item: InboxItem) => void;
   suggesting?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -154,6 +156,10 @@ export function InboxCard({
           onClick={() => run("dismiss", { action: "dismiss" })}
         >
           Dismiss
+        </Button>
+
+        <Button size="sm" variant="ghost" onClick={() => onDismissBecause(item)}>
+          Dismiss because…
         </Button>
       </div>
     </motion.article>

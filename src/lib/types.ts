@@ -344,6 +344,22 @@ export interface GoogleStatus {
   gmailScan: GmailScanState;
 }
 
+// ── Triage feedback (the self-tuning loop) ─────────────────────────────────
+
+export type TriageFeedbackKind = "dismiss_because" | "should_have_kept";
+
+export interface TriageFeedback {
+  id: string;
+  kind: TriageFeedbackKind;
+  /** the user's own words */
+  reason: string;
+  /** snippet of the item the lesson was about */
+  content: string;
+  fromLabel: string;
+  source: InboxSource;
+  createdAt: string;
+}
+
 // ── Places / nearby / logbook ──────────────────────────────────────────────
 
 export interface PlaceResult {

@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import {
   briefingsRepo,
   completionsRepo,
+  feedbackRepo,
   inboxRepo,
   plansRepo,
   projectsRepo,
@@ -19,6 +20,7 @@ import type {
   InboxSuggestion,
   Priority,
   Task,
+  TriageFeedback,
   WeeklyReview,
 } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
@@ -387,6 +389,30 @@ async function safeWeatherLine(tz: string): Promise<string> {
   }
 }
 
+/**
+ * The user's corrections, formatted for the triage prompt. Pure so it can be
+ * unit-tested; newest lessons first, capped per side.
+ */
+export function buildFeedbackDigest(entries: TriageFeedback[], perSide = 8): string {
+  const line = (f: TriageFeedback) =>
+    `- "${f.reason}" (about: "${f.content.slice(0, 70)}"${f.fromLabel ? ` from ${f.fromLabel}` : ""})`;
+  const kept = entries.filter((f) => f.kind === "should_have_kept").slice(0, perSide);
+  const dismissed = entries.filter((f) => f.kind === "dismiss_because").slice(0, perSide);
+  if (kept.length === 0 && dismissed.length === 0) return "";
+  const parts: string[] = [];
+  if (kept.length) {
+    parts.push(
+      `Wrongly dismissed in the past — the user said these should have been KEPT. Lean keep for anything similar:\n${kept.map(line).join("\n")}`
+    );
+  }
+  if (dismissed.length) {
+    parts.push(
+      `The user personally dismissed these, in their own words. Lean dismiss for anything similar:\n${dismissed.map(line).join("\n")}`
+    );
+  }
+  return parts.join("\n\n");
+}
+
 /** Sent-mail context, imported lazily: the Google module is server-only. */
 async function safeSentDigest(): Promise<string> {
   try {
@@ -432,6 +458,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       projectNames: projects.map((p) => p.name),
       tags: tasksRepo.allTags().slice(0, 20),
       sentDigest: await safeSentDigest(),
+      feedbackDigest: buildFeedbackDigest(feedbackRepo.list(30)),
     }),
     700
   );

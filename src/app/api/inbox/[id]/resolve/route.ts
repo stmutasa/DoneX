@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
-import { inboxRepo, notesRepo, tasksRepo } from "@/lib/db/repos";
+import { feedbackRepo, inboxRepo, notesRepo, tasksRepo } from "@/lib/db/repos";
 import type { TaskDraft } from "@/lib/types";
 import { newId } from "@/lib/utils";
 
@@ -31,6 +31,8 @@ const bodySchema = z.object({
   action: z.enum(["task", "note", "dismiss"]),
   task: taskDraftSchema.optional(),
   note: z.object({ title: z.string().optional(), content: z.string().optional() }).optional(),
+  /** dismiss only: the user's "dismiss because…" — becomes a triage lesson */
+  reason: z.string().max(240).optional(),
 });
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -80,6 +82,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: true });
   }
 
+  const reason = body.reason?.trim();
+  if (reason) {
+    feedbackRepo.add({
+      kind: "dismiss_because",
+      reason,
+      content: item.content,
+      fromLabel: item.fromLabel,
+      source: item.source,
+    });
+  }
   inboxRepo.resolve(id, "dismissed");
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, learned: !!reason });
 }

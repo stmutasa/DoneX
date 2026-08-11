@@ -141,6 +141,7 @@ export function triagePrompt(input: {
   projectNames: string[];
   tags: string[];
   sentDigest: string;
+  feedbackDigest: string;
 }): string {
   return `You triage one captured item for a personal task app. Decide what should HAPPEN to it.
 
@@ -158,7 +159,7 @@ ${input.openTasksDigest || "(none)"}
 
 MAIL THE USER SENT IN THE LAST DAY (what they've already handled or promised)
 ${input.sentDigest || "(none)"}
-
+${input.feedbackDigest ? `\nTHE USER'S PAST CORRECTIONS — these outrank every generic rule below:\n${input.feedbackDigest}\n` : ""}
 THEIR PROJECTS: ${input.projectNames.join(", ") || "(none)"}
 THEIR TAGS: ${input.tags.join(", ") || "(none)"}
 

@@ -1,6 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { parseTriageDecision } from "@/lib/ai/generate";
+import { buildFeedbackDigest, parseTriageDecision } from "@/lib/ai/generate";
+import type { TriageFeedback } from "@/lib/types";
 import { distanceLabel, haversineKm, mapLimit } from "@/lib/utils";
+
+describe("buildFeedbackDigest", () => {
+  const lesson = (kind: TriageFeedback["kind"], reason: string): TriageFeedback => ({
+    id: reason,
+    kind,
+    reason,
+    content: "Some email content that goes on for a while",
+    fromLabel: "Sender",
+    source: "gmail",
+    createdAt: "2026-08-11T12:00:00Z",
+  });
+
+  it("returns empty string with no lessons", () => {
+    expect(buildFeedbackDigest([])).toBe("");
+  });
+
+  it("splits keep and dismiss lessons into labelled sections", () => {
+    const digest = buildFeedbackDigest([
+      lesson("should_have_kept", "school emails matter"),
+      lesson("dismiss_because", "never care about LinkedIn"),
+    ]);
+    expect(digest).toContain("KEPT");
+    expect(digest).toContain("school emails matter");
+    expect(digest).toContain("Lean dismiss");
+    expect(digest).toContain("never care about LinkedIn");
+  });
+
+  it("caps each side at the given limit", () => {
+    const many = Array.from({ length: 12 }, (_, i) => lesson("dismiss_because", `reason ${i}`));
+    const digest = buildFeedbackDigest(many, 3);
+    expect(digest).toContain("reason 0");
+    expect(digest).toContain("reason 2");
+    expect(digest).not.toContain("reason 3");
+  });
+});
 
 describe("haversineKm / distanceLabel", () => {
   it("computes a known distance (NYC → Philadelphia ≈ 130km)", () => {

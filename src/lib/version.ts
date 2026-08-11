@@ -2,7 +2,7 @@
  * Release identity. APP_VERSION is bumped by hand for each release; BUILD_ID is
  * stamped per image build and is what the update check compares.
  */
-export const APP_VERSION = "1.4.1";
+export const APP_VERSION = "1.5.0";
 
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 

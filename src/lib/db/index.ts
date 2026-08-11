@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   subscription TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS triage_feedback (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  content TEXT DEFAULT '',
+  from_label TEXT DEFAULT '',
+  source TEXT DEFAULT 'gmail',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS google_tokens (
   id TEXT PRIMARY KEY,
   access_token TEXT DEFAULT '',

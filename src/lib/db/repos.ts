@@ -20,6 +20,7 @@ import type {
   TaskListFilter,
   TaskPatch,
   ToolActivity,
+  TriageFeedback,
   WeeklyReview,
 } from "@/lib/types";
 import crypto from "crypto";
@@ -786,6 +787,14 @@ export const inboxRepo = {
       .prepare("UPDATE inbox_items SET suggestion=? WHERE id=?")
       .run(JSON.stringify(suggestion), id);
   },
+  /** Bring a resolved/dismissed item back to the inbox for fresh triage. */
+  restore(id: string): void {
+    getDb()
+      .prepare(
+        "UPDATE inbox_items SET status='new', suggestion=NULL, resolved_task_id=NULL WHERE id=?"
+      )
+      .run(id);
+  },
   resolve(id: string, status: "resolved" | "dismissed", resolvedTaskId?: string | null): void {
     getDb()
       .prepare("UPDATE inbox_items SET status=?, resolved_task_id=? WHERE id=?")
@@ -796,6 +805,70 @@ export const inboxRepo = {
       .prepare("SELECT COUNT(*) c FROM inbox_items WHERE status='new'")
       .get() as { c: number };
     return row.c;
+  },
+};
+
+// ── Triage feedback (self-tuning lessons) ──────────────────────────────────
+
+interface FeedbackRow {
+  id: string;
+  kind: string;
+  reason: string;
+  content: string;
+  from_label: string;
+  source: string;
+  created_at: string;
+}
+
+function rowToFeedback(r: FeedbackRow): TriageFeedback {
+  return {
+    id: r.id,
+    kind: r.kind as TriageFeedback["kind"],
+    reason: r.reason,
+    content: r.content,
+    fromLabel: r.from_label,
+    source: r.source as InboxSource,
+    createdAt: r.created_at,
+  };
+}
+
+export const feedbackRepo = {
+  add(input: {
+    kind: TriageFeedback["kind"];
+    reason: string;
+    content: string;
+    fromLabel: string;
+    source: InboxSource;
+  }): TriageFeedback {
+    const id = newId();
+    const db = getDb();
+    db.prepare(
+      "INSERT INTO triage_feedback(id,kind,reason,content,from_label,source,created_at) VALUES(?,?,?,?,?,?,?)"
+    ).run(
+      id,
+      input.kind,
+      input.reason.trim().slice(0, 240),
+      input.content.slice(0, 200),
+      input.fromLabel.slice(0, 120),
+      input.source,
+      nowIso()
+    );
+    // Bounded memory: the prompt only ever reads the newest lessons anyway.
+    db.prepare(
+      "DELETE FROM triage_feedback WHERE id NOT IN (SELECT id FROM triage_feedback ORDER BY created_at DESC LIMIT 100)"
+    ).run();
+    return rowToFeedback(
+      db.prepare("SELECT * FROM triage_feedback WHERE id=?").get(id) as FeedbackRow
+    );
+  },
+  list(limit = 50): TriageFeedback[] {
+    const rows = getDb()
+      .prepare("SELECT * FROM triage_feedback ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as FeedbackRow[];
+    return rows.map(rowToFeedback);
+  },
+  remove(id: string): void {
+    getDb().prepare("DELETE FROM triage_feedback WHERE id=?").run(id);
   },
 };
 

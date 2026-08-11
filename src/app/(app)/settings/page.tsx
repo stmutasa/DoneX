@@ -12,6 +12,7 @@ import { GoogleSection } from "@/components/settings/GoogleSection";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { VoiceSection } from "@/components/settings/VoiceSection";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { TriageLessonsSection } from "@/components/settings/TriageLessonsSection";
 import {
   AppearanceSection,
   DataSection,
@@ -49,6 +50,7 @@ export default function SettingsPage() {
           <VoiceSection settings={settings} mutate={mutate} />
           <NotificationsSection settings={settings} mutate={mutate} />
           <GoogleSection settings={settings} mutate={mutate} />
+          <TriageLessonsSection />
           <CaptureSection settings={settings} />
           <AppearanceSection />
           <DataSection />
