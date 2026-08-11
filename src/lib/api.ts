@@ -49,16 +49,35 @@ function query(params: Record<string, string | number | boolean | undefined | nu
   return s ? `?${s}` : "";
 }
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/** Combine a caller signal (if any) with a hard timeout, so a stalled mobile
+ *  connection can never leave a request — and the UI waiting on it — hanging
+ *  forever. */
+function withTimeout(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body !== undefined;
-  const res = await fetch(url, {
-    credentials: "same-origin",
-    ...init,
-    headers: {
-      ...(hasBody ? { "content-type": "application/json" } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      credentials: "same-origin",
+      ...init,
+      signal: withTimeout(init?.signal ?? undefined),
+      headers: {
+        ...(hasBody ? { "content-type": "application/json" } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new ApiError("Request timed out — check your connection and try again", 0);
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     let message = `Something went wrong (${res.status})`;

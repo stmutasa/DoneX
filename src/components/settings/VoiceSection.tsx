@@ -13,6 +13,11 @@ export function VoiceSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
   const tts = useTTS();
   const [rate, setRate] = useState(settings.voice.rate ?? 1);
+  // Local, optimistic copy: patch() awaits a server round-trip before the
+  // settings prop updates, so reading settings.voice.voiceURI straight from
+  // props means a preview tapped right after picking a voice would still
+  // play the OLD voice. Update this instantly on selection instead.
+  const [voiceURI, setVoiceURI] = useState(settings.voice.voiceURI);
 
   const grouped = useMemo(() => {
     const lang = (typeof navigator !== "undefined" ? navigator.language : "en").slice(0, 2);
@@ -23,8 +28,7 @@ export function VoiceSection({ settings, mutate }: SectionProps) {
     return { local, remote };
   }, [tts.voices]);
 
-  const speakSample = () =>
-    tts.speak(SAMPLE, { voiceURI: settings.voice.voiceURI || undefined, rate });
+  const speakSample = () => tts.speak(SAMPLE, { voiceURI: voiceURI || undefined, rate });
 
   return (
     <SettingsCard
@@ -41,8 +45,12 @@ export function VoiceSection({ settings, mutate }: SectionProps) {
             </IconButton>
           </div>
           <Select
-            value={settings.voice.voiceURI}
-            onChange={(e) => void patch({ voice: { voiceURI: e.target.value } })}
+            value={voiceURI}
+            onChange={(e) => {
+              const next = e.target.value;
+              setVoiceURI(next);
+              void patch({ voice: { voiceURI: next } });
+            }}
           >
             <option value="">System default</option>
             {grouped.local.length ? (

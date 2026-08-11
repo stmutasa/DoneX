@@ -27,6 +27,20 @@ const SIZE: Record<NonNullable<SheetProps["size"]>, string> = {
   full: "sm:max-w-3xl",
 };
 
+// Reference-counted body scroll lock: several Sheets (e.g. a Confirm dialog
+// opened from within a TaskEditor sheet) can be "open" at once, and a naive
+// save/restore of body.style.overflow desyncs the moment two stack. A shared
+// counter means the lock only lifts once every open sheet has closed.
+let lockCount = 0;
+function lockScroll() {
+  if (lockCount === 0) document.body.style.overflow = "hidden";
+  lockCount += 1;
+}
+function unlockScroll() {
+  lockCount = Math.max(0, lockCount - 1);
+  if (lockCount === 0) document.body.style.overflow = "";
+}
+
 export function Sheet({
   open,
   onClose,
@@ -41,24 +55,25 @@ export function Sheet({
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const dragControls = useDragControls();
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    lockScroll();
     const t = window.setTimeout(() => panelRef.current?.focus(), 40);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlockScroll();
       window.clearTimeout(t);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!mounted) return null;
 

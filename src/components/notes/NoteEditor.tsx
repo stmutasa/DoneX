@@ -8,7 +8,7 @@ import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAutoGrow } from "@/hooks/useAutoGrow";
 import { Sheet } from "@/components/ui/Sheet";
-import { IconButton } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { IconArchive, IconCheck, IconPin, IconPlus, IconTrash, IconX } from "@/components/ui/icons";
@@ -38,6 +38,7 @@ export function NoteEditor({
   const [pinned, setPinned] = useState(false);
   const [itemDraft, setItemDraft] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -57,6 +58,7 @@ export function NoteEditor({
 
   const persist = useCallback(async () => {
     if (!note) return;
+    setSaving(true);
     try {
       const { note: saved } = await notesApi.update(note.id, {
         title,
@@ -66,23 +68,20 @@ export function NoteEditor({
         pinned,
       });
       setSavedAt(saved.updatedAt);
+      setDirty(false);
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save note");
+    } finally {
+      setSaving(false);
     }
   }, [note, title, content, items, color, pinned, onChanged, toast]);
 
-  useEffect(() => {
-    if (!dirty || !open) return;
-    const t = window.setTimeout(async () => {
-      await persist();
-      setDirty(false);
-    }, 600);
-    return () => window.clearTimeout(t);
-  }, [dirty, open, persist]);
-
   const touch = () => setDirty(true);
 
+  // Deliberately no autosave-while-typing: a note only writes to the server
+  // when you tap Save, or when you close it (so backing out never silently
+  // discards what you typed).
   const close = async () => {
     if (dirty) await persist();
     onClose();
@@ -134,7 +133,13 @@ export function NoteEditor({
       size="lg"
       title={note?.kind === "checklist" ? "Checklist" : "Note"}
       subtitle={
-        dirty ? "Saving…" : savedAt ? `Saved ${relativeTime(savedAt)}` : undefined
+        saving
+          ? "Saving…"
+          : dirty
+            ? "Unsaved changes"
+            : savedAt
+              ? `Saved ${relativeTime(savedAt)}`
+              : undefined
       }
       actions={
         <>
@@ -190,7 +195,11 @@ export function NoteEditor({
               />
             ))}
           </div>
-          {!dirty && savedAt ? (
+          {dirty ? (
+            <Button size="sm" variant="primary" loading={saving} onClick={persist}>
+              Save
+            </Button>
+          ) : savedAt ? (
             <span className="flex items-center gap-1 text-[12px] text-ok">
               <IconCheck className="h-3.5 w-3.5" strokeWidth={3} /> Saved
             </span>

@@ -177,61 +177,38 @@ export function useVoiceConversation(
     };
   }, [rec, rec.listening, rec.error, setPhase]);
 
-  // Mic level meter — only while actually listening.
+  // Orb "level" while listening — a synthetic breathing pulse that kicks up
+  // whenever speech recognition actually reports new interim text. This is
+  // deliberately NOT backed by a second getUserMedia() stream: opening a raw
+  // mic capture alongside the SpeechRecognition session starves it of audio
+  // on many Android devices (only one exclusive mic consumer at a time),
+  // which is why recognition would hear nothing and time out immediately.
+  const kickRef = useRef(0);
   useEffect(() => {
     if (phase !== "listening") {
       setMicLevel(0);
       return;
     }
-    let cancelled = false;
+    kickRef.current = 1;
     let raf = 0;
-    let stream: MediaStream | null = null;
-    let audioCtx: AudioContext | null = null;
-
-    const run = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        const Ctor =
-          window.AudioContext ??
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!Ctor) return;
-        audioCtx = new Ctor();
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.75;
-        source.connect(analyser);
-        const buf = new Uint8Array(analyser.fftSize);
-        const tick = () => {
-          analyser.getByteTimeDomainData(buf);
-          let sum = 0;
-          for (let i = 0; i < buf.length; i += 1) {
-            const v = (buf[i] - 128) / 128;
-            sum += v * v;
-          }
-          const rms = Math.sqrt(sum / buf.length);
-          setMicLevel((prev) => prev * 0.65 + Math.min(1, rms * 4.5) * 0.35);
-          raf = requestAnimationFrame(tick);
-        };
-        tick();
-      } catch {
-        // Permission denied / no device — orb simply won't react.
-      }
+    const start = performance.now();
+    const tick = (t: number) => {
+      const elapsed = t - start;
+      kickRef.current = Math.max(0, kickRef.current - 0.035);
+      const breathe = 0.3 + 0.12 * Math.sin(elapsed / 420);
+      setMicLevel(Math.min(1, breathe + kickRef.current));
+      raf = requestAnimationFrame(tick);
     };
-    void run();
-
+    raf = requestAnimationFrame(tick);
     return () => {
-      cancelled = true;
       if (raf) cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((t) => t.stop());
-      audioCtx?.close().catch(() => undefined);
       setMicLevel(0);
     };
   }, [phase]);
+
+  useEffect(() => {
+    if (rec.interim) kickRef.current = 1;
+  }, [rec.interim]);
 
   const start = useCallback(() => {
     sessionRef.current = true;
