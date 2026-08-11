@@ -1,5 +1,9 @@
 /* DoneX service worker */
-const VERSION = "donex-v1";
+// Registered as /sw.js?v=<build id>, so each deploy gets its own cache and the
+// activate step below purges every older one — no deploy can leave stale JS
+// chunks being served cache-first forever.
+const BUILD = new URL(self.location.href).searchParams.get("v") || "v1";
+const VERSION = `donex-${BUILD}`;
 const OFFLINE_URL = "/offline";
 const PRECACHE = [
   OFFLINE_URL,
@@ -59,6 +63,10 @@ self.addEventListener("fetch", (event) => {
       }),
     );
   }
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("push", (event) => {

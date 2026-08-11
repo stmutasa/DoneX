@@ -28,7 +28,10 @@ FROM node:22-slim AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# One id for the whole build (next.config is evaluated once per compilation,
+# so it has to be fixed here rather than generated in the config). The running
+# app compares it against the server's to detect a deploy it hasn't picked up.
+RUN NEXT_PUBLIC_BUILD_ID="b$(date +%Y%m%d%H%M%S)" npm run build
 
 ########################################
 # runtime — minimal image, same base as build for ABI compatibility

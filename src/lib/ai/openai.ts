@@ -65,6 +65,19 @@ export function mergeToolName(current: string, fragment: string): string {
   return current + fragment;
 }
 
+/**
+ * Newer reasoning models (gpt-5.x and friends) reject function tools on
+ * /v1/chat/completions unless reasoning is explicitly switched off. The
+ * requirement is per-model and not advertised anywhere we can query, so the
+ * first rejection is turned into a retry and remembered — one wasted request
+ * per model per process, rather than one per turn.
+ */
+const NEEDS_REASONING_NONE = new Set<string>();
+
+export function mentionsReasoningEffort(raw: string): boolean {
+  return /reasoning_effort/i.test(raw);
+}
+
 async function stream({
   cfg,
   system,
@@ -73,22 +86,40 @@ async function stream({
   onText,
   signal,
 }: StreamArgs): Promise<StreamOutcome> {
-  const body: Record<string, unknown> = {
-    model: cfg.model,
-    stream: true,
-    messages: toOpenAiMessages(system, turns),
+  const buildBody = (disableReasoning: boolean): Record<string, unknown> => {
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      stream: true,
+      messages: toOpenAiMessages(system, turns),
+    };
+    if (tools.length > 0) {
+      body.tools = toOpenAiTools(tools);
+      body.tool_choice = "auto";
+      if (disableReasoning) body.reasoning_effort = "none";
+    }
+    return body;
   };
-  if (tools.length > 0) {
-    body.tools = toOpenAiTools(tools);
-    body.tool_choice = "auto";
-  }
 
-  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: headers(cfg),
-    body: JSON.stringify(body),
-    signal,
-  });
+  const send = (disableReasoning: boolean) =>
+    fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: headers(cfg),
+      body: JSON.stringify(buildBody(disableReasoning)),
+      signal,
+    });
+
+  const alreadyDisabled = NEEDS_REASONING_NONE.has(cfg.model);
+  let res = await send(alreadyDisabled);
+
+  if (!res.ok && !alreadyDisabled) {
+    const raw = await res.text().catch(() => "");
+    if (tools.length > 0 && mentionsReasoningEffort(raw)) {
+      NEEDS_REASONING_NONE.add(cfg.model);
+      res = await send(true);
+    } else {
+      throw new Error(cleanProviderMessage(res.status, raw));
+    }
+  }
   if (!res.ok || !res.body) throw await providerError(res);
 
   let text = "";
