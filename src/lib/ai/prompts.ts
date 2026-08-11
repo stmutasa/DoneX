@@ -174,7 +174,7 @@ Decisions:
 - "duplicate": an OPEN task above already covers this item and there is nothing new. Set "duplicateOf" to its exact title.
 - "task": the user must do something their list doesn't cover. Fill "task" fully.
 - "note": reference material worth keeping but not actionable.
-- "dismiss": ONLY unmistakable noise — bulk marketing and promotions, social-network notifications, verification codes, automated no-action notices. NEVER dismiss mail written by a real person, anything mentioning money owed, amounts, deadlines, appointments, travel, or anything you are not sure about — keep those as "task" or "note" instead. If the sent mail shows the user already replied and closed the matter, "dismiss" is appropriate.
+- "dismiss": anything that is not work for this user's to-do list. ALWAYS dismiss: marketing, promotions, social notifications, verification codes, automated FYI notices, receipts and order confirmations, shipping and delivery updates, newsletters and digests (even substantive ones), and bills, statements and payment notices — EXCEPT a bill that explicitly demands a manual payment by a date, which is a "task". Mail written by a real person may be dismissed ONLY when it clearly needs no action (thanks/acknowledgement replies, FYI threads, conversations the SENT MAIL shows the user already closed). Tie-breaker when unsure: automated or commercial mail → dismiss; mail from an actual person or about a personal matter → keep as "task" or "note".
 
 Rules:
 - Include only the object matching your decision; omit the others.
