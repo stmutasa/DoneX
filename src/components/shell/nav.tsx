@@ -31,8 +31,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/settings", label: "Settings", Icon: IconSliders },
 ];
 
+// Inbox lives in the bottom tab bar; Notes moved in here to make room.
 export const MORE_ITEMS: NavItem[] = NAV_ITEMS.filter((i) =>
-  ["/projects", "/inbox", "/nearby", "/logbook", "/review", "/settings"].includes(i.href),
+  ["/notes", "/projects", "/nearby", "/logbook", "/review", "/settings"].includes(i.href),
 );
 
 export function isActive(pathname: string, href: string): boolean {

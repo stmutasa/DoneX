@@ -43,3 +43,14 @@ for (const [name, size, rounded] of jobs) {
   await sharp(Buffer.from(svg(rounded))).resize(size, size).png().toFile(OUT + name);
   console.log("wrote", name);
 }
+
+// Android status-bar badge: rendered from the ALPHA CHANNEL ONLY, so it must
+// be a white glyph on transparency — a full-color icon shows as a blank box.
+const badgeSvg = `
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <path d="M118 272 L216 368 L394 168"
+    fill="none" stroke="#ffffff" stroke-width="76"
+    stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+await sharp(Buffer.from(badgeSvg)).resize(96, 96).png().toFile(OUT + "badge-96.png");
+console.log("wrote badge-96.png");

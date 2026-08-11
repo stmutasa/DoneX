@@ -10,6 +10,7 @@ const PRECACHE = [
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/maskable-512.png",
+  "/icons/badge-96.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -81,7 +82,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(title, {
       body: data.body || "",
       icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
+      // Monochrome mask — Android renders only its alpha channel in the
+      // status bar; a colour icon here shows up as a featureless box.
+      badge: "/icons/badge-96.png",
       tag: data.tag,
       data: { url: data.url },
     }),

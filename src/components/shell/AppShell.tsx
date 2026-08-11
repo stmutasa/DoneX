@@ -25,7 +25,7 @@ import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { MORE_ITEMS, NAV_ITEMS, Wordmark, isActive } from "./nav";
 import { useTheme } from "./ThemeProvider";
 
-const TAB_ORDER = ["/today", "/upcoming", "/notes"];
+const TAB_ORDER = ["/today", "/upcoming", "/inbox"];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -62,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="lg:pl-[248px]">{children}</main>
 
-      <MobileTabBar pathname={pathname} onMore={() => setMoreOpen(true)} moreBadge={newCount} />
+      <MobileTabBar pathname={pathname} onMore={() => setMoreOpen(true)} inboxBadge={newCount} />
 
       {!hideFab ? (
         <button
@@ -152,14 +152,14 @@ function DesktopSidebar({
 function MobileTabBar({
   pathname,
   onMore,
-  moreBadge,
+  inboxBadge,
 }: {
   pathname: string;
   onMore: () => void;
-  moreBadge: number;
+  inboxBadge: number;
 }) {
-  const tabs = NAV_ITEMS.filter((i) => TAB_ORDER.includes(i.href));
-  const [today, upcoming, notes] = [tabs[0], tabs[1], tabs[2]];
+  const byHref = new Map(NAV_ITEMS.map((i) => [i.href, i]));
+  const [today, upcoming, inbox] = TAB_ORDER.map((href) => byHref.get(href)!);
   const moreActive = MORE_ITEMS.some((i) => isActive(pathname, i.href));
 
   return (
@@ -181,7 +181,7 @@ function MobileTabBar({
           </Link>
         </div>
 
-        <Tab item={notes} pathname={pathname} />
+        <Tab item={inbox} pathname={pathname} badge={inboxBadge} />
 
         <button
           type="button"
@@ -199,12 +199,7 @@ function MobileTabBar({
               transition={{ type: "spring", stiffness: 500, damping: 40 }}
             />
           ) : null}
-          <span className="relative">
-            <IconMore className="h-[21px] w-[21px]" />
-            {moreBadge > 0 ? (
-              <span className="absolute -right-1.5 -top-1 h-2 w-2 rounded-full bg-sunrise" />
-            ) : null}
-          </span>
+          <IconMore className="h-[21px] w-[21px]" />
           More
         </button>
       </div>
@@ -212,7 +207,15 @@ function MobileTabBar({
   );
 }
 
-function Tab({ item, pathname }: { item: (typeof NAV_ITEMS)[number]; pathname: string }) {
+function Tab({
+  item,
+  pathname,
+  badge = 0,
+}: {
+  item: (typeof NAV_ITEMS)[number];
+  pathname: string;
+  badge?: number;
+}) {
   const active = isActive(pathname, item.href);
   const { Icon } = item;
   return (
@@ -230,7 +233,14 @@ function Tab({ item, pathname }: { item: (typeof NAV_ITEMS)[number]; pathname: s
           transition={{ type: "spring", stiffness: 500, damping: 40 }}
         />
       ) : null}
-      <Icon className="h-[21px] w-[21px]" />
+      <span className="relative">
+        <Icon className="h-[21px] w-[21px]" />
+        {badge > 0 ? (
+          <span className="absolute -right-2 -top-1.5 grid min-w-[16px] place-items-center rounded-full bg-sunrise px-1 text-[10px] font-semibold leading-[16px] text-on-accent">
+            {badge > 9 ? "9+" : badge}
+          </span>
+        ) : null}
+      </span>
       {item.label}
     </Link>
   );
