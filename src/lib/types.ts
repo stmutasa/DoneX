@@ -249,6 +249,8 @@ export interface GoogleSettings {
   clientId: string;
   clientSecret: string;
   gmailScanEnabled: boolean;
+  /** Gmail search override; empty uses the built-in default */
+  gmailQuery: string;
 }
 
 export interface AppSettings {
@@ -296,7 +298,11 @@ export interface CalendarEvent {
 export interface GmailScanState {
   /** ISO timestamp of the last attempt, null if never run */
   at: string | null;
+  /** messages the search returned (before dedupe) */
+  matched: number;
   created: number;
+  /** the search that ran, so a fruitless one is visible */
+  query: string;
   /** provider message when the last attempt failed */
   error: string | null;
 }

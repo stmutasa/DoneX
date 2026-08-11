@@ -52,7 +52,7 @@ export default function SettingsPage() {
           <CaptureSection settings={settings} />
           <AppearanceSection />
           <DataSection />
-          <AboutSection />
+          <AboutSection settings={settings} mutate={mutate} />
         </div>
       )}
     </Page>

@@ -7,11 +7,15 @@ import { googleApiError, googleFetch, isGoogleConnected, GOOGLE_NOT_CONNECTED } 
 import { inboxRepo, settingsRepo } from "@/lib/db/repos";
 import { aiConfigured, triageInboxItem } from "@/lib/ai";
 import { nowIso } from "@/lib/utils";
+import { DEFAULT_GMAIL_QUERY } from "@/lib/google/queries";
 import type { GmailScanState } from "@/lib/types";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
-const QUERY = "in:inbox category:primary is:unread newer_than:2d";
-const MAX_RESULTS = 15;
+const MAX_RESULTS = 25;
+
+function gmailQuery(): string {
+  return settingsRepo.getApp().google.gmailQuery.trim() || DEFAULT_GMAIL_QUERY;
+}
 
 interface GmailListResponse {
   messages?: { id?: string }[];
@@ -49,7 +53,13 @@ function receivedAtFrom(message: GmailMessage): string {
 
 const SCAN_STATE_KEY = "gmail.lastScan";
 
-const EMPTY_SCAN: GmailScanState = { at: null, created: 0, error: null };
+const EMPTY_SCAN: GmailScanState = {
+  at: null,
+  matched: 0,
+  created: 0,
+  query: "",
+  error: null,
+};
 
 export function lastScanState(): GmailScanState {
   const raw = settingsRepo.getKV(SCAN_STATE_KEY);
@@ -72,25 +82,26 @@ function recordScan(state: GmailScanState): void {
  */
 export async function scanGmail(): Promise<number> {
   if (!isGoogleConnected()) throw new Error(GOOGLE_NOT_CONNECTED);
+  const query = gmailQuery();
   try {
-    const created = await runScan();
-    recordScan({ at: nowIso(), created, error: null });
+    const { matched, created } = await runScan(query);
+    recordScan({ at: nowIso(), matched, created, query, error: null });
     return created;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Gmail scan failed";
-    recordScan({ at: nowIso(), created: 0, error: message });
+    recordScan({ at: nowIso(), matched: 0, created: 0, query, error: message });
     throw err;
   }
 }
 
-async function runScan(): Promise<number> {
-  const listParams = new URLSearchParams({ q: QUERY, maxResults: String(MAX_RESULTS) });
+async function runScan(query: string): Promise<{ matched: number; created: number }> {
+  const listParams = new URLSearchParams({ q: query, maxResults: String(MAX_RESULTS) });
   const listRes = await googleFetch(`${GMAIL_BASE}/messages?${listParams.toString()}`);
   if (!listRes.ok) throw await googleApiError(listRes, "Gmail scan");
 
   const list = (await listRes.json()) as GmailListResponse;
   const ids = (list.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
-  if (ids.length === 0) return 0;
+  if (ids.length === 0) return { matched: 0, created: 0 };
 
   const known = new Set(
     inboxRepo
@@ -133,5 +144,5 @@ async function runScan(): Promise<number> {
     }
   }
 
-  return createdIds.length;
+  return { matched: ids.length, created: createdIds.length };
 }

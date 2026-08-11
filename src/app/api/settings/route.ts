@@ -30,6 +30,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
     google: {
       clientId: google.clientId,
       gmailScanEnabled: google.gmailScanEnabled,
+      gmailQuery: google.gmailQuery,
       clientSecret: { set: !!google.clientSecret, last4: last4(google.clientSecret) },
     },
     pushConfigured: !!vapid,
@@ -65,6 +66,7 @@ const googlePatchSchema = z.object({
   clientId: z.string().optional(),
   clientSecret: z.string().optional(),
   gmailScanEnabled: z.boolean().optional(),
+  gmailQuery: z.string().max(300).optional(),
 });
 
 const patchSchema = z.object({

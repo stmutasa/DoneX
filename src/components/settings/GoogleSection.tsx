@@ -5,8 +5,10 @@ import useSWR from "swr";
 import { fetcher, googleApi, keys } from "@/lib/api";
 import type { GmailScanState, GoogleStatus } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
+import { DEFAULT_GMAIL_QUERY } from "@/lib/google/queries";
 import { Button } from "@/components/ui/Button";
 import { Input, SwitchRow } from "@/components/ui/Field";
+
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { IconExternal } from "@/components/ui/icons";
@@ -59,6 +61,7 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
 
   const [clientId, setClientId] = useState(settings.google.clientId);
   const [secretDraft, setSecretDraft] = useState("");
+  const [queryDraft, setQueryDraft] = useState(settings.google.gmailQuery);
   const [origin, setOrigin] = useState("");
   const [scanning, setScanning] = useState(false);
 
@@ -206,10 +209,51 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
           </div>
           <SwitchRow
             label="Scan Gmail hourly"
-            description="Unread primary mail becomes inbox items."
+            description="Matching mail becomes inbox items."
             checked={settings.google.gmailScanEnabled}
             onChange={(v) => void patch({ google: { gmailScanEnabled: v } })}
           />
+
+          <Accordion title="Which mail gets pulled in">
+            <p>
+              DoneX searches Gmail exactly like the search box does. Leave this empty to use the
+              default, or write your own.
+            </p>
+            <Input
+              label="Gmail search"
+              value={queryDraft}
+              placeholder={DEFAULT_GMAIL_QUERY}
+              onChange={(e) => setQueryDraft(e.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={queryDraft.trim() === settings.google.gmailQuery.trim()}
+                onClick={() => void patch({ google: { gmailQuery: queryDraft.trim() } }, "Search saved")}
+              >
+                Save search
+              </Button>
+              {settings.google.gmailQuery ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    if (await patch({ google: { gmailQuery: "" } }, "Back to the default")) {
+                      setQueryDraft("");
+                    }
+                  }}
+                >
+                  Use default
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-[12.5px] text-faint">
+              Try <span className="font-mono">in:inbox newer_than:30d</span> to include mail you’ve
+              already read, or add <span className="font-mono">-category:promotions</span> to skip
+              marketing.
+            </p>
+          </Accordion>
         </div>
       ) : (
         <Button
@@ -264,10 +308,22 @@ function ScanStatus({ scan, enabled }: { scan: GmailScanState; enabled: boolean 
     );
   }
   if (!scan.at) return null;
+  // matched === 0 means the search itself came back empty — a very different
+  // problem from "found mail, already imported it".
+  if (scan.matched === 0) {
+    return (
+      <Notice
+        tone="warn"
+        title="The last scan matched no mail"
+        body="Your Gmail search returned nothing. Widen it below — for example drop is:unread, or stretch newer_than to 30d."
+        detail={scan.query || undefined}
+      />
+    );
+  }
   return (
     <p className="text-[13px] text-muted">
-      Last scan {relativeTime(scan.at)} ·{" "}
-      {scan.created > 0 ? `${scan.created} imported` : "nothing new"}
+      Last scan {relativeTime(scan.at)} · {scan.matched} matched ·{" "}
+      {scan.created > 0 ? `${scan.created} new` : "all already imported"}
     </p>
   );
 }

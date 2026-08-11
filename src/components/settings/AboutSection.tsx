@@ -1,24 +1,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format } from "date-fns";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { APP_VERSION, BUILD_ID, applyUpdate, buildTime, fetchServerBuildId } from "@/lib/version";
-import { SettingsCard, Divider } from "./common";
+import { SettingsCard, Divider, type SectionProps } from "./common";
 
-export function AboutSection() {
+/** Build stamps are UTC; show them in the user's configured zone, labelled. */
+function formatInZone(date: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+export function AboutSection({ settings }: SectionProps) {
   const toast = useToast();
   const [checking, setChecking] = useState(false);
   const [serverBuild, setServerBuild] = useState<string | null>(null);
   const [liveSince, setLiveSince] = useState<string>("");
 
-  // Formatted after mount: the build stamp is UTC and renders in local time,
-  // which the server can't know.
   useEffect(() => {
     const t = buildTime();
-    setLiveSince(t ? format(t, "d MMM yyyy, h:mm a") : "");
-  }, []);
+    setLiveSince(t ? formatInZone(t, settings.tz) : "");
+  }, [settings.tz]);
 
   const outdated = !!serverBuild && serverBuild !== "dev" && serverBuild !== BUILD_ID;
 

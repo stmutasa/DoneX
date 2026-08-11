@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     weeklyDay: 0,
     weeklyTime: "18:00",
   },
-  google: { clientId: "", clientSecret: "", gmailScanEnabled: false },
+  google: { clientId: "", clientSecret: "", gmailScanEnabled: false, gmailQuery: "" },
   ingestToken: "",
   vapid: null,
   onboardedAt: null,
