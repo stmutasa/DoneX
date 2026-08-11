@@ -136,8 +136,11 @@ export function triagePrompt(input: {
   todayKey: string;
   weekday: string;
   tz: string;
+  openTasksDigest: string;
+  projectNames: string[];
+  tags: string[];
 }): string {
-  return `Classify this captured item for a personal task app and decide what to do with it.
+  return `You triage one captured item for a personal task app. Decide what should HAPPEN to it.
 
 SOURCE: ${input.source}${input.fromLabel ? ` from ${input.fromLabel}` : ""}
 RECEIVED: ${input.receivedAt}
@@ -148,14 +151,30 @@ ITEM
 ${input.content.slice(0, 4000)}
 """
 
+THE USER'S OPEN TASKS (for duplicate detection)
+${input.openTasksDigest || "(none)"}
+
+THEIR PROJECTS: ${input.projectNames.join(", ") || "(none)"}
+THEIR TAGS: ${input.tags.join(", ") || "(none)"}
+
 Return JSON exactly like:
-{"action": "task"|"note"|"ignore", "reason": string, "task": {"title": string, "dueAtLocal": string|null, "priority": 0|2}, "note": {"title": string, "content": string}}
+{"decision": "task"|"note"|"dismiss"|"duplicate", "reason": string,
+ "duplicateOf": string,
+ "task": {"title": string, "dueAtLocal": string|null, "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
+ "note": {"title": string, "content": string}}
+
+Decisions:
+- "dismiss": clearly nothing for a to-do list — newsletters, marketing, promotions, social notifications, verification codes, receipts and shipping/delivery updates that require no action, automated FYI mail. When in doubt, do NOT dismiss.
+- "duplicate": an OPEN task above already covers this item. Set "duplicateOf" to that task's exact title.
+- "task": the user must do something this list doesn't already cover. Fill "task" fully.
+- "note": reference material worth keeping but not actionable.
 
 Rules:
-- "task" when the item asks for or implies an action the user must take. "note" when it is reference material worth keeping. "ignore" for newsletters, receipts, chatter and anything with no lasting value.
-- Include only the object matching your action; omit the other.
-- "reason" explains the call in at most 90 characters.
-- task.title is imperative, at most 80 characters, no trailing punctuation.
-- task.dueAtLocal is "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
-- task.priority is 2 when the text is genuinely urgent, else 0.`;
+- Include only the object matching your decision; omit the others.
+- "reason": at most 90 characters, plain words.
+- task.title: imperative, at most 80 characters, no trailing punctuation.
+- task.dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
+- task.priority: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.
+- task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
+- task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;
 }

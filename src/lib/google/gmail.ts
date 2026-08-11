@@ -6,7 +6,7 @@ import "server-only";
 import { googleApiError, googleFetch, isGoogleConnected, GOOGLE_NOT_CONNECTED } from "@/lib/google/oauth";
 import { inboxRepo, settingsRepo } from "@/lib/db/repos";
 import { aiConfigured, triageInboxItem } from "@/lib/ai";
-import { nowIso } from "@/lib/utils";
+import { mapLimit, nowIso } from "@/lib/utils";
 import { DEFAULT_GMAIL_QUERY } from "@/lib/google/queries";
 import type { GmailScanState } from "@/lib/types";
 
@@ -110,14 +110,14 @@ async function runScan(query: string): Promise<{ matched: number; created: numbe
       .filter((id): id is string => !!id)
   );
 
-  const createdIds: string[] = [];
-  for (const id of ids) {
-    const externalId = `gmail:${id}`;
-    if (known.has(externalId)) continue;
+  const fresh = ids.filter((id) => !known.has(`gmail:${id}`));
 
+  // Fetch message metadata concurrently — serial fetches plus serial AI triage
+  // was slow enough to trip client request timeouts on a first-ever scan.
+  const settled = await mapLimit(fresh, 5, async (id) => {
     const detailUrl = `${GMAIL_BASE}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`;
     const res = await googleFetch(detailUrl);
-    if (!res.ok) continue;
+    if (!res.ok) return null;
 
     const message = (await res.json()) as GmailMessage;
     const subject = headerValue(message, "Subject") || "(no subject)";
@@ -126,22 +126,21 @@ async function runScan(query: string): Promise<{ matched: number; created: numbe
 
     const item = inboxRepo.create({
       source: "gmail",
-      externalId,
+      externalId: `gmail:${id}`,
       fromLabel: cleanFromLabel(headerValue(message, "From")),
       content,
       receivedAt: receivedAtFrom(message),
     });
-    if (item) createdIds.push(item.id);
-  }
+    return item?.id ?? null;
+  });
+
+  const createdIds = settled
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter((id): id is string => !!id);
 
   if (createdIds.length > 0 && aiConfigured()) {
-    for (const itemId of createdIds) {
-      try {
-        await triageInboxItem(itemId);
-      } catch {
-        // triage is best-effort — the item stays in the inbox untriaged
-      }
-    }
+    // Best-effort, bounded concurrency; failures leave the item untriaged.
+    await mapLimit(createdIds, 2, (itemId) => triageInboxItem(itemId));
   }
 
   return { matched: ids.length, created: createdIds.length };

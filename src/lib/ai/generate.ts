@@ -22,7 +22,7 @@ import type {
   WeeklyReview,
 } from "@/lib/types";
 import { adapterFor, readyConfig } from "@/lib/ai/adapters";
-import { buildAssistantContext } from "@/lib/ai/context";
+import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
 import { asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
 import { describeDue, instantOf, normalizePlanBlocks, utcFromLocal } from "@/lib/ai/tools";
@@ -288,6 +288,75 @@ function parseLocalDue(raw: unknown, tz: string): { dueAt: string | null; allDay
   return { dueAt: parsed.toISOString(), allDay: false };
 }
 
+export type TriageDecision = "task" | "note" | "dismiss" | "duplicate";
+
+export interface ParsedTriage {
+  decision: TriageDecision;
+  reason: string;
+  duplicateOf: string;
+  task: {
+    title: string;
+    dueAtLocal: string | null;
+    priority: Priority;
+    projectName: string | null;
+    tags: string[];
+  } | null;
+  note: { title: string; content: string } | null;
+}
+
+/** Pure normalization of the model's triage JSON; unknown decisions fall back
+ *  to "task" so nothing actionable is ever thrown away by a formatting slip. */
+export function parseTriageDecision(
+  payload: Record<string, unknown>,
+  fallbackTitle: string,
+): ParsedTriage {
+  const raw = asString(payload.decision ?? payload.action)?.toLowerCase().trim() ?? "";
+  const decision: TriageDecision =
+    raw === "note" || raw === "dismiss" || raw === "duplicate" || raw === "ignore"
+      ? raw === "ignore"
+        ? "dismiss"
+        : (raw as TriageDecision)
+      : "task";
+
+  const reason = (asString(payload.reason) ?? "").trim().slice(0, 90);
+  const duplicateOf = (asString(payload.duplicateOf) ?? "").trim().slice(0, 120);
+
+  let task: ParsedTriage["task"] = null;
+  if (decision === "task") {
+    const rec = asRecord(payload.task) ?? {};
+    const title = (asString(rec.title) ?? "").trim().slice(0, 80) || fallbackTitle.slice(0, 80);
+    const priorityNum = asNumber(rec.priority) ?? 0;
+    const tags = (asStringArray(rec.tags) ?? [])
+      .map((t) => t.trim().toLowerCase().replace(/^#/, ""))
+      .filter(Boolean)
+      .slice(0, 3);
+    task = {
+      title,
+      dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
+      priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
+      projectName: (asString(rec.projectName) ?? "").trim() || null,
+      tags,
+    };
+  }
+
+  let note: ParsedTriage["note"] = null;
+  if (decision === "note") {
+    const rec = asRecord(payload.note) ?? {};
+    note = {
+      title: (asString(rec.title) ?? "Captured note").trim().slice(0, 80) || "Captured note",
+      content: (asString(rec.content) ?? "").trim(),
+    };
+  }
+
+  return { decision, reason, duplicateOf, task, note };
+}
+
+/**
+ * Triage decides AND acts: clearly-irrelevant or already-tracked GMAIL items
+ * are dismissed on the spot (the suggestion is stored first, so History shows
+ * why). Items the user captured themselves (sms/quick) are never auto-closed —
+ * a dismiss verdict just becomes an "ignore" suggestion they can act on.
+ */
 export async function triageInboxItem(id: string): Promise<InboxItem> {
   const item = inboxRepo.get(id);
   if (!item) throw new Error("Inbox item not found");
@@ -295,6 +364,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   const tz = settingsRepo.getApp().tz;
   const now = new Date();
   const todayKey = localDateKey(now, tz);
+  const projects = projectsRepo.list();
 
   const payload = await jsonCall(
     triagePrompt({
@@ -305,38 +375,43 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       todayKey,
       weekday: format(new TZDate(now, tz), "EEEE"),
       tz,
+      openTasksDigest: buildTaskDigest(tz, todayKey),
+      projectNames: projects.map((p) => p.name),
+      tags: tasksRepo.allTags().slice(0, 20),
     }),
-    600
+    700
   );
 
-  const actionRaw = asString(payload.action)?.toLowerCase().trim();
-  const action: InboxSuggestion["action"] =
-    actionRaw === "task" || actionRaw === "note" ? actionRaw : "ignore";
+  const parsed = parseTriageDecision(payload, item.content);
+  const suggestion: InboxSuggestion = { action: "ignore", reason: parsed.reason };
 
-  const suggestion: InboxSuggestion = {
-    action,
-    reason: (asString(payload.reason) ?? "").trim().slice(0, 90),
-  };
-
-  if (action === "task") {
-    const taskRec = asRecord(payload.task) ?? {};
-    const title = (asString(taskRec.title) ?? item.content).trim().slice(0, 80);
-    const due = parseLocalDue(taskRec.dueAtLocal ?? taskRec.dueAt, tz);
-    const priorityNum = asNumber(taskRec.priority) ?? 0;
+  if (parsed.decision === "task" && parsed.task) {
+    const due = parseLocalDue(parsed.task.dueAtLocal, tz);
+    const project = parsed.task.projectName
+      ? projects.find((p) => p.name.toLowerCase() === parsed.task!.projectName!.toLowerCase())
+      : undefined;
+    suggestion.action = "task";
     suggestion.task = {
-      title: title || item.content.slice(0, 80),
+      title: parsed.task.title,
       dueAt: due.dueAt,
       allDay: due.allDay,
-      priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
+      priority: parsed.task.priority,
+      projectId: project?.id ?? null,
+      tags: parsed.task.tags,
     };
-  } else if (action === "note") {
-    const noteRec = asRecord(payload.note) ?? {};
-    suggestion.note = {
-      title: (asString(noteRec.title) ?? "Captured note").trim().slice(0, 80) || "Captured note",
-      content: (asString(noteRec.content) ?? item.content).trim(),
-    };
+  } else if (parsed.decision === "note" && parsed.note) {
+    suggestion.action = "note";
+    suggestion.note = { ...parsed.note, content: parsed.note.content || item.content };
+  } else {
+    // dismiss / duplicate
+    if (parsed.decision === "duplicate" && parsed.duplicateOf) {
+      suggestion.duplicateOfTitle = parsed.duplicateOf;
+      if (!suggestion.reason) suggestion.reason = `Already tracked: ${parsed.duplicateOf}`;
+    }
+    if (item.source === "gmail") suggestion.autoDismissed = true;
   }
 
   inboxRepo.setSuggestion(id, suggestion);
+  if (suggestion.autoDismissed) inboxRepo.resolve(id, "dismissed");
   return inboxRepo.get(id) ?? { ...item, suggestion };
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { aiConfigured, triageInboxItem } from "@/lib/ai";
 import { inboxRepo } from "@/lib/db/repos";
+import { mapLimit } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -33,20 +34,23 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  const pending = inboxRepo.list({ status: "new" }).filter((item) => item.suggestion === null);
-  let failure = "";
-  for (const item of pending.slice(0, 20)) {
-    try {
-      await triageInboxItem(item.id);
-    } catch (err) {
-      failure = err instanceof Error ? err.message : "Could not triage the item";
-      break;
-    }
-  }
+  const pending = inboxRepo
+    .list({ status: "new" })
+    .filter((item) => item.suggestion === null)
+    .slice(0, 30);
+
+  const settled = await mapLimit(pending, 2, (item) => triageInboxItem(item.id));
+  const firstFailure = settled.find((r) => r.status === "rejected");
 
   const items = inboxRepo.list({ status: "new" });
-  if (failure && items.every((item) => item.suggestion === null)) {
-    return NextResponse.json({ error: failure }, { status: 502 });
+  const stillNew = new Set(items.map((i) => i.id));
+  const dismissed = pending.filter((i) => !stillNew.has(i.id)).length;
+  const kept = pending.length - dismissed;
+
+  if (firstFailure && settled.every((r) => r.status === "rejected")) {
+    const reason = firstFailure.reason;
+    const message = reason instanceof Error ? reason.message : "Could not triage";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
-  return NextResponse.json({ items });
+  return NextResponse.json({ items, kept, dismissed });
 }

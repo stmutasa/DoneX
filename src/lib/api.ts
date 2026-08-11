@@ -50,26 +50,31 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
+/** For endpoints that do real work (Gmail scans, AI triage batches). */
+const SLOW_TIMEOUT_MS = 150_000;
 
 /** Combine a caller signal (if any) with a hard timeout, so a stalled mobile
  *  connection can never leave a request — and the UI waiting on it — hanging
  *  forever. */
-function withTimeout(signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+type RequestInitEx = RequestInit & { timeoutMs?: number };
+
+async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
   const hasBody = init?.body !== undefined;
+  const { timeoutMs, ...rest } = init ?? {};
   let res: Response;
   try {
     res = await fetch(url, {
       credentials: "same-origin",
-      ...init,
-      signal: withTimeout(init?.signal ?? undefined),
+      ...rest,
+      signal: withTimeout(rest.signal ?? undefined, timeoutMs ?? REQUEST_TIMEOUT_MS),
       headers: {
         ...(hasBody ? { "content-type": "application/json" } : {}),
-        ...(init?.headers ?? {}),
+        ...(rest.headers ?? {}),
       },
     });
   } catch (err) {
@@ -223,9 +228,10 @@ export const inboxApi = {
       body: JSON.stringify(payload),
     }),
   triage: (id?: string) =>
-    request<{ items: InboxItem[] }>("/api/inbox/triage", {
+    request<{ items: InboxItem[]; kept?: number; dismissed?: number }>("/api/inbox/triage", {
       method: "POST",
       body: JSON.stringify(id ? { id } : {}),
+      timeoutMs: SLOW_TIMEOUT_MS,
     }),
 };
 
@@ -435,7 +441,11 @@ export const pushApi = {
 export const googleApi = {
   status: () => request<GoogleStatus>(keys.googleStatus()),
   disconnect: () => request<{ ok: true }>("/api/google/disconnect", { method: "POST" }),
-  scan: () => request<{ created: number }>("/api/google/scan", { method: "POST" }),
+  scan: () =>
+    request<{ created: number }>("/api/google/scan", {
+      method: "POST",
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
 };
 
 export const calendarApi = {

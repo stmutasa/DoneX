@@ -108,6 +108,10 @@ export interface InboxSuggestion {
   action: "task" | "note" | "ignore";
   /** short explanation shown to the user */
   reason: string;
+  /** open task the AI judged already covers this item */
+  duplicateOfTitle?: string;
+  /** triage resolved this item itself instead of waiting on the user */
+  autoDismissed?: boolean;
   task?: TaskDraft;
   note?: { title: string; content: string };
 }

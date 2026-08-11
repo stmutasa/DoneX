@@ -73,8 +73,16 @@ export default function InboxPage() {
   const suggest = async (item: InboxItem) => {
     setSuggestingId(item.id);
     try {
-      await inboxApi.triage(item.id);
+      const { items: updated } = await inboxApi.triage(item.id);
       await mutate();
+      const result = updated[0];
+      if (result && result.status === "dismissed") {
+        toast.success(
+          result.suggestion?.duplicateOfTitle
+            ? `Dismissed — already tracked: ${result.suggestion.duplicateOfTitle}`
+            : "Dismissed — nothing to do here",
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not get a suggestion");
     } finally {
@@ -85,9 +93,12 @@ export default function InboxPage() {
   const triageAll = async () => {
     setTriaging(true);
     try {
-      await inboxApi.triage();
+      const { kept, dismissed } = await inboxApi.triage();
       await mutate();
-      toast.success("Triaged everything new");
+      const parts: string[] = [];
+      if (typeof kept === "number" && kept > 0) parts.push(`${kept} for you to review`);
+      if (typeof dismissed === "number" && dismissed > 0) parts.push(`${dismissed} auto-dismissed`);
+      toast.success(parts.length ? parts.join(" · ") : "Nothing needed triaging");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not triage");
     } finally {
@@ -203,6 +214,13 @@ export default function InboxPage() {
                       </span>
                       <span className="mt-0.5 block text-[12px] text-faint">
                         {item.fromLabel} · {relativeTime(item.receivedAt)}
+                        {item.suggestion?.autoDismissed
+                          ? ` · AI: ${
+                              item.suggestion.duplicateOfTitle
+                                ? `already tracked — ${item.suggestion.duplicateOfTitle}`
+                                : item.suggestion.reason || "nothing actionable"
+                            }`
+                          : ""}
                       </span>
                     </span>
                   </li>

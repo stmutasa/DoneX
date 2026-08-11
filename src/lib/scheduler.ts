@@ -7,14 +7,22 @@ import { setInterval as setNodeInterval, setTimeout as setNodeTimeout } from "no
 import {
   completionsRepo,
   googleRepo,
+  inboxRepo,
   projectsRepo,
   settingsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
-import { aiConfigured, generateBriefing, generateWeeklyReview } from "@/lib/ai";
+import { aiConfigured, generateBriefing, generateWeeklyReview, triageInboxItem } from "@/lib/ai";
 import { scanGmail } from "@/lib/google/gmail";
 import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
-import { addDaysToDateKey, isoWeekKey, localDateKey, localTimeKey, nowIso } from "@/lib/utils";
+import {
+  addDaysToDateKey,
+  isoWeekKey,
+  localDateKey,
+  localTimeKey,
+  mapLimit,
+  nowIso,
+} from "@/lib/utils";
 import type { AppSettings, Briefing, WeeklyReview } from "@/lib/types";
 
 const TICK_MS = 60_000;
@@ -24,6 +32,10 @@ const GMAIL_SCAN_INTERVAL_MS = 60 * 60 * 1000;
 const KV_LAST_BRIEFING_DAY = "sched.lastBriefingDay";
 const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
 const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
+const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
+
+/** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
+const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
 
 const globalForScheduler = globalThis as unknown as { __donexSchedulerStarted?: boolean };
 let ticking = false;
@@ -47,6 +59,7 @@ async function tick(): Promise<void> {
     await runMorningBriefing(settings, now);
     await runWeeklyReview(settings, now);
     await runGmailScan(settings);
+    await runScheduledTriage(settings, now);
   } catch (err) {
     console.error("[scheduler] tick", err);
   } finally {
@@ -175,6 +188,57 @@ async function runGmailScan(settings: AppSettings): Promise<void> {
     }
   } catch (err) {
     console.error("[scheduler] gmail scan", err);
+  }
+}
+
+// ── 5. Scheduled inbox triage (06:00 / 14:00 / 20:00 local) ────────────────
+
+async function runScheduledTriage(settings: AppSettings, now: Date): Promise<void> {
+  try {
+    if (!aiConfigured()) return;
+
+    const tz = settings.tz;
+    const slot = TRIAGE_TIMES.find((t) => t === localTimeKey(now, tz));
+    if (!slot) return;
+
+    const slotKey = `${localDateKey(now, tz)}@${slot}`;
+    if (settingsRepo.getKV(KV_LAST_TRIAGE_SLOT) === slotKey) return;
+    settingsRepo.setKV(KV_LAST_TRIAGE_SLOT, slotKey); // claim before the slow work
+
+    const beforeCount = inboxRepo.newCount();
+
+    // Pull fresh mail first so the 6am pass sees the overnight inbox. Items it
+    // creates are triaged (and possibly auto-dismissed) inside scanGmail.
+    let created = 0;
+    if (settings.google.gmailScanEnabled && googleRepo.get()) {
+      try {
+        created = await scanGmail();
+      } catch (err) {
+        console.error("[scheduler] triage pre-scan", err);
+      }
+    }
+
+    // Anything still lacking a verdict (older captures, earlier failures).
+    const pending = inboxRepo
+      .list({ status: "new" })
+      .filter((item) => item.suggestion === null)
+      .slice(0, 30);
+    await mapLimit(pending, 2, (item) => triageInboxItem(item.id));
+
+    const waiting = inboxRepo.newCount();
+    const dismissed = Math.max(0, beforeCount + created - waiting);
+    if (created === 0 && pending.length === 0) return; // slot had nothing to do
+
+    // Quiet when everything was noise — only speak up when something needs eyes.
+    if (waiting > 0) {
+      await sendPushToAll({
+        title: "Inbox triage",
+        body: `${waiting} worth a look${dismissed ? ` · ${dismissed} auto-dismissed` : ""}`,
+        url: "/inbox",
+      });
+    }
+  } catch (err) {
+    console.error("[scheduler] triage", err);
   }
 }
 
