@@ -11,6 +11,7 @@ import { CaptureSection } from "@/components/settings/CaptureSection";
 import { GoogleSection } from "@/components/settings/GoogleSection";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { VoiceSection } from "@/components/settings/VoiceSection";
+import { AboutSection } from "@/components/settings/AboutSection";
 import {
   AppearanceSection,
   DataSection,
@@ -51,6 +52,7 @@ export default function SettingsPage() {
           <CaptureSection settings={settings} />
           <AppearanceSection />
           <DataSection />
+          <AboutSection />
         </div>
       )}
     </Page>

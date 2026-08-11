@@ -4,9 +4,10 @@
  */
 import "server-only";
 import { googleApiError, googleFetch, isGoogleConnected, GOOGLE_NOT_CONNECTED } from "@/lib/google/oauth";
-import { inboxRepo } from "@/lib/db/repos";
+import { inboxRepo, settingsRepo } from "@/lib/db/repos";
 import { aiConfigured, triageInboxItem } from "@/lib/ai";
 import { nowIso } from "@/lib/utils";
+import type { GmailScanState } from "@/lib/types";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const QUERY = "in:inbox category:primary is:unread newer_than:2d";
@@ -46,10 +47,43 @@ function receivedAtFrom(message: GmailMessage): string {
   return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : nowIso();
 }
 
-/** Ingests new messages into the inbox. Returns how many items were created. */
+const SCAN_STATE_KEY = "gmail.lastScan";
+
+const EMPTY_SCAN: GmailScanState = { at: null, created: 0, error: null };
+
+export function lastScanState(): GmailScanState {
+  const raw = settingsRepo.getKV(SCAN_STATE_KEY);
+  if (!raw) return EMPTY_SCAN;
+  try {
+    return { ...EMPTY_SCAN, ...(JSON.parse(raw) as Partial<GmailScanState>) };
+  } catch {
+    return EMPTY_SCAN;
+  }
+}
+
+function recordScan(state: GmailScanState): void {
+  settingsRepo.setKV(SCAN_STATE_KEY, JSON.stringify(state));
+}
+
+/**
+ * Ingests new messages into the inbox. Returns how many items were created.
+ * The outcome is recorded either way — hourly scheduler scans fail with nobody
+ * watching, and an empty inbox otherwise looks identical to a broken one.
+ */
 export async function scanGmail(): Promise<number> {
   if (!isGoogleConnected()) throw new Error(GOOGLE_NOT_CONNECTED);
+  try {
+    const created = await runScan();
+    recordScan({ at: nowIso(), created, error: null });
+    return created;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Gmail scan failed";
+    recordScan({ at: nowIso(), created: 0, error: message });
+    throw err;
+  }
+}
 
+async function runScan(): Promise<number> {
   const listParams = new URLSearchParams({ q: QUERY, maxResults: String(MAX_RESULTS) });
   const listRes = await googleFetch(`${GMAIL_BASE}/messages?${listParams.toString()}`);
   if (!listRes.ok) throw await googleApiError(listRes, "Gmail scan");

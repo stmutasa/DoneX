@@ -162,7 +162,9 @@ export function DataSection() {
           onChange={(e) => void onFile(e.target.files?.[0])}
         />
       </div>
-      <p className="text-[12px] text-faint">DoneX v1</p>
+      <p className="text-[12px] text-faint">
+        Your data lives in SQLite on this server’s volume — deploys never touch it.
+      </p>
     </SettingsCard>
   );
 }

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { fetcher, googleApi, keys } from "@/lib/api";
-import type { GoogleStatus } from "@/lib/types";
+import type { GmailScanState, GoogleStatus } from "@/lib/types";
+import { relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
 import { Input, SwitchRow } from "@/components/ui/Field";
 import { useConfirm } from "@/components/ui/Confirm";
@@ -19,6 +20,36 @@ import {
   useSettingsPatch,
   type SectionProps,
 } from "./common";
+
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+
+/** Turns Google's wording into the actual thing to go and fix. */
+function explainGoogleError(message: string): { title: string; fix: string; link?: string } | null {
+  const m = message.toLowerCase();
+  if (m.includes("has not been used in project") || m.includes("is disabled")) {
+    return {
+      title: "The Gmail API isn’t switched on in your Google Cloud project",
+      fix: "Open the Gmail API page for your project, press Enable, wait a minute, then scan again.",
+      link: "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
+    };
+  }
+  if (m.includes("insufficient") || m.includes("scope") || m.includes("permission")) {
+    return {
+      title: "DoneX wasn’t granted permission to read Gmail",
+      fix: "Add the gmail.readonly scope under Data access in the Google Auth Platform, then disconnect and reconnect below so the new permission is granted.",
+      link: "https://console.cloud.google.com/auth/scopes",
+    };
+  }
+  if (m.includes("expired") || m.includes("invalid_grant")) {
+    return {
+      title: "The Google connection expired",
+      fix: "Reconnect below. Publishing your app (Audience → Publish) stops this recurring every 7 days.",
+      link: "https://console.cloud.google.com/auth/audience",
+    };
+  }
+  return null;
+}
 
 export function GoogleSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
@@ -55,6 +86,8 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
       toast.error(err instanceof Error ? err.message : "Gmail scan failed");
     } finally {
       setScanning(false);
+      // Refresh either way so the diagnostics below reflect this attempt.
+      void mutateStatus();
     }
   };
 
@@ -145,6 +178,24 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
           <p className="text-[14px] text-ink">
             Connected as <span className="font-medium">{status.email ?? "your account"}</span>
           </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <ScopeChip label="Calendar" granted={status.scopes.includes(CALENDAR_SCOPE)} />
+            <ScopeChip label="Gmail" granted={status.scopes.includes(GMAIL_SCOPE)} />
+          </div>
+
+          {!status.scopes.includes(GMAIL_SCOPE) ? (
+            <Notice
+              tone="warn"
+              title="Gmail permission was never granted"
+              body="Google only handed over the permissions listed above. Disconnect and reconnect to grant Gmail access — if the consent screen doesn’t offer it, add the gmail.readonly scope under Data access first."
+              link="https://console.cloud.google.com/auth/scopes"
+              linkLabel="Google Auth Platform → Data access"
+            />
+          ) : null}
+
+          <ScanStatus scan={status.gmailScan} enabled={settings.google.gmailScanEnabled} />
+
           <div className="flex flex-wrap gap-2">
             <Button size="sm" loading={scanning} onClick={scan}>
               Scan Gmail now
@@ -172,5 +223,95 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
         </Button>
       )}
     </SettingsCard>
+  );
+}
+
+function ScopeChip({ label, granted }: { label: string; granted: boolean }) {
+  return (
+    <span
+      className={
+        granted
+          ? "inline-flex items-center gap-1 rounded-full bg-ok/12 px-2.5 py-1 text-[12px] font-medium text-ok"
+          : "inline-flex items-center gap-1 rounded-full bg-danger/12 px-2.5 py-1 text-[12px] font-medium text-danger"
+      }
+    >
+      {granted ? "✓" : "✕"} {label}
+    </span>
+  );
+}
+
+function ScanStatus({ scan, enabled }: { scan: GmailScanState; enabled: boolean }) {
+  if (!enabled && !scan.error) {
+    return (
+      <Notice
+        tone="warn"
+        title="Hourly scanning is off"
+        body="Nothing will reach your inbox from Gmail until you turn it on below."
+      />
+    );
+  }
+  if (scan.error) {
+    const help = explainGoogleError(scan.error);
+    return (
+      <Notice
+        tone="danger"
+        title={help?.title ?? "The last Gmail scan failed"}
+        body={help?.fix ?? scan.error}
+        detail={help ? scan.error : undefined}
+        link={help?.link}
+        linkLabel="Open Google Cloud"
+      />
+    );
+  }
+  if (!scan.at) return null;
+  return (
+    <p className="text-[13px] text-muted">
+      Last scan {relativeTime(scan.at)} ·{" "}
+      {scan.created > 0 ? `${scan.created} imported` : "nothing new"}
+    </p>
+  );
+}
+
+function Notice({
+  tone,
+  title,
+  body,
+  detail,
+  link,
+  linkLabel,
+}: {
+  tone: "warn" | "danger";
+  title: string;
+  body: string;
+  detail?: string;
+  link?: string;
+  linkLabel?: string;
+}) {
+  return (
+    <div
+      className={
+        tone === "danger"
+          ? "rounded-2xl border border-danger/30 bg-danger/10 p-3.5"
+          : "rounded-2xl border border-warn/30 bg-warn/10 p-3.5"
+      }
+    >
+      <p className="text-[14px] font-medium text-ink">{title}</p>
+      <p className="mt-0.5 text-[13px] leading-relaxed text-muted">{body}</p>
+      {detail ? (
+        <p className="mt-1.5 break-words font-mono text-[11.5px] leading-relaxed text-faint">
+          {detail}
+        </p>
+      ) : null}
+      {link ? (
+        <a
+          href={link}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-accent"
+        >
+          {linkLabel ?? "Open"} <IconExternal className="h-3.5 w-3.5" />
+        </a>
+      ) : null}
+    </div>
   );
 }

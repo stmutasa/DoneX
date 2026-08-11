@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
+import { applyUpdate, isUpdateAvailable } from "@/lib/version";
 
-const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 const CHECK_EVERY_MS = 10 * 60_000;
 
 /**
@@ -18,19 +18,7 @@ export function UpdateBanner() {
   const [reloading, setReloading] = useState(false);
 
   const check = useCallback(async () => {
-    if (BUILD_ID === "dev") return;
-    try {
-      const res = await fetch("/api/health", { cache: "no-store" });
-      if (!res.ok) return;
-      const data: unknown = await res.json();
-      const version =
-        data && typeof data === "object" ? (data as { version?: unknown }).version : null;
-      if (typeof version === "string" && version !== "dev" && version !== BUILD_ID) {
-        setAvailable(true);
-      }
-    } catch {
-      // Offline or mid-deploy — the next check will settle it.
-    }
+    if (await isUpdateAvailable()) setAvailable(true);
   }, []);
 
   useEffect(() => {
@@ -48,19 +36,7 @@ export function UpdateBanner() {
 
   const refresh = async () => {
     setReloading(true);
-    try {
-      if ("caches" in window) {
-        const names = await caches.keys();
-        await Promise.all(names.map((n) => caches.delete(n)));
-      }
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        await reg?.update().catch(() => undefined);
-      }
-    } catch {
-      // Best effort — reloading still picks up the new build.
-    }
-    window.location.reload();
+    await applyUpdate();
   };
 
   return (

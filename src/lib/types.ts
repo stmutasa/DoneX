@@ -293,11 +293,21 @@ export interface CalendarEvent {
   location: string | null;
 }
 
+export interface GmailScanState {
+  /** ISO timestamp of the last attempt, null if never run */
+  at: string | null;
+  created: number;
+  /** provider message when the last attempt failed */
+  error: string | null;
+}
+
 export interface GoogleStatus {
   configured: boolean; // client id+secret present
   connected: boolean;
   email: string | null;
   scopes: string[];
+  /** so silent background scan failures are visible in Settings */
+  gmailScan: GmailScanState;
 }
 
 // ── Model registry ─────────────────────────────────────────────────────────
