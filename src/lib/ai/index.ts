@@ -20,6 +20,7 @@ export {
   generateBriefing,
   generateDayPlan,
   generateWeeklyReview,
+  sweepAutoDismissable,
   triageInboxItem,
 } from "@/lib/ai/generate";
 

@@ -139,6 +139,7 @@ export function triagePrompt(input: {
   openTasksDigest: string;
   projectNames: string[];
   tags: string[];
+  sentDigest: string;
 }): string {
   return `You triage one captured item for a personal task app. Decide what should HAPPEN to it.
 
@@ -151,30 +152,35 @@ ITEM
 ${input.content.slice(0, 4000)}
 """
 
-THE USER'S OPEN TASKS (for duplicate detection)
+THE USER'S OPEN TASKS (for duplicate/update detection)
 ${input.openTasksDigest || "(none)"}
+
+MAIL THE USER SENT IN THE LAST DAY (what they've already handled or promised)
+${input.sentDigest || "(none)"}
 
 THEIR PROJECTS: ${input.projectNames.join(", ") || "(none)"}
 THEIR TAGS: ${input.tags.join(", ") || "(none)"}
 
 Return JSON exactly like:
-{"decision": "task"|"note"|"dismiss"|"duplicate", "reason": string,
+{"decision": "task"|"note"|"update"|"duplicate"|"dismiss", "reason": string,
  "duplicateOf": string,
+ "update": {"taskTitle": string, "dueAtLocal": string|null, "priority": 0|1|2|3|null, "note": string},
  "task": {"title": string, "dueAtLocal": string|null, "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
  "note": {"title": string, "content": string}}
 
 Decisions:
-- "dismiss": clearly nothing for a to-do list — newsletters, marketing, promotions, social notifications, verification codes, receipts and shipping/delivery updates that require no action, automated FYI mail. When in doubt, do NOT dismiss.
-- "duplicate": an OPEN task above already covers this item. Set "duplicateOf" to that task's exact title.
-- "task": the user must do something this list doesn't already cover. Fill "task" fully.
+- "update": an OPEN task above is about this topic AND the item brings NEW information — a changed time or date, a new detail, a status change. Set update.taskTitle to that task's EXACT title from the list, include ONLY the fields that changed (null otherwise), and put a short plain-words summary of what's new in update.note (max 200 chars).
+- "duplicate": an OPEN task above already covers this item and there is nothing new. Set "duplicateOf" to its exact title.
+- "task": the user must do something their list doesn't cover. Fill "task" fully.
 - "note": reference material worth keeping but not actionable.
+- "dismiss": ONLY unmistakable noise — bulk marketing and promotions, social-network notifications, verification codes, automated no-action notices. NEVER dismiss mail written by a real person, anything mentioning money owed, amounts, deadlines, appointments, travel, or anything you are not sure about — keep those as "task" or "note" instead. If the sent mail shows the user already replied and closed the matter, "dismiss" is appropriate.
 
 Rules:
 - Include only the object matching your decision; omit the others.
 - "reason": at most 90 characters, plain words.
 - task.title: imperative, at most 80 characters, no trailing punctuation.
-- task.dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
-- task.priority: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.
+- Any dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
+- Priorities: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.
 - task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
 - task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;
 }

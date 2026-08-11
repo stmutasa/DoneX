@@ -79,12 +79,13 @@ function recordScan(state: GmailScanState): void {
  * Ingests new messages into the inbox. Returns how many items were created.
  * The outcome is recorded either way — hourly scheduler scans fail with nobody
  * watching, and an empty inbox otherwise looks identical to a broken one.
+ * `triage: false` skips the per-item AI pass (the caller runs its own).
  */
-export async function scanGmail(): Promise<number> {
+export async function scanGmail(opts: { triage?: boolean } = {}): Promise<number> {
   if (!isGoogleConnected()) throw new Error(GOOGLE_NOT_CONNECTED);
   const query = gmailQuery();
   try {
-    const { matched, created } = await runScan(query);
+    const { matched, created } = await runScan(query, opts.triage !== false);
     recordScan({ at: nowIso(), matched, created, query, error: null });
     return created;
   } catch (err) {
@@ -94,7 +95,10 @@ export async function scanGmail(): Promise<number> {
   }
 }
 
-async function runScan(query: string): Promise<{ matched: number; created: number }> {
+async function runScan(
+  query: string,
+  triage: boolean,
+): Promise<{ matched: number; created: number }> {
   const listParams = new URLSearchParams({ q: query, maxResults: String(MAX_RESULTS) });
   const listRes = await googleFetch(`${GMAIL_BASE}/messages?${listParams.toString()}`);
   if (!listRes.ok) throw await googleApiError(listRes, "Gmail scan");
@@ -138,7 +142,7 @@ async function runScan(query: string): Promise<{ matched: number; created: numbe
     .map((r) => (r.status === "fulfilled" ? r.value : null))
     .filter((id): id is string => !!id);
 
-  if (createdIds.length > 0 && aiConfigured()) {
+  if (triage && createdIds.length > 0 && aiConfigured()) {
     // Best-effort, bounded concurrency; failures leave the item untriaged.
     await mapLimit(createdIds, 2, (itemId) => triageInboxItem(itemId));
   }

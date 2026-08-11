@@ -21,6 +21,7 @@ import type {
   Task,
   WeeklyReview,
 } from "@/lib/types";
+import { PRIORITY_META } from "@/lib/types";
 import { adapterFor, readyConfig } from "@/lib/ai/adapters";
 import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
 import { asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
@@ -288,12 +289,18 @@ function parseLocalDue(raw: unknown, tz: string): { dueAt: string | null; allDay
   return { dueAt: parsed.toISOString(), allDay: false };
 }
 
-export type TriageDecision = "task" | "note" | "dismiss" | "duplicate";
+export type TriageDecision = "task" | "note" | "dismiss" | "duplicate" | "update";
 
 export interface ParsedTriage {
   decision: TriageDecision;
   reason: string;
   duplicateOf: string;
+  update: {
+    taskTitle: string;
+    dueAtLocal: string | null;
+    priority: Priority | null;
+    note: string;
+  } | null;
   task: {
     title: string;
     dueAtLocal: string | null;
@@ -312,7 +319,7 @@ export function parseTriageDecision(
 ): ParsedTriage {
   const raw = asString(payload.decision ?? payload.action)?.toLowerCase().trim() ?? "";
   const decision: TriageDecision =
-    raw === "note" || raw === "dismiss" || raw === "duplicate" || raw === "ignore"
+    raw === "note" || raw === "dismiss" || raw === "duplicate" || raw === "update" || raw === "ignore"
       ? raw === "ignore"
         ? "dismiss"
         : (raw as TriageDecision)
@@ -320,6 +327,19 @@ export function parseTriageDecision(
 
   const reason = (asString(payload.reason) ?? "").trim().slice(0, 90);
   const duplicateOf = (asString(payload.duplicateOf) ?? "").trim().slice(0, 120);
+
+  let update: ParsedTriage["update"] = null;
+  if (decision === "update") {
+    const rec = asRecord(payload.update) ?? {};
+    const priorityNum = asNumber(rec.priority);
+    update = {
+      taskTitle: (asString(rec.taskTitle) ?? "").trim().slice(0, 120),
+      dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
+      priority:
+        priorityNum === null ? null : (clamp(Math.round(priorityNum), 0, 3) as Priority),
+      note: (asString(rec.note) ?? "").trim().slice(0, 200),
+    };
+  }
 
   let task: ParsedTriage["task"] = null;
   if (decision === "task") {
@@ -348,14 +368,31 @@ export function parseTriageDecision(
     };
   }
 
-  return { decision, reason, duplicateOf, task, note };
+  return { decision, reason, duplicateOf, update, task, note };
+}
+
+/** Sent-mail context, imported lazily: the Google module is server-only. */
+async function safeSentDigest(): Promise<string> {
+  try {
+    const { recentSentDigest } = await import("@/lib/google/sent");
+    return await recentSentDigest();
+  } catch {
+    return "";
+  }
+}
+
+function appendUpdateNote(existing: string, addition: string, todayKey: string): string {
+  const stamp = `Update (${todayKey}): ${addition}`;
+  return (existing ? `${existing.trimEnd()}\n\n${stamp}` : stamp).slice(0, 2000);
 }
 
 /**
  * Triage decides AND acts: clearly-irrelevant or already-tracked GMAIL items
- * are dismissed on the spot (the suggestion is stored first, so History shows
- * why). Items the user captured themselves (sms/quick) are never auto-closed —
- * a dismiss verdict just becomes an "ignore" suggestion they can act on.
+ * are dismissed on the spot; items carrying NEW info about an open task update
+ * that task directly. The verdict is stored first, so History always shows
+ * why. Items the user captured themselves (sms/quick) are never auto-closed
+ * without an action being taken — a dismiss verdict just becomes an "ignore"
+ * suggestion they can act on.
  */
 export async function triageInboxItem(id: string): Promise<InboxItem> {
   const item = inboxRepo.get(id);
@@ -378,6 +415,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       openTasksDigest: buildTaskDigest(tz, todayKey),
       projectNames: projects.map((p) => p.name),
       tags: tasksRepo.allTags().slice(0, 20),
+      sentDigest: await safeSentDigest(),
     }),
     700
   );
@@ -402,6 +440,43 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   } else if (parsed.decision === "note" && parsed.note) {
     suggestion.action = "note";
     suggestion.note = { ...parsed.note, content: parsed.note.content || item.content };
+  } else if (parsed.decision === "update" && parsed.update) {
+    const wanted = parsed.update.taskTitle.toLowerCase();
+    const target = tasksRepo
+      .list({ view: "all" })
+      .find((t) => t.title.toLowerCase() === wanted);
+
+    if (target) {
+      const changes: string[] = [];
+      const patch: Record<string, unknown> = {};
+      if (parsed.update.dueAtLocal) {
+        const due = parseLocalDue(parsed.update.dueAtLocal, tz);
+        if (due.dueAt && due.dueAt !== target.dueAt) {
+          patch.dueAt = due.dueAt;
+          patch.allDay = due.allDay;
+          changes.push(`due ${describeDue(due.dueAt, due.allDay, tz)}`);
+        }
+      }
+      if (parsed.update.priority !== null && parsed.update.priority !== target.priority) {
+        patch.priority = parsed.update.priority;
+        changes.push(`priority ${PRIORITY_META[parsed.update.priority].short}`);
+      }
+      if (parsed.update.note) {
+        patch.notes = appendUpdateNote(target.notes, parsed.update.note, todayKey);
+        if (changes.length === 0) changes.push("added a note");
+      }
+      if (Object.keys(patch).length > 0) tasksRepo.update(target.id, patch);
+
+      suggestion.updatedTaskTitle = target.title;
+      suggestion.reason = `Updated “${target.title}”${changes.length ? ` — ${changes.join(", ")}` : ""}`.slice(0, 90);
+      inboxRepo.setSuggestion(id, suggestion);
+      inboxRepo.resolve(id, "resolved", target.id);
+      return inboxRepo.get(id) ?? { ...item, suggestion };
+    }
+
+    // Couldn't match the task the model named — keep the item visible.
+    suggestion.reason =
+      suggestion.reason || `Mentions “${parsed.update.taskTitle}” but no open task matches`;
   } else {
     // dismiss / duplicate
     if (parsed.decision === "duplicate" && parsed.duplicateOf) {
@@ -414,4 +489,20 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   inboxRepo.setSuggestion(id, suggestion);
   if (suggestion.autoDismissed) inboxRepo.resolve(id, "dismissed");
   return inboxRepo.get(id) ?? { ...item, suggestion };
+}
+
+/**
+ * Closes out gmail items that already carry a "nothing to do here" verdict but
+ * were left sitting in the inbox (pre-1.2 triage, or older failures). Returns
+ * how many it swept.
+ */
+export function sweepAutoDismissable(): number {
+  const stale = inboxRepo
+    .list({ status: "new" })
+    .filter((i) => i.source === "gmail" && i.suggestion?.action === "ignore");
+  for (const item of stale) {
+    inboxRepo.setSuggestion(item.id, { ...item.suggestion!, autoDismissed: true });
+    inboxRepo.resolve(item.id, "dismissed");
+  }
+  return stale.length;
 }

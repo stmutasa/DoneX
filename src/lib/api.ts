@@ -228,11 +228,14 @@ export const inboxApi = {
       body: JSON.stringify(payload),
     }),
   triage: (id?: string) =>
-    request<{ items: InboxItem[]; kept?: number; dismissed?: number }>("/api/inbox/triage", {
-      method: "POST",
-      body: JSON.stringify(id ? { id } : {}),
-      timeoutMs: SLOW_TIMEOUT_MS,
-    }),
+    request<{ items: InboxItem[]; kept?: number; dismissed?: number; updated?: number }>(
+      "/api/inbox/triage",
+      {
+        method: "POST",
+        body: JSON.stringify(id ? { id } : {}),
+        timeoutMs: SLOW_TIMEOUT_MS,
+      },
+    ),
 };
 
 // ── Assistant ─────────────────────────────────────────────────────────────

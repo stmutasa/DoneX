@@ -73,10 +73,12 @@ export default function InboxPage() {
   const suggest = async (item: InboxItem) => {
     setSuggestingId(item.id);
     try {
-      const { items: updated } = await inboxApi.triage(item.id);
-      await mutate();
-      const result = updated[0];
-      if (result && result.status === "dismissed") {
+      const { items: results } = await inboxApi.triage(item.id);
+      await refreshAll();
+      const result = results[0];
+      if (result?.suggestion?.updatedTaskTitle) {
+        toast.success(result.suggestion.reason || `Updated “${result.suggestion.updatedTaskTitle}”`);
+      } else if (result && result.status === "dismissed") {
         toast.success(
           result.suggestion?.duplicateOfTitle
             ? `Dismissed — already tracked: ${result.suggestion.duplicateOfTitle}`
@@ -93,10 +95,12 @@ export default function InboxPage() {
   const triageAll = async () => {
     setTriaging(true);
     try {
-      const { kept, dismissed } = await inboxApi.triage();
-      await mutate();
+      const { kept, dismissed, updated } = await inboxApi.triage();
+      await refreshAll();
       const parts: string[] = [];
       if (typeof kept === "number" && kept > 0) parts.push(`${kept} for you to review`);
+      if (typeof updated === "number" && updated > 0)
+        parts.push(`${updated} task${updated === 1 ? "" : "s"} updated`);
       if (typeof dismissed === "number" && dismissed > 0) parts.push(`${dismissed} auto-dismissed`);
       toast.success(parts.length ? parts.join(" · ") : "Nothing needed triaging");
     } catch (err) {
@@ -214,13 +218,15 @@ export default function InboxPage() {
                       </span>
                       <span className="mt-0.5 block text-[12px] text-faint">
                         {item.fromLabel} · {relativeTime(item.receivedAt)}
-                        {item.suggestion?.autoDismissed
-                          ? ` · AI: ${
-                              item.suggestion.duplicateOfTitle
-                                ? `already tracked — ${item.suggestion.duplicateOfTitle}`
-                                : item.suggestion.reason || "nothing actionable"
-                            }`
-                          : ""}
+                        {item.suggestion?.updatedTaskTitle
+                          ? ` · AI: ${item.suggestion.reason || `updated — ${item.suggestion.updatedTaskTitle}`}`
+                          : item.suggestion?.autoDismissed
+                            ? ` · AI: ${
+                                item.suggestion.duplicateOfTitle
+                                  ? `already tracked — ${item.suggestion.duplicateOfTitle}`
+                                  : item.suggestion.reason || "nothing actionable"
+                              }`
+                            : ""}
                       </span>
                     </span>
                   </li>

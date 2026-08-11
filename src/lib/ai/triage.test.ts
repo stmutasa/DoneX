@@ -29,6 +29,33 @@ describe("parseTriageDecision", () => {
     expect(parsed.task?.tags).toEqual(["phone", "appointments", "health"]);
   });
 
+  it("normalizes an update decision with partial fields", () => {
+    const parsed = parseTriageDecision(
+      {
+        decision: "update",
+        reason: "Appointment moved",
+        update: { taskTitle: "Call the dentist about Tuesday", dueAtLocal: "2026-08-14 16:00", priority: null, note: "Moved from Tue 3pm to Fri 4pm per office email" },
+      },
+      "x",
+    );
+    expect(parsed.decision).toBe("update");
+    expect(parsed.update).toMatchObject({
+      taskTitle: "Call the dentist about Tuesday",
+      dueAtLocal: "2026-08-14 16:00",
+      priority: null,
+    });
+    expect(parsed.update?.note).toContain("Moved from Tue");
+    expect(parsed.task).toBeNull();
+  });
+
+  it("clamps update priority when provided", () => {
+    const parsed = parseTriageDecision(
+      { decision: "update", update: { taskTitle: "T", priority: 7 } },
+      "x",
+    );
+    expect(parsed.update?.priority).toBe(3);
+  });
+
   it("maps duplicate with its target title", () => {
     const parsed = parseTriageDecision(
       { decision: "duplicate", duplicateOf: "Call the dentist about Tuesday", reason: "covered" },

@@ -12,7 +12,13 @@ import {
   settingsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
-import { aiConfigured, generateBriefing, generateWeeklyReview, triageInboxItem } from "@/lib/ai";
+import {
+  aiConfigured,
+  generateBriefing,
+  generateWeeklyReview,
+  sweepAutoDismissable,
+  triageInboxItem,
+} from "@/lib/ai";
 import { scanGmail } from "@/lib/google/gmail";
 import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
 import {
@@ -205,37 +211,46 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
     if (settingsRepo.getKV(KV_LAST_TRIAGE_SLOT) === slotKey) return;
     settingsRepo.setKV(KV_LAST_TRIAGE_SLOT, slotKey); // claim before the slow work
 
-    const beforeCount = inboxRepo.newCount();
-
-    // Pull fresh mail first so the 6am pass sees the overnight inbox. Items it
-    // creates are triaged (and possibly auto-dismissed) inside scanGmail.
+    // Pull fresh mail first (untriaged) so this pass owns every verdict and
+    // can report exactly what happened.
     let created = 0;
     if (settings.google.gmailScanEnabled && googleRepo.get()) {
       try {
-        created = await scanGmail();
+        created = await scanGmail({ triage: false });
       } catch (err) {
         console.error("[scheduler] triage pre-scan", err);
       }
     }
 
-    // Anything still lacking a verdict (older captures, earlier failures).
+    let dismissed = sweepAutoDismissable();
+
     const pending = inboxRepo
       .list({ status: "new" })
       .filter((item) => item.suggestion === null)
       .slice(0, 30);
+    if (created === 0 && pending.length === 0 && dismissed === 0) return; // nothing to do
+
     await mapLimit(pending, 2, (item) => triageInboxItem(item.id));
 
-    const waiting = inboxRepo.newCount();
-    const dismissed = Math.max(0, beforeCount + created - waiting);
-    if (created === 0 && pending.length === 0) return; // slot had nothing to do
+    let updated = 0;
+    for (const before of pending) {
+      const after = inboxRepo.get(before.id);
+      if (!after || after.status === "new") continue;
+      if (after.status === "resolved") updated += 1;
+      else dismissed += 1;
+    }
 
-    // Quiet when everything was noise — only speak up when something needs eyes.
-    if (waiting > 0) {
-      await sendPushToAll({
-        title: "Inbox triage",
-        body: `${waiting} worth a look${dismissed ? ` · ${dismissed} auto-dismissed` : ""}`,
-        url: "/inbox",
-      });
+    const waiting = inboxRepo.newCount();
+
+    // Quiet when everything was noise — speak up when something needs eyes or
+    // a task was changed on the user's behalf.
+    if (waiting > 0 || updated > 0) {
+      const parts = [
+        waiting > 0 ? `${waiting} worth a look` : "",
+        updated > 0 ? `${updated} task${updated === 1 ? "" : "s"} updated` : "",
+        dismissed > 0 ? `${dismissed} auto-dismissed` : "",
+      ].filter(Boolean);
+      await sendPushToAll({ title: "Inbox triage", body: parts.join(" · "), url: "/inbox" });
     }
   } catch (err) {
     console.error("[scheduler] triage", err);

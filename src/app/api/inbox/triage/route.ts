@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
-import { aiConfigured, triageInboxItem } from "@/lib/ai";
+import { aiConfigured, sweepAutoDismissable, triageInboxItem } from "@/lib/ai";
 import { inboxRepo } from "@/lib/db/repos";
 import { mapLimit } from "@/lib/utils";
 
@@ -34,6 +34,8 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  const swept = sweepAutoDismissable();
+
   const pending = inboxRepo
     .list({ status: "new" })
     .filter((item) => item.suggestion === null)
@@ -43,14 +45,20 @@ export async function POST(req: Request): Promise<Response> {
   const firstFailure = settled.find((r) => r.status === "rejected");
 
   const items = inboxRepo.list({ status: "new" });
-  const stillNew = new Set(items.map((i) => i.id));
-  const dismissed = pending.filter((i) => !stillNew.has(i.id)).length;
-  const kept = pending.length - dismissed;
+  let kept = 0;
+  let dismissed = swept;
+  let updated = 0;
+  for (const before of pending) {
+    const after = inboxRepo.get(before.id);
+    if (!after || after.status === "new") kept += 1;
+    else if (after.status === "resolved") updated += 1;
+    else dismissed += 1;
+  }
 
-  if (firstFailure && settled.every((r) => r.status === "rejected")) {
+  if (firstFailure && pending.length > 0 && settled.every((r) => r.status === "rejected")) {
     const reason = firstFailure.reason;
     const message = reason instanceof Error ? reason.message : "Could not triage";
     return NextResponse.json({ error: message }, { status: 502 });
   }
-  return NextResponse.json({ items, kept, dismissed });
+  return NextResponse.json({ items, kept, dismissed, updated });
 }

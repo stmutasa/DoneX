@@ -110,6 +110,8 @@ export interface InboxSuggestion {
   reason: string;
   /** open task the AI judged already covers this item */
   duplicateOfTitle?: string;
+  /** open task triage updated with new info from this item */
+  updatedTaskTitle?: string;
   /** triage resolved this item itself instead of waiting on the user */
   autoDismissed?: boolean;
   task?: TaskDraft;
