@@ -155,6 +155,11 @@ export const authApi = {
   login: (pin: string) =>
     request<{ ok: true }>("/api/auth/login", { method: "POST", body: JSON.stringify({ pin }) }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
+  changePin: (pin: string) =>
+    request<{ ok: true }>("/api/auth/change-pin", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
 };
 
 // ── Tasks ─────────────────────────────────────────────────────────────────

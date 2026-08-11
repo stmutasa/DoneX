@@ -29,11 +29,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid timezone" }, { status: 400 });
   }
 
+  // Keep an existing ingest token: a PIN reset that clears pinHash and
+  // re-runs setup must not silently break the user's SMS forwarder.
+  const existing = settingsRepo.getApp();
   settingsRepo.updateApp({
     pinHash: hashPin(pin),
     tz,
-    ingestToken: crypto.randomBytes(12).toString("hex"),
-    onboardedAt: nowIso(),
+    ingestToken: existing.ingestToken || crypto.randomBytes(12).toString("hex"),
+    onboardedAt: existing.onboardedAt ?? nowIso(),
   });
   await createSession();
   return NextResponse.json({ ok: true });

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { authApi, dataApi } from "@/lib/api";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
@@ -25,6 +26,10 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const [detected, setDetected] = useState("");
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [savingPin, setSavingPin] = useState(false);
 
   useEffect(() => {
     try {
@@ -35,6 +40,24 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
   }, []);
 
   const mismatch = !!detected && detected !== settings.tz;
+  const pinValid = /^\d{4,8}$/.test(pin);
+  const pinsMatch = pinValid && pin === pinConfirm;
+
+  const savePin = async () => {
+    if (!pinsMatch) return;
+    setSavingPin(true);
+    try {
+      await authApi.changePin(pin);
+      toast.success("PIN updated — use it on every device from now on");
+      setPin("");
+      setPinConfirm("");
+      setPinOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not change PIN");
+    } finally {
+      setSavingPin(false);
+    }
+  };
 
   const signOut = async () => {
     const ok = await confirm({
@@ -63,6 +86,61 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
           <Button size="sm" variant="primary" onClick={() => patch({ tz: detected }, "Time zone updated")}>
             Use {detected}
           </Button>
+        ) : null}
+      </div>
+
+      <Divider />
+
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[15px] text-ink">PIN</div>
+            <div className="mt-0.5 text-[13px] text-muted">
+              4–8 digits, used to unlock DoneX on any device.
+            </div>
+          </div>
+          <Button size="sm" onClick={() => setPinOpen((o) => !o)}>
+            {pinOpen ? "Cancel" : "Change PIN"}
+          </Button>
+        </div>
+
+        {pinOpen ? (
+          <div className="mt-3 space-y-3 rounded-2xl border border-stroke bg-sunken p-3.5">
+            <Input
+              label="New PIN"
+              type="password"
+              inputMode="numeric"
+              autoComplete="new-password"
+              placeholder="4–8 digits"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+            />
+            <Input
+              label="Repeat new PIN"
+              type="password"
+              inputMode="numeric"
+              autoComplete="new-password"
+              placeholder="Same digits again"
+              value={pinConfirm}
+              hint={
+                pinConfirm.length > 0 && !pinsMatch
+                  ? pinValid
+                    ? "Doesn’t match yet"
+                    : "PIN must be 4–8 digits"
+                  : undefined
+              }
+              onChange={(e) => setPinConfirm(e.target.value.replace(/\D/g, "").slice(0, 8))}
+            />
+            <Button
+              variant="primary"
+              block
+              disabled={!pinsMatch}
+              loading={savingPin}
+              onClick={savePin}
+            >
+              Save new PIN
+            </Button>
+          </div>
         ) : null}
       </div>
 
