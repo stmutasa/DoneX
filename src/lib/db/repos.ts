@@ -48,6 +48,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     weeklyReviewEnabled: true,
     weeklyDay: 0,
     weeklyTime: "18:00",
+    quietHoursEnabled: true,
+    quietStart: "22:00",
+    quietEnd: "06:00",
   },
   google: {
     clientId: "",

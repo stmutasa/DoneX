@@ -155,6 +155,37 @@ export function NotificationsSection({ settings, mutate }: SectionProps) {
       ) : null}
 
       <SwitchRow
+        label="Bedtime"
+        description="No email checking (or the pings that come with it) between these hours."
+        checked={n.quietHoursEnabled}
+        onChange={(v) => void patch({ notifications: { quietHoursEnabled: v } })}
+      />
+      {n.quietHoursEnabled ? (
+        <div className="flex items-center gap-3 pl-1">
+          <div className="flex-1">
+            <div className="mb-1.5 text-[13px] font-medium text-muted">From</div>
+            <input
+              type="time"
+              value={n.quietStart}
+              aria-label="Bedtime start"
+              onChange={(e) => void patch({ notifications: { quietStart: e.target.value } })}
+              className="h-11 w-full rounded-xl border border-stroke bg-sunken px-3 text-[15px] text-ink outline-none"
+            />
+          </div>
+          <div className="flex-1">
+            <div className="mb-1.5 text-[13px] font-medium text-muted">Until</div>
+            <input
+              type="time"
+              value={n.quietEnd}
+              aria-label="Bedtime end"
+              onChange={(e) => void patch({ notifications: { quietEnd: e.target.value } })}
+              className="h-11 w-full rounded-xl border border-stroke bg-sunken px-3 text-[15px] text-ink outline-none"
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <SwitchRow
         label="Weekly review"
         checked={n.weeklyReviewEnabled}
         onChange={(v) => void patch({ notifications: { weeklyReviewEnabled: v } })}

@@ -51,6 +51,23 @@ export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
+/**
+ * Is local wall-time `t` ("HH:mm") inside the [start, end) window?
+ * Handles windows that wrap past midnight; start === end means never.
+ */
+export function isQuietTime(t: string, start: string, end: string): boolean {
+  const pad = (v: string) => {
+    const [hh = "0", mm = "0"] = v.trim().split(":");
+    return `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}`;
+  };
+  const now = pad(t);
+  const from = pad(start);
+  const to = pad(end);
+  if (from === to) return false;
+  if (from < to) return now >= from && now < to;
+  return now >= from || now < to;
+}
+
 /** Great-circle distance in km between two coordinates. */
 export function haversineKm(
   a: { lat: number; lng: number },

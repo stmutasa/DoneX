@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildFeedbackDigest, parseTriageDecision } from "@/lib/ai/generate";
 import type { TriageFeedback } from "@/lib/types";
-import { distanceLabel, haversineKm, mapLimit } from "@/lib/utils";
+import { distanceLabel, haversineKm, isQuietTime, mapLimit } from "@/lib/utils";
 
 describe("buildFeedbackDigest", () => {
   const lesson = (kind: TriageFeedback["kind"], reason: string): TriageFeedback => ({
@@ -35,6 +35,27 @@ describe("buildFeedbackDigest", () => {
     expect(digest).toContain("reason 0");
     expect(digest).toContain("reason 2");
     expect(digest).not.toContain("reason 3");
+  });
+});
+
+describe("isQuietTime", () => {
+  it("handles a window wrapping past midnight", () => {
+    expect(isQuietTime("23:30", "22:00", "06:00")).toBe(true);
+    expect(isQuietTime("02:00", "22:00", "06:00")).toBe(true);
+    expect(isQuietTime("06:00", "22:00", "06:00")).toBe(false); // end exclusive
+    expect(isQuietTime("21:59", "22:00", "06:00")).toBe(false);
+    expect(isQuietTime("22:00", "22:00", "06:00")).toBe(true); // start inclusive
+    expect(isQuietTime("12:00", "22:00", "06:00")).toBe(false);
+  });
+
+  it("handles a same-day window and unpadded times", () => {
+    expect(isQuietTime("13:00", "9:00", "17:00")).toBe(true);
+    expect(isQuietTime("08:59", "9:00", "17:00")).toBe(false);
+    expect(isQuietTime("17:00", "9:00", "17:00")).toBe(false);
+  });
+
+  it("never quiet when start equals end", () => {
+    expect(isQuietTime("22:00", "22:00", "22:00")).toBe(false);
   });
 });
 

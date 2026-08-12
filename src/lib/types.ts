@@ -258,6 +258,10 @@ export interface NotificationSettings {
   weeklyReviewEnabled: boolean;
   weeklyDay: number; // 0=Sun … 6=Sat
   weeklyTime: string; // "18:00"
+  /** bedtime window during which Gmail is never checked */
+  quietHoursEnabled: boolean;
+  quietStart: string; // "22:00" local
+  quietEnd: string; // "06:00" local (may wrap past midnight)
 }
 
 export interface GoogleSettings {

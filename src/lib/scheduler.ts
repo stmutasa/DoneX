@@ -24,6 +24,7 @@ import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
 import {
   addDaysToDateKey,
   isoWeekKey,
+  isQuietTime,
   localDateKey,
   localTimeKey,
   mapLimit,
@@ -174,23 +175,37 @@ async function runWeeklyReview(settings: AppSettings, now: Date): Promise<void> 
 
 // ── 4. Gmail scan ──────────────────────────────────────────────────────────
 
+/** Bedtime window: DoneX leaves Gmail completely alone during these hours. */
+function inQuietHours(settings: AppSettings): boolean {
+  const n = settings.notifications;
+  if (!n.quietHoursEnabled) return false;
+  return isQuietTime(localTimeKey(new Date(), settings.tz), n.quietStart, n.quietEnd);
+}
+
 async function runGmailScan(settings: AppSettings): Promise<void> {
   try {
     if (!settings.google.gmailScanEnabled) return;
     if (!googleRepo.get()) return;
+    if (inQuietHours(settings)) return;
 
     const last = settingsRepo.getKV(KV_LAST_GMAIL_SCAN);
     const lastMs = last ? Date.parse(last) : NaN;
     if (Number.isFinite(lastMs) && Date.now() - lastMs < GMAIL_SCAN_INTERVAL_MS) return;
     settingsRepo.setKV(KV_LAST_GMAIL_SCAN, nowIso());
 
+    // Only what SURVIVES auto-triage into the visible inbox is worth a ping —
+    // mail that arrived and went straight to History should stay silent.
+    const before = inboxRepo.newCount();
     const created = await scanGmail();
     if (created > 0) {
-      await sendPushToAll({
-        title: "Inbox",
-        body: `${created} new item(s) to triage`,
-        url: "/inbox",
-      });
+      const survived = Math.max(0, inboxRepo.newCount() - before);
+      if (survived > 0) {
+        await sendPushToAll({
+          title: "Inbox",
+          body: `${survived} new item${survived === 1 ? "" : "s"} to triage`,
+          url: "/inbox",
+        });
+      }
     }
   } catch (err) {
     console.error("[scheduler] gmail scan", err);
@@ -211,10 +226,14 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
     if (settingsRepo.getKV(KV_LAST_TRIAGE_SLOT) === slotKey) return;
     settingsRepo.setKV(KV_LAST_TRIAGE_SLOT, slotKey); // claim before the slow work
 
+    // Snapshot what was already visible: only NEW survivors justify a ping —
+    // items the user has been ignoring since a previous slot don't.
+    const seenBefore = new Set(inboxRepo.list({ status: "new" }).map((i) => i.id));
+
     // Pull fresh mail first (untriaged) so this pass owns every verdict and
-    // can report exactly what happened.
+    // can report exactly what happened. Never during bedtime hours.
     let created = 0;
-    if (settings.google.gmailScanEnabled && googleRepo.get()) {
+    if (settings.google.gmailScanEnabled && googleRepo.get() && !inQuietHours(settings)) {
       try {
         created = await scanGmail({ triage: false });
       } catch (err) {
@@ -240,13 +259,15 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
       else dismissed += 1;
     }
 
-    const waiting = inboxRepo.newCount();
+    const freshKept = inboxRepo
+      .list({ status: "new" })
+      .filter((i) => !seenBefore.has(i.id)).length;
 
-    // Quiet when everything was noise — speak up when something needs eyes or
-    // a task was changed on the user's behalf.
-    if (waiting > 0 || updated > 0) {
+    // Silence unless this run surfaced something genuinely new or acted on a
+    // task — wholly auto-dismissed batches and stale leftovers don't ping.
+    if (freshKept > 0 || updated > 0) {
       const parts = [
-        waiting > 0 ? `${waiting} worth a look` : "",
+        freshKept > 0 ? `${freshKept} new for you` : "",
         updated > 0 ? `${updated} task${updated === 1 ? "" : "s"} updated` : "",
         dismissed > 0 ? `${dismissed} auto-dismissed` : "",
       ].filter(Boolean);

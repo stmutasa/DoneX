@@ -54,13 +54,18 @@ const voicePatchSchema = z.object({
   autoListen: z.boolean().optional(),
 });
 
+const timeString = z.string().regex(/^\d{1,2}:\d{2}$/, "Expected HH:mm");
+
 const notificationsPatchSchema = z.object({
   remindersEnabled: z.boolean().optional(),
   briefingEnabled: z.boolean().optional(),
-  briefingTime: z.string().optional(),
+  briefingTime: timeString.optional(),
   weeklyReviewEnabled: z.boolean().optional(),
   weeklyDay: z.number().int().min(0).max(6).optional(),
-  weeklyTime: z.string().optional(),
+  weeklyTime: timeString.optional(),
+  quietHoursEnabled: z.boolean().optional(),
+  quietStart: timeString.optional(),
+  quietEnd: timeString.optional(),
 });
 
 const googlePatchSchema = z.object({
