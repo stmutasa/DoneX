@@ -2,6 +2,7 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { projectsRepo, settingsRepo, statsRepo, tasksRepo } from "@/lib/db/repos";
 import { addDaysToDateKey, localDateKey, localTimeKey } from "@/lib/utils";
+import { deadlineLabel, effectivePriority } from "@/lib/deadline";
 import type { CalendarEvent, StatsSummary, Task } from "@/lib/types";
 import { describeDue, instantOf, utcFromLocal } from "@/lib/ai/tools";
 
@@ -21,8 +22,15 @@ export interface AssistantContext {
 
 export function taskLine(task: Task, tz: string, projects: Map<string, string>): string {
   const bits = [`- ${task.id} · ${task.title}`];
-  if (task.dueAt) bits.push(`due ${describeDue(task.dueAt, task.allDay, tz)}`);
-  if (task.priority > 0) bits.push(`P${4 - task.priority}`);
+  if (task.dueAt) {
+    bits.push(
+      task.dueKind === "by"
+        ? deadlineLabel(task.dueAt, tz)
+        : `due ${describeDue(task.dueAt, task.allDay, tz)}`
+    );
+  }
+  const p = effectivePriority(task, tz);
+  if (p > 0) bits.push(`P${4 - p}${p > task.priority ? " (escalated)" : ""}`);
   const project = task.projectId ? projects.get(task.projectId) : null;
   if (project) bits.push(project);
   if (task.tags.length > 0) bits.push(task.tags.map((t) => `#${t}`).join(" "));
@@ -35,17 +43,18 @@ export function buildTaskDigest(tz: string, todayKey: string): string {
   const weekEnd = instantOf(utcFromLocal(addDaysToDateKey(todayKey, 8), "00:00", tz));
 
   const todayTasks = tasksRepo.list({ view: "today" });
+  const todayIds = new Set(todayTasks.map((t) => t.id));
   const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
   const overdue = todayTasks.filter(isOverdue);
   const dueToday = todayTasks.filter((t) => !isOverdue(t));
   const upcoming = tasksRepo
     .list({ view: "upcoming" })
-    .filter((t) => t.dueAt !== null && instantOf(t.dueAt) < weekEnd);
+    .filter((t) => !todayIds.has(t.id) && t.dueAt !== null && instantOf(t.dueAt) < weekEnd);
   const anytime = tasksRepo.list({ view: "anytime" });
 
   const sections: { heading: string; tasks: Task[]; cap: number }[] = [
     { heading: "OVERDUE", tasks: overdue, cap: 10 },
-    { heading: "DUE TODAY", tasks: dueToday, cap: 14 },
+    { heading: "ON TODAY'S LIST (due today + live deadlines)", tasks: dueToday, cap: 14 },
     { heading: "NEXT 7 DAYS", tasks: upcoming, cap: 12 },
     { heading: "ANYTIME (no date)", tasks: anytime, cap: 8 },
   ];

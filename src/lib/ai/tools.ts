@@ -185,6 +185,7 @@ function compactTask(task: Task, tz: string): Record<string, unknown> {
     status: task.status,
     due: task.dueAt ? describeDue(task.dueAt, task.allDay, tz) : null,
     dueAt: task.dueAt,
+    dueKind: task.dueKind,
     priority: task.priority,
     project: projectName(task.projectId),
     tags: task.tags,
@@ -205,6 +206,12 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
     type: "string",
     description:
       "Due moment as ISO 8601 (e.g. 2026-08-09T15:00) or YYYY-MM-DD for an all-day task. Use null to clear.",
+  },
+  dueKind: {
+    type: "string",
+    enum: ["on", "by"],
+    description:
+      '"by" = deadline: the user said do it BY/BEFORE that date, so it can happen any day up to then and stays on Today with escalating priority. "on" (default) = it happens on that date (appointments, events).',
   },
   allDay: { type: "boolean", description: "True when the task has no specific time" },
   priority: { type: "integer", description: "0 none, 1 low, 2 medium, 3 high", minimum: 0, maximum: 3 },
@@ -240,6 +247,12 @@ const PLAN_BLOCK_SCHEMA: JsonSchema = {
     label: { type: "string", description: "What happens in this block" },
     taskIds: { type: "array", description: "Real task ids covered by the block", items: { type: "string" } },
     kind: { type: "string", enum: ["focus", "break", "errand", "event"] },
+    estimateMin: {
+      type: "integer",
+      description: "Estimated minutes of actual work in this block (5–240)",
+      minimum: 5,
+      maximum: 240,
+    },
   },
   required: ["start", "end", "label", "kind"],
 };
@@ -288,6 +301,7 @@ export const TOOLS: ToolSpec[] = [
         title,
         notes: readString(args, "notes") ?? "",
         dueAt: due?.dueAt ?? null,
+        dueKind: readString(args, "dueKind") === "by" ? "by" : "on",
         allDay,
         priority: readPriority(args) ?? 0,
         projectId: resolveProject(readString(args, "projectName")),
@@ -337,6 +351,8 @@ export const TOOLS: ToolSpec[] = [
         const allDay = readBoolean(args, "allDay");
         if (allDay !== undefined) patch.allDay = allDay;
       }
+      const dueKind = readString(args, "dueKind");
+      if (dueKind === "by" || dueKind === "on") patch.dueKind = dueKind;
       const priority = readPriority(args);
       if (priority !== undefined) patch.priority = priority;
       const project = readString(args, "projectName");
@@ -822,7 +838,12 @@ export function normalizePlanBlocks(raw: unknown): PlanBlock[] {
     const taskIds = asArray(rec.taskIds)
       .map((v) => (typeof v === "string" ? v.trim() : ""))
       .filter(Boolean);
-    out.push({ start: pad(start), end: pad(end), label, taskIds, kind });
+    const estRaw = asNumber(rec.estimateMin ?? rec.estimate);
+    const block: PlanBlock = { start: pad(start), end: pad(end), label, taskIds, kind };
+    if (estRaw !== null && estRaw > 0) {
+      block.estimateMin = Math.round(Math.min(240, Math.max(5, estRaw)));
+    }
+    out.push(block);
   }
   return out.sort((a, b) => a.start.localeCompare(b.start));
 }

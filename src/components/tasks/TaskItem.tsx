@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import type { Project, Task } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
-import { dueLabel, isOverdue } from "@/lib/format";
+import { deadlineChip, dueLabel, isOverdue } from "@/lib/format";
+import { effectivePriority } from "@/lib/deadline";
 import { cn } from "@/lib/utils";
 import {
   IconChevronRight,
@@ -42,7 +43,16 @@ export function TaskItem({
   const subtasks = task.subtasks ?? [];
   const doneSubs = subtasks.filter((s) => s.status === "done").length;
   const overdue = !done && isOverdue(task.dueAt, task.allDay);
-  const label = task.dueAt ? dueLabel(task.dueAt, task.allDay) : "";
+  const isDeadline = task.dueKind === "by" && !!task.dueAt;
+  const label = task.dueAt
+    ? isDeadline && !overdue
+      ? deadlineChip(task.dueAt)
+      : dueLabel(task.dueAt, task.allDay)
+    : "";
+  const priority = done
+    ? task.priority
+    : effectivePriority(task, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const escalated = priority > task.priority;
 
   const toggle = async () => {
     if (busy) return;
@@ -97,7 +107,13 @@ export function TaskItem({
 
         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-muted">
           {label ? (
-            <span className={cn("inline-flex items-center gap-1", overdue && "font-medium text-danger")}>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1",
+                overdue && "font-medium text-danger",
+                !overdue && isDeadline && escalated && "font-medium text-warn",
+              )}
+            >
               {label}
             </span>
           ) : null}
@@ -132,16 +148,21 @@ export function TaskItem({
             </span>
           ))}
 
-          {task.priority > 0 ? (
+          {priority > 0 ? (
             <span
               className={cn(
                 "inline-flex items-center gap-0.5 font-medium",
-                PRIORITY_TONE[task.priority as 1 | 2 | 3],
+                PRIORITY_TONE[priority as 1 | 2 | 3],
               )}
-              title={PRIORITY_META[task.priority].label}
+              title={
+                escalated
+                  ? `${PRIORITY_META[priority].label} — escalated, deadline approaching`
+                  : PRIORITY_META[priority].label
+              }
             >
               <IconFlag className="h-3 w-3" />
-              {PRIORITY_META[task.priority].short}
+              {PRIORITY_META[priority].short}
+              {escalated ? "↑" : ""}
             </span>
           ) : null}
 

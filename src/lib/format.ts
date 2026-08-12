@@ -75,6 +75,19 @@ export function dueLabel(dueAt: string | null, allDay = false): string {
   return `${base}${allDay ? "" : ` · ${timeLabel(d)}`}`;
 }
 
+/** "By Fri · 3d left" — chip for a live deadline (dueKind "by") task. */
+export function deadlineChip(dueAt: string | null): string {
+  if (!dueAt) return "";
+  const d = toDate(dueAt);
+  if (!isValidDate(d)) return "";
+  const days = differenceInCalendarDays(d, new Date());
+  if (days < 0) return `Overdue · ${-days}d`;
+  if (days === 0) return "By today";
+  if (days === 1) return "By tomorrow";
+  if (days < 7) return `By ${format(d, "EEE")} · ${days}d left`;
+  return `By ${format(d, "MMM d")} · ${days}d left`;
+}
+
 /** Section heading for a local date key: "Today" · "Tomorrow" · "Wed, Aug 13" */
 export function dayHeading(key: string): string {
   const d = keyToDate(key);

@@ -13,6 +13,7 @@ import {
   tasksRepo,
 } from "@/lib/db/repos";
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
+import { deadlineLabel, effectivePriority } from "@/lib/deadline";
 import type {
   Briefing,
   DayPlan,
@@ -76,8 +77,15 @@ function digestLines(tasks: Task[], tz: string, limit: number): string {
     .slice(0, limit)
     .map((t) => {
       const bits = [`- ${t.id} · ${t.title}`];
-      if (t.dueAt) bits.push(`due ${describeDue(t.dueAt, t.allDay, tz)}`);
-      if (t.priority > 0) bits.push(`P${4 - t.priority}`);
+      if (t.dueAt) {
+        bits.push(
+          t.dueKind === "by"
+            ? deadlineLabel(t.dueAt, tz)
+            : `due ${describeDue(t.dueAt, t.allDay, tz)}`
+        );
+      }
+      const p = effectivePriority(t, tz);
+      if (p > 0) bits.push(`P${4 - p}${p > t.priority ? " (escalated)" : ""}`);
       const project = t.projectId ? projects.get(t.projectId) : null;
       if (project) bits.push(project);
       return bits.join(" · ");
@@ -152,6 +160,11 @@ export async function generateDayPlan(
   const open = tasksRepo.list({ view: "today" });
   const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
   const ordered = [...open.filter(isOverdue), ...open.filter((t) => !isOverdue(t))];
+  // Anytime tasks are candidates too — the planner picks a few worth doing today.
+  const anytime = tasksRepo
+    .list({ view: "anytime" })
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 12);
   const briefing = briefingsRepo.get(dateLocal);
 
   const payload = await jsonCall(
@@ -159,12 +172,13 @@ export async function generateDayPlan(
       ctx,
       dateLocal,
       tasks: digestLines(ordered, tz, 24),
+      anytime: digestLines(anytime, tz, 12),
       briefing: briefing ? briefing.narrative : "",
     }),
-    1600
+    1800
   );
 
-  const realIds = new Set(ordered.map((t) => t.id));
+  const realIds = new Set([...ordered, ...anytime].map((t) => t.id));
   const blocks = normalizePlanBlocks(payload.blocks).map((b) => ({
     ...b,
     taskIds: b.taskIds.filter((id) => realIds.has(id)),
@@ -307,6 +321,7 @@ export interface ParsedTriage {
   task: {
     title: string;
     dueAtLocal: string | null;
+    dueKind: "on" | "by";
     priority: Priority;
     projectName: string | null;
     tags: string[];
@@ -356,6 +371,7 @@ export function parseTriageDecision(
     task = {
       title,
       dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
+      dueKind: asString(rec.dueKind)?.toLowerCase() === "by" ? "by" : "on",
       priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
       projectName: (asString(rec.projectName) ?? "").trim() || null,
       tags,
@@ -475,6 +491,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
     suggestion.task = {
       title: parsed.task.title,
       dueAt: due.dueAt,
+      dueKind: due.dueAt ? parsed.task.dueKind : "on",
       allDay: due.allDay,
       priority: parsed.task.priority,
       projectId: project?.id ?? null,

@@ -38,6 +38,7 @@ const draftSchema = z.object({
   notes: z.string().optional(),
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
   dueAt: z.string().nullable().optional(),
+  dueKind: z.enum(["on", "by"]).optional(),
   allDay: z.boolean().optional(),
   projectId: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),

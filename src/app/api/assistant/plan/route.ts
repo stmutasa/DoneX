@@ -2,12 +2,19 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { aiConfigured, generateDayPlan } from "@/lib/ai";
-import { settingsRepo } from "@/lib/db/repos";
+import { plansRepo, settingsRepo } from "@/lib/db/repos";
 import { localDateKey } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({ refresh: z.boolean().optional() });
+
+/** Latest stored plan (today's or an older one) without generating anything. */
+export async function GET(): Promise<Response> {
+  const gate = await requireSession();
+  if (gate) return gate;
+  return NextResponse.json({ plan: plansRepo.latest() });
+}
 
 export async function POST(req: Request): Promise<Response> {
   const gate = await requireSession();

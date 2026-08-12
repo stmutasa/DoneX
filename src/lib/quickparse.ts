@@ -26,6 +26,8 @@ export interface QuickAddResult {
 const TAG_RE = /@([A-Za-z0-9][\w-]*)/g;
 const PROJECT_RE = /#"([^"]+)"|#([A-Za-z0-9][\w-]*)/g;
 const PRIORITY_RE = /!(p[123]|high|med(?:ium)?|low)\b/gi;
+/** "… by Friday" / "before June 3" / "until Monday" → deadline (dueKind "by") */
+const DEADLINE_PREFIX_RE = /(\b(?:due\s+by|by|before|until)\s+)$/i;
 
 const PRIORITY_MAP: Record<string, Priority> = {
   p1: 3,
@@ -159,14 +161,19 @@ export function parseQuickAdd(input: string, tz: string): QuickAddResult {
 
   let dueAt: string | undefined;
   let allDay: boolean | undefined;
+  let dueKind: "on" | "by" | undefined;
 
   const refInstant = new Date();
   const offsetMinutes = tzOffset(tz, refInstant);
   const results = chrono.parse(text, { instant: refInstant, timezone: offsetMinutes }, { forwardDate: true });
   if (results.length) {
     const result = results[0];
-    matchedText.due = result.text.trim();
-    text = text.slice(0, result.index) + " " + text.slice(result.index + result.text.length);
+    const preceding = text.slice(0, result.index);
+    const deadline = DEADLINE_PREFIX_RE.exec(preceding);
+    if (deadline || /^(?:by|before|until)\b/i.test(result.text)) dueKind = "by";
+    const startIdx = deadline ? result.index - deadline[1].length : result.index;
+    matchedText.due = text.slice(startIdx, result.index + result.text.length).trim();
+    text = text.slice(0, startIdx) + " " + text.slice(result.index + result.text.length);
 
     const parsedDate = result.date();
     if (result.start.isCertain("hour")) {
@@ -183,6 +190,7 @@ export function parseQuickAdd(input: string, tz: string): QuickAddResult {
 
   const draft: TaskDraft = { title };
   if (dueAt) draft.dueAt = dueAt;
+  if (dueAt && dueKind === "by") draft.dueKind = "by";
   if (allDay !== undefined) draft.allDay = allDay;
   if (priority !== undefined) draft.priority = priority;
   if (matchedText.tags.length) draft.tags = [...matchedText.tags];

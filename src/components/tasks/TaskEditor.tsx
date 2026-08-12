@@ -43,6 +43,7 @@ interface FormState {
   notes: string;
   dueDate: string;
   dueTime: string;
+  dueKind: "on" | "by";
   allDay: boolean;
   priority: Priority;
   projectId: string;
@@ -60,6 +61,7 @@ function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState 
     notes: src?.notes ?? "",
     dueDate: toDateInput(dueAt),
     dueTime: dueAt && !allDay ? format(new Date(dueAt), "HH:mm") : "",
+    dueKind: src?.dueKind === "by" ? "by" : "on",
     allDay,
     priority: (src?.priority ?? 0) as Priority,
     projectId: src?.projectId ?? "",
@@ -135,6 +137,7 @@ export function TaskEditor({
     notes: form.notes,
     priority: form.priority,
     dueAt: composeDue(form),
+    dueKind: form.dueDate ? form.dueKind : "on",
     allDay: form.allDay,
     projectId: form.projectId || null,
     tags: form.tags,
@@ -302,6 +305,26 @@ export function TaskEditor({
               className="h-11 w-[124px] rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none disabled:opacity-40"
             />
           </div>
+          {form.dueDate ? (
+            <div className="mt-2">
+              <Segmented
+                size="sm"
+                ariaLabel="Due kind"
+                value={form.dueKind}
+                onChange={(v) => set("dueKind", v)}
+                options={[
+                  { value: "on" as const, label: "On this day" },
+                  { value: "by" as const, label: "By this day" },
+                ]}
+              />
+              {form.dueKind === "by" ? (
+                <p className="mt-1.5 text-[12px] leading-snug text-muted">
+                  Deadline — stays on Today every day until then, and its priority climbs as
+                  the date gets close.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {[
               { label: "Today", offset: 0 },

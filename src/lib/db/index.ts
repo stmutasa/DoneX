@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'open',
   priority INTEGER DEFAULT 0,
   due_at TEXT,
+  due_kind TEXT NOT NULL DEFAULT 'on',
   all_day INTEGER DEFAULT 0,
   project_id TEXT,
   tags TEXT DEFAULT '[]',
@@ -147,6 +148,9 @@ function migrate(db: Database.Database): void {
   );
   if (!taskCols.has("location")) {
     db.exec("ALTER TABLE tasks ADD COLUMN location TEXT");
+  }
+  if (!taskCols.has("due_kind")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN due_kind TEXT NOT NULL DEFAULT 'on'");
   }
 }
 

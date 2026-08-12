@@ -91,4 +91,32 @@ describe("parseQuickAdd", () => {
     expect(draft.recurrence).toEqual({ freq: "weekly", byWeekday: [1, 5] });
     expect(draft.title).toBe("gym");
   });
+
+  it("treats 'by <date>' as a deadline and strips the keyword from the title", () => {
+    const { draft, matchedText } = parseQuickAdd("renew passport by friday", TZ);
+    expect(draft.title).toBe("renew passport");
+    expect(draft.dueKind).toBe("by");
+    expect(draft.dueAt).toBeTruthy();
+    expect(draft.allDay).toBe(true);
+    expect(matchedText.due?.toLowerCase()).toBe("by friday");
+  });
+
+  it("treats 'before <date>' as a deadline", () => {
+    const { draft } = parseQuickAdd("file taxes before april 15", TZ);
+    expect(draft.title).toBe("file taxes");
+    expect(draft.dueKind).toBe("by");
+  });
+
+  it("does not flag a deadline when 'by' precedes something other than the date", () => {
+    const { draft } = parseQuickAdd("stop by the store tomorrow", TZ);
+    expect(draft.title).toBe("stop by the store");
+    expect(draft.dueKind).toBeUndefined();
+    expect(draft.dueAt).toBeTruthy();
+  });
+
+  it("plain dated tasks stay dueKind-less (defaults to 'on')", () => {
+    const { draft } = parseQuickAdd("dentist appointment friday 2pm", TZ);
+    expect(draft.dueKind).toBeUndefined();
+    expect(draft.allDay).toBe(false);
+  });
 });

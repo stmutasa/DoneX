@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
@@ -20,6 +21,10 @@ import { PlanStrip } from "@/components/plan/PlanStrip";
 export default function TodayPage() {
   const { data, isLoading } = useSWR<{ tasks: Task[] }>(
     keys.tasks({ view: "today", includeDone: true }),
+    fetcher,
+  );
+  const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
+    keys.tasks({ view: "anytime" }),
     fetcher,
   );
   const { data: projectData } = useSWR<{ projects: Project[] }>(keys.projects(), fetcher);
@@ -46,6 +51,12 @@ export default function TodayPage() {
     }
     return { overdue: o, today: t, done: d };
   }, [all]);
+
+  const anytime = useMemo(
+    () => (anytimeData?.tasks ?? []).filter((t) => !t.parentId && t.status !== "done"),
+    [anytimeData],
+  );
+  const anytimeShown = anytime.slice(0, 8);
 
   const streak = stats?.streakDays ?? 0;
   const empty = !isLoading && overdue.length === 0 && today.length === 0;
@@ -84,7 +95,7 @@ export default function TodayPage() {
 
       {isLoading ? (
         <SkeletonRows rows={4} />
-      ) : empty && done.length === 0 ? (
+      ) : empty && done.length === 0 && anytime.length === 0 ? (
         <EmptyState
           emoji="🌤️"
           title="Nothing on today"
@@ -116,6 +127,24 @@ export default function TodayPage() {
                 {done.length} done. That’s a good day’s work.
               </p>
             </div>
+          ) : null}
+
+          {anytime.length ? (
+            <TaskGroup
+              title={empty ? "Anytime — pick something" : "Anytime"}
+              count={anytime.length}
+              tone="muted"
+            >
+              <TaskList tasks={anytimeShown} projects={projects} onOpen={setEditing} />
+              {anytime.length > anytimeShown.length ? (
+                <Link
+                  href="/upcoming"
+                  className="mt-2 block px-1 text-[13px] font-medium text-accent"
+                >
+                  See all {anytime.length} anytime tasks
+                </Link>
+              ) : null}
+            </TaskGroup>
           ) : null}
 
           {done.length ? (

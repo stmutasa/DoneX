@@ -30,6 +30,7 @@ HOW YOU WORK
 - Use the tools for every data change. Never claim you did something you did not do with a tool.
 - Never invent task ids. Only use ids that appear above or that a tool returned. When you are unsure which task the user means, call list_tasks first.
 - When the user mentions a date or time, resolve it against today in ${ctx.tz} and pass a concrete value (e.g. "${ctx.todayKey}T15:00"). "Tomorrow morning" means 09:00, "afternoon" 14:00, "evening" 18:00 unless the user says otherwise.
+- "Do X BY Friday" is a deadline, not an appointment: pass dueKind "by" with the date. Deadline tasks stay on Today every day until their date and their priority escalates automatically as it nears. Use dueKind "on" (the default) for things that happen on that day, like appointments and events.
 - Batch related work into one turn: several tool calls are fine before you answer.
 - Confirm what you did concisely, in one or two sentences. No bulleted recaps of the obvious.
 - If the user asks what is on their plate, answer from the context above instead of calling a tool.
@@ -74,28 +75,34 @@ export function planPrompt(input: {
   ctx: AssistantContext;
   dateLocal: string;
   tasks: string;
+  anytime: string;
   briefing: string;
 }): string {
-  return `Build a realistic time-blocked plan for ${input.dateLocal} (${input.ctx.weekday}).
+  return `Build a realistic time-blocked plan for ${input.dateLocal} (${input.ctx.weekday}). You decide WHAT gets worked on today, not just when.
 
 CURRENT LOCAL TIME: ${input.ctx.timeLabel} — do not schedule anything before this time.
 
-OPEN TASKS (id · title · details). Assume each needs 25–45 minutes; estimates are unknown.
-${input.tasks || "(no open tasks)"}
+MUST CONSIDER — due today, overdue, or a live deadline ("by …" means it must be finished by that date; "(escalated)" means the deadline is close, treat it as urgent)
+${input.tasks || "(nothing dated)"}
+
+ANYTIME CANDIDATES — undated tasks. Pick the 1–3 most worthwhile IF the day has room; skip the rest.
+${input.anytime || "(none)"}
 
 CALENDAR — these are immovable and must appear as blocks with kind "event"
 ${input.ctx.calendarList}
 ${input.briefing ? `\nTHIS MORNING'S BRIEFING\n${input.briefing}\n` : ""}
 Return JSON exactly like:
-{"summary": string, "blocks": [{"start": "HH:mm", "end": "HH:mm", "label": string, "taskIds": [string], "kind": "focus"|"break"|"errand"|"event"}]}
+{"summary": string, "blocks": [{"start": "HH:mm", "end": "HH:mm", "label": string, "taskIds": [string], "kind": "focus"|"break"|"errand"|"event", "estimateMin": number}]}
 
 Rules:
-- Blocks are 30–90 minutes, in chronological order, never overlapping, all after ${input.ctx.timeLabel}.
+- Choose deliberately: everything urgent or escalated gets a block; deadlines still days away can wait if today is tight; anytime tasks fill genuine spare room only.
+- "estimateMin" is YOUR estimate of the real work in the block, in minutes — judge each task from its title and notes (a phone call ≈ 10–15, an errand ≈ 30, deep work ≈ 60–90). Never omit it on focus/errand blocks. Make the block a little longer than the estimate.
+- Blocks are 15–90 minutes, in chronological order, never overlapping, all after ${input.ctx.timeLabel}.
 - Include at least one short break when the plan runs longer than three hours.
-- "taskIds" must contain ids copied verbatim from the task list, or be empty for breaks and events.
+- "taskIds" must contain ids copied verbatim from the lists above, or be empty for breaks and events.
 - Calendar entries become blocks with kind "event" at their real times.
 - Do not plan past 21:00. Leave slack; an over-packed day is a failed plan.
-- "summary" is 1–2 sentences describing the shape of the day. No markdown.`;
+- "summary" is 1–2 sentences on the shape of the day and what you chose to leave out. No markdown.`;
 }
 
 export function reviewPrompt(input: {
@@ -167,7 +174,7 @@ Return JSON exactly like:
 {"decision": "task"|"note"|"update"|"duplicate"|"dismiss", "reason": string,
  "duplicateOf": string,
  "update": {"taskTitle": string, "dueAtLocal": string|null, "priority": 0|1|2|3|null, "note": string},
- "task": {"title": string, "dueAtLocal": string|null, "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
+ "task": {"title": string, "dueAtLocal": string|null, "dueKind": "on"|"by", "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
  "note": {"title": string, "content": string}}
 
 Decisions:
@@ -182,6 +189,7 @@ Rules:
 - "reason": at most 90 characters, plain words.
 - task.title: imperative, at most 80 characters, no trailing punctuation.
 - Any dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
+- task.dueKind: "by" when the date is a deadline (pay by, submit by, RSVP by, expires on) — doable any day up to then. "on" when it happens at that moment (appointments, pickups, events).
 - Priorities: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.
 - task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
 - task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;

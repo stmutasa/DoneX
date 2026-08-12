@@ -37,6 +37,8 @@ export interface Task {
   priority: Priority;
   /** ISO datetime (UTC) or null. If allDay, time component is 00:00 local encoded at creation. */
   dueAt: string | null;
+  /** "on" = happens on that date · "by" = deadline, doable any day before */
+  dueKind: "on" | "by";
   allDay: boolean;
   projectId: string | null;
   tags: string[];
@@ -57,6 +59,7 @@ export interface TaskDraft {
   notes?: string;
   priority?: Priority;
   dueAt?: string | null;
+  dueKind?: "on" | "by";
   allDay?: boolean;
   projectId?: string | null;
   tags?: string[];
@@ -149,6 +152,8 @@ export interface PlanBlock {
   label: string;
   taskIds: string[];
   kind: "focus" | "break" | "errand" | "event";
+  /** AI's estimate of the work inside this block, in minutes */
+  estimateMin?: number;
 }
 
 export interface DayPlan {

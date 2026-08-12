@@ -37,6 +37,14 @@ task with a real due date. Plain English works:
 - `Gym every mon wed fri 6am`
 - `Buy a gift for Sam friday !p1` ← `!p1` = high priority (also `!p2`, `!p3`)
 - `Fix the fence #Home @weekend` ← `#` puts it in a project, `@` adds a tag
+- `Renew passport by friday` ← **"by" = a deadline**, not an appointment (see below)
+
+**Deadlines ("do it by…"):** say *by*, *before*, or *until* a date and DoneX
+treats it as a deadline — the task shows on Today **every day** until that
+date (with a "By Fri · 3d left" chip), and its priority climbs automatically
+as the date gets close (P3 four days out, P2 at two, P1 the last day). Things
+*on* a date (appointments, events) behave like before. You can flip any task
+between **On this day** / **By this day** in the task editor.
 
 You'll see little chips appear as it understands you. Or skip typing entirely
 and tell the orb: *"Add a task to call the dentist tomorrow at 3."*
@@ -59,11 +67,17 @@ Top to bottom:
 2. **Morning briefing** — the AI reads your day (tasks, overdue stuff, calendar)
    and writes you 2–4 sentences with 1–3 suggested focus tasks. Tap ↻ to redo it.
 3. **Calendar strip** — today's Google Calendar events, since you connected it.
-4. **Plan my day** — the good stuff. Tap it and the AI builds a realistic
-   schedule out of your tasks and calendar (with breaks). **Accept** it as-is,
+4. **Plan my day** — the good stuff. Tap it and the AI *chooses what you should
+   work on today* — due-today tasks, approaching deadlines, plus a couple of
+   anytime tasks if there's room — and blocks out a realistic schedule with a
+   **time estimate** (~30m) on each work block. **Accept** it as-is,
    **Reshuffle** if you don't like it, and optionally have it write the focus
-   blocks into your Google Calendar.
-5. **Your tasks** — Overdue (red), Today, and Done today (collapsed at the bottom).
+   blocks into your Google Calendar. Tap the **🔊 speaker** to have the plan
+   read aloud. The plan **stays on the page until you replace it** — even
+   tomorrow, yesterday's plan is still there with a "Plan today" button.
+5. **Your tasks** — Overdue (red), Today (deadlines ride along with escalating
+   priority), **Anytime** (your undated list, so a clear day is never blank),
+   and Done today (collapsed at the bottom).
 
 ---
 

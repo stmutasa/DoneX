@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { newId, nowIso, localDateKey, addDaysToDateKey, isoFromLocal } from "@/lib/utils";
+import { effectivePriority } from "@/lib/deadline";
 import { nextOccurrence } from "@/lib/recurrence";
 import type {
   AppSettings,
@@ -151,6 +152,7 @@ interface TaskRow {
   status: string;
   priority: number;
   due_at: string | null;
+  due_kind: string;
   all_day: number;
   project_id: string | null;
   tags: string;
@@ -172,6 +174,7 @@ function rowToTask(r: TaskRow): Task {
     status: r.status as Task["status"],
     priority: r.priority as Task["priority"],
     dueAt: r.due_at,
+    dueKind: r.due_kind === "by" ? "by" : "on",
     allDay: !!r.all_day,
     projectId: r.project_id,
     tags: JSON.parse(r.tags || "[]"),
@@ -226,14 +229,15 @@ export const tasksRepo = {
     const params: unknown[] = [];
 
     if (filter.view === "today") {
-      // open tasks due before tomorrow (i.e. today + overdue)
+      // open tasks due before tomorrow (today + overdue), plus live "by"
+      // deadlines — those stay on Today every day until their date passes
       if (filter.includeDone) {
         where.push(
-          "((status='open' AND due_at IS NOT NULL AND due_at < ?) OR (status='done' AND completed_at >= ?))"
+          "((status='open' AND due_at IS NOT NULL AND (due_at < ? OR due_kind='by')) OR (status='done' AND completed_at >= ?))"
         );
         params.push(tomorrowStartIso, isoStartOfLocalDay(todayKey, tz));
       } else {
-        where.push("status='open' AND due_at IS NOT NULL AND due_at < ?");
+        where.push("status='open' AND due_at IS NOT NULL AND (due_at < ? OR due_kind='by')");
         params.push(tomorrowStartIso);
       }
     } else if (filter.view === "upcoming") {
@@ -265,7 +269,24 @@ export const tasksRepo = {
     const rows = getDb()
       .prepare(`SELECT * FROM tasks WHERE ${where.join(" AND ")} ${TASK_ORDER} LIMIT 500`)
       .all(...params) as TaskRow[];
-    return attachSubtasks(rows.map(rowToTask));
+    const tasks = attachSubtasks(rows.map(rowToTask));
+    if (filter.view === "today") {
+      // Escalation-aware order: overdue first, then effective priority
+      // (deadline tasks climb as their date nears), then due time.
+      const startToday = isoStartOfLocalDay(todayKey, tz);
+      const rank = (t: Task): number => {
+        if (t.status === "done") return -2;
+        if (t.dueAt && t.dueAt < startToday) return 4;
+        return effectivePriority(t, tz);
+      };
+      tasks.sort(
+        (a, b) =>
+          rank(b) - rank(a) ||
+          (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999") ||
+          a.sort - b.sort
+      );
+    }
+    return tasks;
   },
 
   create(draft: TaskDraft): Task {
@@ -273,8 +294,8 @@ export const tasksRepo = {
     const now = nowIso();
     getDb()
       .prepare(
-        `INSERT INTO tasks(id,title,notes,status,priority,due_at,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO tasks(id,title,notes,status,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         id,
@@ -283,6 +304,7 @@ export const tasksRepo = {
         "open",
         draft.priority ?? 0,
         draft.dueAt ?? null,
+        draft.dueKind === "by" ? "by" : "on",
         draft.allDay ? 1 : 0,
         draft.projectId ?? null,
         JSON.stringify(draft.tags ?? []),
@@ -306,6 +328,7 @@ export const tasksRepo = {
       ["notes", "notes", (v) => v],
       ["priority", "priority", (v) => v],
       ["dueAt", "due_at", (v) => v],
+      ["dueKind", "due_kind", (v) => (v === "by" ? "by" : "on")],
       ["allDay", "all_day", (v) => (v ? 1 : 0)],
       ["projectId", "project_id", (v) => v],
       ["tags", "tags", (v) => JSON.stringify(v ?? [])],
@@ -899,6 +922,22 @@ export const plansRepo = {
          accepted=excluded.accepted, generated_at=excluded.generated_at`
       )
       .run(plan.dateLocal, plan.summary, JSON.stringify(plan.blocks), plan.accepted ? 1 : 0, plan.generatedAt);
+  },
+  /** Most recently generated plan, today's or not — Today keeps showing it until replaced. */
+  latest(): DayPlan | null {
+    const r = getDb()
+      .prepare("SELECT * FROM plans ORDER BY date_local DESC LIMIT 1")
+      .get() as
+      | { date_local: string; summary: string; blocks: string; accepted: number; generated_at: string }
+      | undefined;
+    if (!r) return null;
+    return {
+      dateLocal: r.date_local,
+      summary: r.summary,
+      blocks: JSON.parse(r.blocks || "[]"),
+      accepted: !!r.accepted,
+      generatedAt: r.generated_at,
+    };
   },
 };
 

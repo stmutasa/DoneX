@@ -133,6 +133,7 @@ export const keys = {
   history: (conversationId?: string | null) =>
     `/api/chat/history${query({ conversationId: conversationId ?? undefined })}`,
   briefing: (refresh?: boolean) => `/api/assistant/briefing${query({ refresh })}`,
+  plan: () => "/api/assistant/plan",
   review: (refresh?: boolean) => `/api/assistant/review${query({ refresh })}`,
   stats: () => "/api/stats",
   settings: () => "/api/settings",
