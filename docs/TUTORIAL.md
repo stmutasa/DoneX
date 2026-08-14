@@ -79,6 +79,14 @@ Top to bottom:
    priority), **Anytime** (your undated list, so a clear day is never blank),
    and Done today (collapsed at the bottom).
 
+**Today is your loose list.** Anything filed under a project stays on the
+**Projects** tab — it won't clutter Today, even if it's due today. Today is for
+the odds and ends you didn't file anywhere.
+
+**The Anytime section rotates.** It shows a handful at a time and swaps in a
+different few every three hours, so the same eight tasks don't sit there being
+ignored forever. Tap **See all** for the full undated list.
+
 ---
 
 ## Talking to it (chat and Walk Mode)

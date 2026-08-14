@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
 import { greeting, isOverdue, longDateLine } from "@/lib/format";
+import { rotatingSample, rotationSlot } from "@/lib/rotate";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
@@ -34,29 +35,49 @@ export default function TodayPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [now, setNow] = useState<Date | null>(null);
+  const [slot, setSlot] = useState(() => rotationSlot());
 
   useEffect(() => setNow(new Date()), []);
 
+  // Advance the Anytime rotation while the app sits open on the home screen.
+  useEffect(() => {
+    const tick = () => setSlot(rotationSlot());
+    const id = window.setInterval(tick, 60_000);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("focus", tick);
+    };
+  }, []);
+
   const projects = projectData?.projects ?? [];
   const all = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
+  // Project work is visited deliberately on its own tab; Today is the loose list.
+  const loose = useMemo(() => all.filter((t) => !t.projectId), [all]);
 
   const { overdue, today, done } = useMemo(() => {
     const o: Task[] = [];
     const t: Task[] = [];
     const d: Task[] = [];
-    for (const task of all) {
+    for (const task of loose) {
       if (task.status === "done") d.push(task);
       else if (isOverdue(task.dueAt, task.allDay)) o.push(task);
       else t.push(task);
     }
     return { overdue: o, today: t, done: d };
-  }, [all]);
+  }, [loose]);
 
   const anytime = useMemo(
-    () => (anytimeData?.tasks ?? []).filter((t) => !t.parentId && t.status !== "done"),
+    () =>
+      (anytimeData?.tasks ?? []).filter(
+        (t) => !t.parentId && !t.projectId && t.status !== "done",
+      ),
     [anytimeData],
   );
-  const anytimeShown = anytime.slice(0, 8);
+  // A different handful every few hours, steady in between.
+  const anytimeShown = useMemo(() => rotatingSample(anytime, 8, slot), [anytime, slot]);
 
   const streak = stats?.streakDays ?? 0;
   const empty = !isLoading && overdue.length === 0 && today.length === 0;
@@ -137,12 +158,14 @@ export default function TodayPage() {
             >
               <TaskList tasks={anytimeShown} projects={projects} onOpen={setEditing} />
               {anytime.length > anytimeShown.length ? (
-                <Link
-                  href="/upcoming"
-                  className="mt-2 block px-1 text-[13px] font-medium text-accent"
-                >
-                  See all {anytime.length} anytime tasks
-                </Link>
+                <div className="mt-2 flex items-center justify-between gap-3 px-1">
+                  <span className="text-[12px] text-faint">
+                    A different few every few hours
+                  </span>
+                  <Link href="/upcoming" className="shrink-0 text-[13px] font-medium text-accent">
+                    See all {anytime.length}
+                  </Link>
+                </div>
               ) : null}
             </TaskGroup>
           ) : null}
