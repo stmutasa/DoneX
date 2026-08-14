@@ -169,20 +169,24 @@ export function AppearanceSection() {
           { value: "dark", label: "Dark", icon: <IconMoon className="h-4 w-4" /> },
         ]}
       />
-      {install.available ? (
-        <>
-          <Divider />
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[15px] text-ink">Install app</div>
-              <div className="mt-0.5 text-[13px] text-muted">Runs full-screen, works offline.</div>
-            </div>
-            <Button size="sm" variant="primary" onClick={() => void install.promptInstall()}>
-              Install
-            </Button>
+      <Divider />
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[15px] text-ink">Install on your home screen</div>
+          <div className="mt-0.5 text-[13px] text-muted">
+            {install.installed
+              ? "Installed — you’re running the app version."
+              : install.available
+                ? "Runs full-screen, works offline."
+                : "Use your browser’s menu → Add to Home screen."}
           </div>
-        </>
-      ) : null}
+        </div>
+        {install.available ? (
+          <Button size="sm" variant="primary" onClick={() => void install.promptInstall()}>
+            Install
+          </Button>
+        ) : null}
+      </div>
     </SettingsCard>
   );
 }

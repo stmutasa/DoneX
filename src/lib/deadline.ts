@@ -41,6 +41,19 @@ export function effectivePriority(
   return task.priority;
 }
 
+/**
+ * Is this task close enough to matter today? Overdue, due today, or a deadline
+ * landing by tomorrow. Project tasks use this to break through onto Today;
+ * everything else in a project waits on the Projects tab.
+ */
+export function isUrgent(
+  task: Pick<Task, "dueAt">,
+  tz: string,
+  now: Date = new Date(),
+): boolean {
+  return !!task.dueAt && daysUntil(task.dueAt, tz, now) <= 1;
+}
+
 /** True when escalation is currently holding this task above its set priority. */
 export function isEscalated(
   task: Pick<Task, "priority" | "dueAt" | "dueKind">,

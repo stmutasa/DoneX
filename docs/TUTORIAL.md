@@ -80,8 +80,14 @@ Top to bottom:
    and Done today (collapsed at the bottom).
 
 **Today is your loose list.** Anything filed under a project stays on the
-**Projects** tab — it won't clutter Today, even if it's due today. Today is for
-the odds and ends you didn't file anywhere.
+**Projects** tab — with one exception: a project task breaks through onto Today
+when it's actually pressing (overdue, due today, or a deadline landing by
+tomorrow), so nothing important hides from you.
+
+**The page reshapes itself through the day.** In the morning the briefing and
+your day plan sit at the top, where you want them. From noon they slide below
+your task list — the list is what you need at eye level in the afternoon. (The
+"Install on your home screen" button now lives in **Settings → Appearance**.)
 
 **The Anytime section rotates.** It shows a handful at a time and swaps in a
 different few every three hours, so the same eight tasks don't sit there being

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { daysUntil, deadlineLabel, diffDayKeys, effectivePriority, isEscalated } from "@/lib/deadline";
+import {
+  daysUntil,
+  deadlineLabel,
+  diffDayKeys,
+  effectivePriority,
+  isEscalated,
+  isUrgent,
+} from "@/lib/deadline";
 import { isoFromLocal } from "@/lib/utils";
 
 const TZ = "America/New_York";
@@ -55,6 +62,26 @@ describe("effectivePriority", () => {
     expect(isEscalated(byTask("2026-08-13", 0), TZ, NOW)).toBe(true);
     expect(isEscalated(byTask("2026-08-20", 0), TZ, NOW)).toBe(false);
     expect(isEscalated(byTask("2026-08-13", 3), TZ, NOW)).toBe(false); // already P1
+  });
+});
+
+describe("isUrgent", () => {
+  it("is true for overdue, today, and tomorrow", () => {
+    expect(isUrgent({ dueAt: dueOn("2026-08-09") }, TZ, NOW)).toBe(true); // 3d late
+    expect(isUrgent({ dueAt: dueOn("2026-08-11") }, TZ, NOW)).toBe(true); // yesterday
+    expect(isUrgent({ dueAt: dueOn("2026-08-12") }, TZ, NOW)).toBe(true); // today
+    expect(isUrgent({ dueAt: dueOn("2026-08-13") }, TZ, NOW)).toBe(true); // tomorrow
+  });
+
+  it("is false further out and for undated tasks", () => {
+    expect(isUrgent({ dueAt: dueOn("2026-08-14") }, TZ, NOW)).toBe(false); // 2d out
+    expect(isUrgent({ dueAt: dueOn("2026-09-01") }, TZ, NOW)).toBe(false);
+    expect(isUrgent({ dueAt: null }, TZ, NOW)).toBe(false);
+  });
+
+  it("counts a late-evening task due tomorrow as urgent", () => {
+    const lateToday = new Date(isoFromLocal("2026-08-12", "23:30", TZ));
+    expect(isUrgent({ dueAt: isoFromLocal("2026-08-13", "09:00", TZ) }, TZ, lateToday)).toBe(true);
   });
 });
 

@@ -6,18 +6,20 @@ import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
 import { greeting, isOverdue, longDateLine } from "@/lib/format";
+import { isUrgent } from "@/lib/deadline";
 import { rotatingSample, rotationSlot } from "@/lib/rotate";
-import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, SkeletonRows } from "@/components/ui/Misc";
-import { IconDownload, IconPlus } from "@/components/ui/icons";
+import { IconPlus } from "@/components/ui/icons";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { BriefingCard } from "@/components/today/BriefingCard";
 import { CalendarStrip } from "@/components/today/CalendarStrip";
 import { PlanStrip } from "@/components/plan/PlanStrip";
+
+const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export default function TodayPage() {
   const { data, isLoading } = useSWR<{ tasks: Task[] }>(
@@ -30,7 +32,6 @@ export default function TodayPage() {
   );
   const { data: projectData } = useSWR<{ projects: Project[] }>(keys.projects(), fetcher);
   const { data: stats } = useSWR<StatsSummary>(keys.stats(), fetcher);
-  const install = useInstallPrompt();
 
   const [editing, setEditing] = useState<Task | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -54,8 +55,12 @@ export default function TodayPage() {
 
   const projects = projectData?.projects ?? [];
   const all = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
-  // Project work is visited deliberately on its own tab; Today is the loose list.
-  const loose = useMemo(() => all.filter((t) => !t.projectId), [all]);
+  // Project work lives on its own tab — except when it's about to bite:
+  // overdue, due today, or a deadline landing by tomorrow.
+  const loose = useMemo(
+    () => all.filter((t) => !t.projectId || isUrgent(t, deviceTz, now ?? undefined)),
+    [all, now],
+  );
 
   const { overdue, today, done } = useMemo(() => {
     const o: Task[] = [];
@@ -82,6 +87,13 @@ export default function TodayPage() {
   const streak = stats?.streakDays ?? 0;
   const empty = !isLoading && overdue.length === 0 && today.length === 0;
 
+  // The top of the page belongs to whatever is useful right now: the briefing
+  // and the plan lead in the morning, then step aside for the list itself.
+  // Rendered only once the clock is known, so nothing jumps after hydration.
+  const morning = now !== null && now.getHours() < 12;
+  const leadWith = now !== null && morning;
+  const trailWith = now !== null && !morning;
+
   return (
     <Page>
       <header className="mb-5 flex items-start justify-between gap-3">
@@ -99,19 +111,9 @@ export default function TodayPage() {
       </header>
 
       <div className="mb-6 space-y-3">
-        <BriefingCard tasks={all} onFocusTask={setEditing} />
+        {leadWith ? <BriefingCard tasks={all} onFocusTask={setEditing} /> : null}
         <CalendarStrip />
-        <PlanStrip tasks={all} />
-        {install.available ? (
-          <button
-            type="button"
-            onClick={() => void install.promptInstall()}
-            className="flex w-full items-center gap-2 rounded-full border border-stroke bg-elev px-4 py-2.5 text-left text-[13px] text-muted"
-          >
-            <IconDownload className="h-4 w-4 text-accent" />
-            Install DoneX to your home screen
-          </button>
-        ) : null}
+        {leadWith ? <PlanStrip tasks={all} /> : null}
       </div>
 
       {isLoading ? (
@@ -177,6 +179,13 @@ export default function TodayPage() {
           ) : null}
         </>
       )}
+
+      {trailWith ? (
+        <div className="mt-6 space-y-3">
+          <PlanStrip tasks={all} />
+          <BriefingCard tasks={all} onFocusTask={setEditing} />
+        </div>
+      ) : null}
 
       <TaskEditor open={!!editing} task={editing} onClose={() => setEditing(null)} />
       <QuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} />
