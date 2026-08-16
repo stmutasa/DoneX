@@ -126,7 +126,7 @@ function cleanTitle(text: string): string {
   return t;
 }
 
-export function parseQuickAdd(input: string, tz: string): QuickAddResult {
+export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddResult {
   let text = input;
   const matchedText: QuickAddMatch = { tags: [] };
 
@@ -163,7 +163,9 @@ export function parseQuickAdd(input: string, tz: string): QuickAddResult {
   let allDay: boolean | undefined;
   let dueKind: "on" | "by" | undefined;
 
-  const refInstant = new Date();
+  // Offline captures sync later; anchoring "tomorrow" to when the words were
+  // typed (not when the sync happens) keeps the date honest.
+  const refInstant = ref && !Number.isNaN(ref.getTime()) ? ref : new Date();
   const offsetMinutes = tzOffset(tz, refInstant);
   const results = chrono.parse(text, { instant: refInstant, timezone: offsetMinutes }, { forwardDate: true });
   if (results.length) {

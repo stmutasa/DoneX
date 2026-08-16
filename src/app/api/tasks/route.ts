@@ -79,7 +79,12 @@ export async function POST(req: NextRequest) {
   const quick = (body as Record<string, unknown>).quick;
   if (typeof quick === "string") {
     const settings = settingsRepo.getApp();
-    const { draft: quickDraft, matchedText } = parseQuickAdd(quick, settings.tz);
+    // Offline quick-adds carry the moment they were typed, so relative dates
+    // parse against that instead of the (possibly next-day) sync time.
+    const capturedAtRaw = (body as Record<string, unknown>).capturedAt;
+    const capturedAt =
+      typeof capturedAtRaw === "string" ? new Date(capturedAtRaw) : undefined;
+    const { draft: quickDraft, matchedText } = parseQuickAdd(quick, settings.tz, capturedAt);
     draft = quickDraft;
     if (matchedText.project) {
       const project =

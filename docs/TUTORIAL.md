@@ -170,6 +170,27 @@ Sunday evening (changeable in Settings).
 
 ---
 
+## Offline (planes, dead zones, walks)
+
+DoneX keeps working without a connection:
+
+- **Everything you've looked at recently stays readable** — Today, Upcoming,
+  notes, your plan, the logbook. It's your last-synced copy, and a slim
+  banner up top tells you you're offline.
+- **Task changes still work.** Add tasks (quick-add included), check things
+  off, edit, delete — they apply instantly on your screen and queue up. The
+  banner counts what's waiting ("2 changes will sync"). The moment you're
+  back online they replay to the server, and you get a "Synced" toast.
+  Relative dates are honest: "call mom tomorrow" typed offline on Tuesday
+  means Wednesday, even if it syncs on Wednesday.
+- **Everything else is read-only offline** — notes editing, the inbox, and
+  anything AI (chat, walk mode, triage, plans) needs the connection.
+
+One habit worth keeping: open the app once while online after installing it,
+so it has something cached to show you later.
+
+---
+
 ## Notifications
 
 Three kinds, all controlled in Settings → Notifications:

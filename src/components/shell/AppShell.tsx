@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/icons";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { MORE_ITEMS, NAV_ITEMS, Wordmark, isActive } from "./nav";
+import { OfflineBanner } from "./OfflineBanner";
 import { useTheme } from "./ThemeProvider";
 
 const TAB_ORDER = ["/today", "/upcoming", "/inbox"];
@@ -58,6 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-bg">
+      <OfflineBanner />
       <DesktopSidebar pathname={pathname} newCount={newCount} streak={streak} onQuickAdd={() => setQuickOpen(true)} />
 
       <main className="lg:pl-[248px]">{children}</main>

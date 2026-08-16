@@ -34,6 +34,8 @@ import type {
   WeeklyReview,
 } from "@/lib/types";
 
+import { applyOutboxOverlay, enqueueFailedRequest } from "@/lib/offline";
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -70,6 +72,18 @@ type RequestInitEx = RequestInit & { timeoutMs?: number };
 async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
   const hasBody = init?.body !== undefined;
   const { timeoutMs, ...rest } = init ?? {};
+  const method = (rest.method ?? "GET").toUpperCase();
+  const bodyStr = typeof rest.body === "string" ? rest.body : undefined;
+
+  const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  // Known-offline mutations don't wait for a doomed fetch — straight to the
+  // outbox (tasks) or a clear error (everything else).
+  if (offline && method !== "GET") {
+    const queued = enqueueFailedRequest(method, url, bodyStr);
+    if (queued !== null) return queued as T;
+    throw new ApiError("You’re offline — this change needs a connection", 0);
+  }
+
   let res: Response;
   try {
     res = await fetch(url, {
@@ -83,7 +97,15 @@ async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
+      // Deliberately NOT queued: the server may have processed the request
+      // and a replay would duplicate it.
       throw new ApiError("Request timed out — check your connection and try again", 0);
+    }
+    // fetch() itself failed — the network dropped mid-flight.
+    if (method !== "GET") {
+      const queued = enqueueFailedRequest(method, url, bodyStr);
+      if (queued !== null) return queued as T;
+      throw new ApiError("You’re offline — this change needs a connection", 0);
     }
     throw err;
   }
@@ -111,8 +133,11 @@ async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-/** Generic SWR fetcher: `useSWR<{tasks: Task[]}>(keys.tasks(f), fetcher)` */
-export const fetcher = <T,>(url: string): Promise<T> => request<T>(url);
+/** Generic SWR fetcher: `useSWR<{tasks: Task[]}>(keys.tasks(f), fetcher)`.
+ *  Queued offline changes are layered onto every read, so lists served from
+ *  the service-worker cache still reflect what you did while offline. */
+export const fetcher = <T,>(url: string): Promise<T> =>
+  request<T>(url).then((data) => applyOutboxOverlay(url, data));
 
 // ── SWR keys ──────────────────────────────────────────────────────────────
 
