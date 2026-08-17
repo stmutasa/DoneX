@@ -7,6 +7,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { inboxRepo, settingsRepo } from "@/lib/db/repos";
 import { aiConfigured, triageInboxItem } from "@/lib/ai";
+import { parseIngestPayload } from "@/lib/ingest";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,13 @@ export async function POST(request: NextRequest) {
   }
 
   const raw = (await request.text()).trim();
-  if (!raw) return NextResponse.json({ error: "Empty body" }, { status: 400 });
+  const search = new URL(request.url).searchParams;
+  if (!raw && !search.get("body")) {
+    return NextResponse.json({ error: "Empty body" }, { status: 400 });
+  }
 
-  const parsed = BodySchema.safeParse(asPayload(raw));
+  const payload = parseIngestPayload(raw, request.headers.get("content-type") ?? "", search);
+  const parsed = BodySchema.safeParse(payload);
   if (!parsed.success) {
     return NextResponse.json({ error: "Expected {from, body}" }, { status: 400 });
   }
@@ -54,17 +59,6 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, id: item.id });
-}
-
-/** JSON when parseable, else the raw text treated as the message body. */
-function asPayload(raw: string): unknown {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-  } catch {
-    // fall through to plain text
-  }
-  return { from: "SMS", body: raw };
 }
 
 function parseDate(value: string | undefined): Date {

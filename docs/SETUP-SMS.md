@@ -13,11 +13,22 @@ It gates the endpoint: requests without the right token are rejected.
 1. Install **MacroDroid** from the Play Store.
 2. **Add Macro**.
 3. **Trigger** → **SMS Received** → leave sender/content as **Any**.
-4. **Action** → **Connectivity** (or **HTTP**) → **HTTP Request**:
-   - Method: `POST`
-   - URL: `https://YOUR-APP-DOMAIN/api/ingest/sms`
+4. **Action** → **Connectivity** (or **HTTP**) → **HTTP Request**. The action
+   has four tabs; fill them in like this:
+
+   **Settings**
+   - Request method: **POST** — the default is GET, which the endpoint
+     rejects with `405`. This is the single most common setup mistake.
+   - Enter url: `https://YOUR-APP-DOMAIN/api/ingest/sms`
+   - Everything else stays default: *Block next actions* off, *Allow any
+     certificate* off, *Follow redirects* on, timeout 30, no authorization,
+     no client certificate, no proxy, "Don't save output".
+
+   **Header Params**
+   - `x-donex-token` = *(your capture token)*
+
+   **Content Body**
    - Content type: `application/json`
-   - Request headers: `x-donex-token` = *(your capture token)*
    - Body:
      ```json
      {"from":"[sms_name] [sms_number]","body":"[sms_message]"}
@@ -25,10 +36,22 @@ It gates the endpoint: requests without the right token are rejected.
      The bracketed tokens (`[sms_name]`, `[sms_number]`, `[sms_message]`) are
      MacroDroid **magic text** — don't type them literally, insert each one
      with the `…` magic-text picker button in the field.
+
+   **Query Params** — leave empty.
 5. **Save**, name it `DoneX SMS`.
 6. When prompted, grant MacroDroid the **SMS** permission — without it the
    trigger never fires.
 7. **Test:** text yourself, then check the DoneX Inbox for the new item.
+
+### If a message arrives looking mangled
+
+MacroDroid pastes the message straight into the JSON above, so a text
+containing a `"` or spanning several lines can produce invalid JSON. The
+endpoint repairs that template automatically, but if anything still looks
+wrong you can sidestep the quoting entirely: clear the **Content Body**, and
+on the **Query Params** tab add `from` = `[sms_name] [sms_number]` and `body`
+= `[sms_message]`. MacroDroid URL-encodes those, so no punctuation can break
+them. (Trade-off: message text then appears in your server's request logs.)
 
 ## Option B: Tasker
 
@@ -51,7 +74,9 @@ curl -X POST https://YOUR-APP-DOMAIN/api/ingest/sms \
   -d '{"from":"Test","body":"curl test message"}'
 ```
 
-Expect `{"ok":true,"id":"..."}`. A wrong/missing token returns `401`.
+Expect `{"ok":true,"id":"..."}`. Reading the failures: `401` = wrong or
+missing token, `405` = the macro is still set to GET, `400` = no message
+text arrived at all.
 
 ## Privacy
 
