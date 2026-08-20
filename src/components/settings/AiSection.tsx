@@ -31,7 +31,6 @@ export function AiSection({ settings, mutate }: SectionProps) {
           ? ai.customKey.set
           : false;
 
-  const [fallbackModelDraft, setFallbackModelDraft] = useState(ai.fallbackModel);
   const [keyDraft, setKeyDraft] = useState("");
   const [savingKey, setSavingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState(ai.customBaseUrl);
@@ -215,7 +214,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
         <FieldLabel>Backup model</FieldLabel>
         <p className="mb-2 text-[13px] leading-relaxed text-muted">
           If {PROVIDER_LABEL[provider]} fails — expired key, rate limit, outage — DoneX
-          retries the same request here instead of giving up.
+          retries the same request on this provider’s newest model instead of giving up.
         </p>
         <div className="flex gap-2">
           <Select
@@ -239,37 +238,25 @@ export function AiSection({ settings, mutate }: SectionProps) {
         </div>
 
         {ai.fallbackProvider ? (
-          <div className="mt-2 space-y-2">
-            <div className="flex gap-2">
-              <Input
-                value={fallbackModelDraft}
-                placeholder="Model id, e.g. claude-fable-5"
-                onChange={(e) => setFallbackModelDraft(e.target.value)}
-                onBlur={() => {
-                  if (fallbackModelDraft.trim() !== ai.fallbackModel) {
-                    void patch(
-                      { ai: { fallbackModel: fallbackModelDraft.trim() } },
-                      "Backup model saved",
-                    );
-                  }
-                }}
-              />
-            </div>
+          <p className="mt-2 text-[12px] leading-snug text-faint">
             {!fallbackKeySet ? (
-              <p className="text-[12px] leading-snug text-warn">
+              <span className="text-warn">
                 Add an {PROVIDER_LABEL[ai.fallbackProvider]} API key above (switch the
                 provider, paste the key, switch back) — without one the backup can’t run.
-              </p>
-            ) : !ai.fallbackModel.trim() ? (
-              <p className="text-[12px] leading-snug text-warn">
-                Name the model to use, or the backup stays inactive.
-              </p>
+              </span>
+            ) : ai.fallbackModel ? (
+              <>
+                Using <span className="text-ink">{ai.fallbackModel}</span> — the newest{" "}
+                {PROVIDER_LABEL[ai.fallbackProvider]} model. Re-checked daily, so it moves
+                to a newer one on its own.
+              </>
             ) : (
-              <p className="text-[12px] leading-snug text-faint">
-                Ready — {ai.fallbackModel} takes over automatically when needed.
-              </p>
+              <span className="text-warn">
+                Couldn’t reach {PROVIDER_LABEL[ai.fallbackProvider]} to see its models —
+                it will keep trying, and picks the newest when it gets through.
+              </span>
             )}
-          </div>
+          </p>
         ) : null}
 
         {settings.aiFallback ? (

@@ -219,9 +219,11 @@ assistant copes fine.
 
 - **AI Models** — swap between your OpenAI models, Claude, or any compatible
   endpoint, any time. The dropdown lists whatever your keys can access.
-- **Backup model** (under AI Models) — pick a second provider and model, and
-  DoneX retries there automatically whenever the main one fails: expired key,
-  rate limit, outage, or a model that just won't answer. It applies everywhere
+- **Backup model** (under AI Models) — pick a second provider and DoneX
+  retries there automatically whenever the main one fails: expired key,
+  rate limit, outage, or a model that just won't answer. You don't choose a
+  model: it uses that provider's newest and re-checks daily, so it moves to a
+  newer one on its own when they ship it. It applies everywhere
   — chat, walk mode, briefings, day plans and inbox triage. When it happens,
   the AI section shows what filled in and what the main provider said, so you
   find out from the app rather than from silence. It needs an API key stored

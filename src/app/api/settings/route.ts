@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { autoPickModelIfNeeded, lastFallbackEvent } from "@/lib/ai";
+import { autoPickModelIfNeeded, lastFallbackEvent, refreshFallbackModel } from "@/lib/ai";
 import { requireSession } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import type { AppSettings, MaskedSettings } from "@/lib/types";
@@ -49,8 +49,8 @@ const aiPatchSchema = z.object({
   customBaseUrl: z.string().optional(),
   customKey: z.string().optional(),
   customModel: z.string().optional(),
+  // fallbackModel is resolved server-side to the provider's newest — not set here.
   fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
-  fallbackModel: z.string().max(120).optional(),
 });
 
 const voicePatchSchema = z.object({
@@ -135,6 +135,15 @@ export async function PATCH(req: NextRequest) {
       await autoPickModelIfNeeded();
     } catch {
       // best-effort only — provider may not be reachable yet
+    }
+    // Picking a standby provider immediately resolves its newest model, so the
+    // response already carries what the UI should display.
+    if (data.ai.fallbackProvider !== undefined || data.ai.anthropicKey || data.ai.openaiKey) {
+      try {
+        await refreshFallbackModel();
+      } catch {
+        // best-effort
+      }
     }
   }
 

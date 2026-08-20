@@ -16,6 +16,7 @@ import {
   aiConfigured,
   generateBriefing,
   generateWeeklyReview,
+  refreshFallbackModel,
   sweepAutoDismissable,
   triageInboxItem,
 } from "@/lib/ai";
@@ -67,10 +68,27 @@ async function tick(): Promise<void> {
     await runWeeklyReview(settings, now);
     await runGmailScan(settings);
     await runScheduledTriage(settings, now);
+    await runBackupModelRefresh(settings, now);
   } catch (err) {
     console.error("[scheduler] tick", err);
   } finally {
     ticking = false;
+  }
+}
+
+// ── 0. Keep the backup model current ───────────────────────────────────────
+
+/** Re-checks the standby provider once a day, so a newer flagship is adopted
+ *  without anyone having to notice it shipped. */
+async function runBackupModelRefresh(settings: AppSettings, now: Date): Promise<void> {
+  try {
+    if (!settings.ai.fallbackProvider) return;
+    const todayKey = localDateKey(now, settings.tz);
+    if (settingsRepo.getKV("ai.fallbackModelCheckedOn") === todayKey) return;
+    settingsRepo.setKV("ai.fallbackModelCheckedOn", todayKey);
+    await refreshFallbackModel();
+  } catch (err) {
+    console.error("[scheduler] backup model refresh", err);
   }
 }
 

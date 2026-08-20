@@ -190,7 +190,7 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
             // Only safe to retry elsewhere while nothing has been spoken yet —
             // restarting mid-answer would repeat text the user already saw.
             const reason = describeCallError(err);
-            const backup = full.length === 0 ? fallbackConfig() : null;
+            const backup = full.length === 0 ? await fallbackConfig() : null;
             if (!backup || !isFailoverWorthy(reason)) throw err;
             recordFallback(cfg.kind, backup, reason);
             cfg = backup;

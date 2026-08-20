@@ -36,14 +36,41 @@ export function aiConfigured(): boolean {
 
 const FALLBACK_KEY = "ai.lastFallback";
 
+/**
+ * Ask the standby provider what it offers and remember the newest one. Both
+ * adapters return their lists newest-first, so the head of the list is the
+ * current flagship — no model id for the user to pick or keep up to date.
+ * Never throws: on failure the previously stored choice stands.
+ */
+export async function refreshFallbackModel(): Promise<string> {
+  const ai = settingsRepo.getApp().ai;
+  const stored = ai.fallbackModel.trim();
+  const kind = ai.fallbackProvider;
+  if (!kind || kind === ai.provider) return stored;
+  const cfg = resolveConfig(kind);
+  if (!configReady(cfg)) return stored;
+  try {
+    const models = await adapterFor(cfg.kind).models(cfg);
+    const newest = models[0]?.id ?? "";
+    if (!newest) return stored;
+    if (newest !== stored) settingsRepo.updateApp({ ai: { fallbackModel: newest } });
+    return newest;
+  } catch {
+    return stored;
+  }
+}
+
 /** The standby provider, or null when none is usable. */
-export function fallbackConfig(): ProviderConfig | null {
+export async function fallbackConfig(): Promise<ProviderConfig | null> {
   const ai = settingsRepo.getApp().ai;
   const kind = ai.fallbackProvider;
   if (!kind || kind === ai.provider) return null;
   const cfg = resolveConfig(kind);
-  const model = ai.fallbackModel.trim() || cfg.model;
-  if (!configReady(cfg) || !model) return null;
+  if (!configReady(cfg)) return null;
+  // Normally already resolved; this covers a key added after the provider was
+  // chosen, so the first failover still finds a model.
+  const model = ai.fallbackModel.trim() || cfg.model || (await refreshFallbackModel());
+  if (!model) return null;
   return { ...cfg, model };
 }
 
@@ -89,7 +116,7 @@ export async function callWithFailover<T>(
     return await run(primary, adapterFor(primary.kind));
   } catch (err) {
     const reason = describeCallError(err);
-    const backup = fallbackConfig();
+    const backup = await fallbackConfig();
     if (!backup || !isFailoverWorthy(reason)) throw err;
     try {
       const value = await run(backup, adapterFor(backup.kind));

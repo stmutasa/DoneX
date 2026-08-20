@@ -27,6 +27,7 @@ export {
 export {
   aiConfigured,
   lastFallbackEvent,
+  refreshFallbackModel,
   autoPickModelIfNeeded,
   listModels,
   testProvider,
