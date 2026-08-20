@@ -40,6 +40,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     customBaseUrl: "",
     customKey: "",
     customModel: "",
+    fallbackProvider: "",
+    fallbackModel: "",
   },
   voice: { voiceURI: "", rate: 1, autoListen: true },
   notifications: {

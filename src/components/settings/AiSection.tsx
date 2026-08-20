@@ -5,11 +5,12 @@ import useSWR from "swr";
 import { ApiError, fetcher, keys, settingsApi } from "@/lib/api";
 import type { AIProviderKind, ModelInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { relativeTime } from "@/lib/format";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Field";
+import { FieldLabel, Input, Select } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
 import { IconCheck, IconRefresh, IconX } from "@/components/ui/icons";
-import { SettingsCard, maskPlaceholder, useSettingsPatch, type SectionProps } from "./common";
+import { Divider, SettingsCard, maskPlaceholder, useSettingsPatch, type SectionProps } from "./common";
 
 const PROVIDER_LABEL: Record<AIProviderKind, string> = {
   openai: "OpenAI",
@@ -21,7 +22,16 @@ export function AiSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
   const ai = settings.ai;
   const provider = ai.provider;
+  const fallbackKeySet =
+    ai.fallbackProvider === "openai"
+      ? ai.openaiKey.set
+      : ai.fallbackProvider === "anthropic"
+        ? ai.anthropicKey.set
+        : ai.fallbackProvider === "custom"
+          ? ai.customKey.set
+          : false;
 
+  const [fallbackModelDraft, setFallbackModelDraft] = useState(ai.fallbackModel);
   const [keyDraft, setKeyDraft] = useState("");
   const [savingKey, setSavingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState(ai.customBaseUrl);
@@ -196,6 +206,78 @@ export function AiSection({ settings, mutate }: SectionProps) {
             )}
             {result.message}
           </span>
+        ) : null}
+      </div>
+
+      <Divider />
+
+      <div>
+        <FieldLabel>Backup model</FieldLabel>
+        <p className="mb-2 text-[13px] leading-relaxed text-muted">
+          If {PROVIDER_LABEL[provider]} fails — expired key, rate limit, outage — DoneX
+          retries the same request here instead of giving up.
+        </p>
+        <div className="flex gap-2">
+          <Select
+            value={ai.fallbackProvider}
+            onChange={(e) =>
+              void patch(
+                { ai: { fallbackProvider: e.target.value as typeof ai.fallbackProvider } },
+                e.target.value ? "Backup provider set" : "Backup turned off",
+              )
+            }
+          >
+            <option value="">No backup</option>
+            {(["openai", "anthropic", "custom"] as AIProviderKind[])
+              .filter((k) => k !== provider)
+              .map((k) => (
+                <option key={k} value={k}>
+                  {PROVIDER_LABEL[k]}
+                </option>
+              ))}
+          </Select>
+        </div>
+
+        {ai.fallbackProvider ? (
+          <div className="mt-2 space-y-2">
+            <div className="flex gap-2">
+              <Input
+                value={fallbackModelDraft}
+                placeholder="Model id, e.g. claude-fable-5"
+                onChange={(e) => setFallbackModelDraft(e.target.value)}
+                onBlur={() => {
+                  if (fallbackModelDraft.trim() !== ai.fallbackModel) {
+                    void patch(
+                      { ai: { fallbackModel: fallbackModelDraft.trim() } },
+                      "Backup model saved",
+                    );
+                  }
+                }}
+              />
+            </div>
+            {!fallbackKeySet ? (
+              <p className="text-[12px] leading-snug text-warn">
+                Add an {PROVIDER_LABEL[ai.fallbackProvider]} API key above (switch the
+                provider, paste the key, switch back) — without one the backup can’t run.
+              </p>
+            ) : !ai.fallbackModel.trim() ? (
+              <p className="text-[12px] leading-snug text-warn">
+                Name the model to use, or the backup stays inactive.
+              </p>
+            ) : (
+              <p className="text-[12px] leading-snug text-faint">
+                Ready — {ai.fallbackModel} takes over automatically when needed.
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {settings.aiFallback ? (
+          <p className="mt-2 rounded-xl bg-sunken px-3 py-2 text-[12px] leading-snug text-muted">
+            Last used {relativeTime(settings.aiFallback.at)} — {settings.aiFallback.model}{" "}
+            covered for {PROVIDER_LABEL[settings.aiFallback.from]}, which said:{" "}
+            “{settings.aiFallback.reason}”
+          </p>
         ) : null}
       </div>
     </SettingsCard>

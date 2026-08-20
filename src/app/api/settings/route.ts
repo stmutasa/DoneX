@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { autoPickModelIfNeeded } from "@/lib/ai";
+import { autoPickModelIfNeeded, lastFallbackEvent } from "@/lib/ai";
 import { requireSession } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import type { AppSettings, MaskedSettings } from "@/lib/types";
@@ -23,6 +23,8 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       model: ai.model,
       customBaseUrl: ai.customBaseUrl,
       customModel: ai.customModel,
+      fallbackProvider: ai.fallbackProvider,
+      fallbackModel: ai.fallbackModel,
       openaiKey: { set: !!ai.openaiKey, last4: last4(ai.openaiKey) },
       anthropicKey: { set: !!ai.anthropicKey, last4: last4(ai.anthropicKey) },
       customKey: { set: !!ai.customKey, last4: last4(ai.customKey) },
@@ -35,6 +37,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       mapsApiKey: { set: !!google.mapsApiKey, last4: last4(google.mapsApiKey) },
     },
     pushConfigured: !!vapid,
+    aiFallback: lastFallbackEvent(),
   };
 }
 
@@ -46,6 +49,8 @@ const aiPatchSchema = z.object({
   customBaseUrl: z.string().optional(),
   customKey: z.string().optional(),
   customModel: z.string().optional(),
+  fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
+  fallbackModel: z.string().max(120).optional(),
 });
 
 const voicePatchSchema = z.object({

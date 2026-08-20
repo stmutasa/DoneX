@@ -219,6 +219,18 @@ assistant copes fine.
 
 - **AI Models** — swap between your OpenAI models, Claude, or any compatible
   endpoint, any time. The dropdown lists whatever your keys can access.
+- **Backup model** (under AI Models) — pick a second provider and model, and
+  DoneX retries there automatically whenever the main one fails: expired key,
+  rate limit, outage, or a model that just won't answer. It applies everywhere
+  — chat, walk mode, briefings, day plans and inbox triage. When it happens,
+  the AI section shows what filled in and what the main provider said, so you
+  find out from the app rather than from silence. It needs an API key stored
+  for that second provider; without one the backup can't run and the section
+  says so.
+- **Test connection** (under AI Models) — the fastest way to find out whether a
+  key still works. It reports the provider's own words: "Incorrect API key"
+  means expired or revoked, a rate-limit message means quota, anything about
+  the model means the model id is wrong.
 - **Voice** — pick the voice it speaks with (try a few with 🔊) and the speed.
 - **Appearance** — dark, light, or follow the system.
 - **Capture** — your SMS webhook token lives here if you ever re-do MacroDroid.

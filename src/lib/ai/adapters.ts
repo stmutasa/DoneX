@@ -1,5 +1,6 @@
 import { settingsRepo } from "@/lib/db/repos";
-import type { AIProviderKind, ModelInfo } from "@/lib/types";
+import { nowIso } from "@/lib/utils";
+import type { AiFallbackEvent, AIProviderKind, ModelInfo } from "@/lib/types";
 import { anthropicAdapter } from "@/lib/ai/anthropic";
 import { openaiAdapter } from "@/lib/ai/openai";
 import {
@@ -29,6 +30,77 @@ export async function readyConfig(): Promise<ProviderConfig> {
 
 export function aiConfigured(): boolean {
   return configReady(resolveConfig());
+}
+
+// ── Failover ───────────────────────────────────────────────────────────────
+
+const FALLBACK_KEY = "ai.lastFallback";
+
+/** The standby provider, or null when none is usable. */
+export function fallbackConfig(): ProviderConfig | null {
+  const ai = settingsRepo.getApp().ai;
+  const kind = ai.fallbackProvider;
+  if (!kind || kind === ai.provider) return null;
+  const cfg = resolveConfig(kind);
+  const model = ai.fallbackModel.trim() || cfg.model;
+  if (!configReady(cfg) || !model) return null;
+  return { ...cfg, model };
+}
+
+/** Config problems can't be fixed by trying elsewhere; everything else can. */
+export function isFailoverWorthy(message: string): boolean {
+  return message !== NOT_CONFIGURED && message !== NO_MODEL;
+}
+
+export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason: string): void {
+  const event: AiFallbackEvent = {
+    at: nowIso(),
+    from,
+    to: to.kind,
+    model: to.model,
+    reason: reason.slice(0, 300),
+  };
+  try {
+    settingsRepo.setKV(FALLBACK_KEY, JSON.stringify(event));
+  } catch {
+    // Telling the user is a bonus; never fail the call over it.
+  }
+}
+
+export function lastFallbackEvent(): AiFallbackEvent | null {
+  try {
+    const raw = settingsRepo.getKV(FALLBACK_KEY);
+    return raw ? (JSON.parse(raw) as AiFallbackEvent) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run an AI call against the active provider, and if it fails for any reason
+ * the standby could plausibly fix, run it again there. Keeps the app working
+ * through an expired key, a rate limit or a provider outage.
+ */
+export async function callWithFailover<T>(
+  run: (cfg: ProviderConfig, adapter: ProviderAdapter) => Promise<T>,
+): Promise<T> {
+  const primary = await readyConfig();
+  try {
+    return await run(primary, adapterFor(primary.kind));
+  } catch (err) {
+    const reason = describeCallError(err);
+    const backup = fallbackConfig();
+    if (!backup || !isFailoverWorthy(reason)) throw err;
+    try {
+      const value = await run(backup, adapterFor(backup.kind));
+      recordFallback(primary.kind, backup, reason);
+      return value;
+    } catch (backupErr) {
+      throw new Error(
+        `${reason} — and the ${backup.kind} fallback (${backup.model}) also failed: ${describeCallError(backupErr)}`,
+      );
+    }
+  }
 }
 
 export async function listModels(provider: AIProviderKind): Promise<ModelInfo[]> {

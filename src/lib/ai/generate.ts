@@ -25,7 +25,7 @@ import type {
   WeeklyReview,
 } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
-import { adapterFor, readyConfig } from "@/lib/ai/adapters";
+import { callWithFailover } from "@/lib/ai/adapters";
 import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
 import { asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
@@ -40,35 +40,36 @@ import {
 
 /** One non-streaming JSON call, with a single stricter retry on parse failure. */
 async function jsonCall(prompt: string, maxTokens = 1400): Promise<Record<string, unknown>> {
-  const cfg = await readyConfig();
-  const adapter = adapterFor(cfg.kind);
+  // Wrapped in failover: a dead key, a rate limit or a model that simply
+  // cannot produce JSON all hand off to the standby provider.
+  return callWithFailover(async (cfg, adapter) => {
+    const ask = (text: string) =>
+      adapter.complete({
+        cfg,
+        system: JSON_SYSTEM,
+        prompt: text,
+        maxTokens,
+        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      });
 
-  const ask = (text: string) =>
-    adapter.complete({
-      cfg,
-      system: JSON_SYSTEM,
-      prompt: text,
-      maxTokens,
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
-    });
+    let raw = "";
+    try {
+      raw = await ask(prompt);
+    } catch (err) {
+      throw new Error(describeCallError(err));
+    }
+    const first = extractJsonObject(raw);
+    if (first) return first;
 
-  let raw = "";
-  try {
-    raw = await ask(prompt);
-  } catch (err) {
-    throw new Error(describeCallError(err));
-  }
-  const first = extractJsonObject(raw);
-  if (first) return first;
-
-  try {
-    raw = await ask(`${prompt}\n\nReturn ONLY valid JSON. No prose, no markdown fences.`);
-  } catch (err) {
-    throw new Error(describeCallError(err));
-  }
-  const second = extractJsonObject(raw);
-  if (second) return second;
-  throw new Error("The model did not return valid JSON.");
+    try {
+      raw = await ask(`${prompt}\n\nReturn ONLY valid JSON. No prose, no markdown fences.`);
+    } catch (err) {
+      throw new Error(describeCallError(err));
+    }
+    const second = extractJsonObject(raw);
+    if (second) return second;
+    throw new Error("The model did not return valid JSON.");
+  });
 }
 
 function digestLines(tasks: Task[], tz: string, limit: number): string {

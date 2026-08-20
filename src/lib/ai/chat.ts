@@ -6,7 +6,14 @@ import type {
   Conversation,
   ToolActivity,
 } from "@/lib/types";
-import { adapterFor, aiConfigured, readyConfig } from "@/lib/ai/adapters";
+import {
+  adapterFor,
+  aiConfigured,
+  fallbackConfig,
+  isFailoverWorthy,
+  readyConfig,
+  recordFallback,
+} from "@/lib/ai/adapters";
 import { buildAssistantContext } from "@/lib/ai/context";
 import { asRecord, safeJsonParse } from "@/lib/ai/json";
 import { chatSystemPrompt } from "@/lib/ai/prompts";
@@ -149,31 +156,47 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
 
         const ctx = await buildAssistantContext();
         const system = chatSystemPrompt(ctx, input.mode) + nearbyDigest(input.location);
-        const cfg = await readyConfig();
-        const adapter = adapterFor(cfg.kind);
+        let cfg = await readyConfig();
+        let adapter = adapterFor(cfg.kind);
         const tctx = toolContext(tz, input.location);
 
         let full = "";
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
           let pendingBreak = full.length > 0;
-          const outcome = await adapter.stream({
-            cfg,
-            system,
-            turns,
-            tools: TOOLS,
-            signal: timeoutSignal(),
-            onText: (chunk) => {
-              if (!chunk) return;
-              if (pendingBreak) {
-                pendingBreak = false;
-                full += "\n\n";
-                emit({ type: "token", text: "\n\n" });
-              }
-              full += chunk;
-              emit({ type: "token", text: chunk });
-            },
-          });
+          const streamOnce = () =>
+            adapter.stream({
+              cfg,
+              system,
+              turns,
+              tools: TOOLS,
+              signal: timeoutSignal(),
+              onText: (chunk) => {
+                if (!chunk) return;
+                if (pendingBreak) {
+                  pendingBreak = false;
+                  full += "\n\n";
+                  emit({ type: "token", text: "\n\n" });
+                }
+                full += chunk;
+                emit({ type: "token", text: chunk });
+              },
+            });
+
+          let outcome: Awaited<ReturnType<typeof streamOnce>>;
+          try {
+            outcome = await streamOnce();
+          } catch (err) {
+            // Only safe to retry elsewhere while nothing has been spoken yet —
+            // restarting mid-answer would repeat text the user already saw.
+            const reason = describeCallError(err);
+            const backup = full.length === 0 ? fallbackConfig() : null;
+            if (!backup || !isFailoverWorthy(reason)) throw err;
+            recordFallback(cfg.kind, backup, reason);
+            cfg = backup;
+            adapter = adapterFor(backup.kind);
+            outcome = await streamOnce();
+          }
 
           if (outcome.toolCalls.length === 0 || round === MAX_TOOL_ROUNDS) break;
 

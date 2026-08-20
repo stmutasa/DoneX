@@ -248,6 +248,20 @@ export interface AISettings {
   customBaseUrl: string;
   customKey: string;
   customModel: string;
+  /** provider to use when the active one errors; "" = no failover */
+  fallbackProvider: "" | AIProviderKind;
+  /** model id on the fallback provider, e.g. "claude-fable-5" */
+  fallbackModel: string;
+}
+
+/** Recorded whenever a call had to fall back, so it is never silent. */
+export interface AiFallbackEvent {
+  at: string;
+  from: AIProviderKind;
+  to: AIProviderKind;
+  model: string;
+  /** what the primary provider said */
+  reason: string;
 }
 
 export interface VoiceSettings {
@@ -316,6 +330,8 @@ export interface MaskedSettings
     mapsApiKey: SecretMark;
   };
   pushConfigured: boolean;
+  /** most recent automatic failover, or null if it has never happened */
+  aiFallback: AiFallbackEvent | null;
 }
 
 export interface SecretMark {

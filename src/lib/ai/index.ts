@@ -26,6 +26,7 @@ export {
 
 export {
   aiConfigured,
+  lastFallbackEvent,
   autoPickModelIfNeeded,
   listModels,
   testProvider,
