@@ -78,6 +78,20 @@ Expect `{"ok":true,"id":"..."}`. Reading the failures: `401` = wrong or
 missing token, `405` = the macro is still set to GET, `400` = no message
 text arrived at all.
 
+## Turning it off
+
+In DoneX → **Settings** → **Capture**, the **Accept forwarded texts** switch is
+the server-side off switch: forwarded texts are rejected with `403` and nothing
+reaches your inbox. Your webhook URL and token are kept, so flipping it back on
+resumes an existing phone macro with no re-setup.
+
+That stops texts at the server. To stop them leaving the phone at all, also
+disable or delete the macro in MacroDroid.
+
+**New token** (same section) rotates the capture token — every automation still
+using the old one immediately gets `401`. That's the one to use if a phone goes
+missing.
+
 ## Privacy
 
 Messages go straight from your phone to **your own** DoneX server over

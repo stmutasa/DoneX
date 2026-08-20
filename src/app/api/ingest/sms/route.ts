@@ -18,10 +18,16 @@ const BodySchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const expected = settingsRepo.getApp().ingestToken;
+  const settings = settingsRepo.getApp();
+  const expected = settings.ingestToken;
   const provided = request.headers.get("x-donex-token") ?? "";
   if (!expected || !tokenMatches(provided, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  // Checked after the token so an unauthorized caller learns nothing about
+  // whether capture exists here.
+  if (!settings.smsCaptureEnabled) {
+    return NextResponse.json({ error: "SMS capture is turned off" }, { status: 403 });
   }
 
   const raw = (await request.text()).trim();

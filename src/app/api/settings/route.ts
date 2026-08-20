@@ -83,6 +83,7 @@ const patchSchema = z.object({
   voice: voicePatchSchema.optional(),
   notifications: notificationsPatchSchema.optional(),
   google: googlePatchSchema.optional(),
+  smsCaptureEnabled: z.boolean().optional(),
 });
 
 export async function GET() {

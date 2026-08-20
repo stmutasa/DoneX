@@ -295,6 +295,8 @@ export interface AppSettings {
   notifications: NotificationSettings;
   google: GoogleSettings;
   ingestToken: string;
+  /** master switch for the SMS webhook — off rejects every forwarded text */
+  smsCaptureEnabled: boolean;
   vapid: { publicKey: string; privateKey: string } | null;
   lastLocation: LastLocation | null;
   onboardedAt: string | null;

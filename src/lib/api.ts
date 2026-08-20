@@ -451,6 +451,7 @@ export type SettingsPatch = {
   voice?: Partial<VoiceSettings>;
   notifications?: Partial<NotificationSettings>;
   google?: Partial<GoogleSettings>;
+  smsCaptureEnabled?: boolean;
 };
 
 export const statsApi = {
@@ -468,6 +469,8 @@ export const settingsApi = {
       method: "POST",
       body: JSON.stringify({ provider }),
     }),
+  regenerateIngestToken: () =>
+    request<{ ingestToken: string }>("/api/settings/ingest-token", { method: "POST" }),
 };
 
 export const dataApi = {

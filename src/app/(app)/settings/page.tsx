@@ -51,7 +51,7 @@ export default function SettingsPage() {
           <NotificationsSection settings={settings} mutate={mutate} />
           <GoogleSection settings={settings} mutate={mutate} />
           <TriageLessonsSection />
-          <CaptureSection settings={settings} />
+          <CaptureSection settings={settings} mutate={mutate} />
           <AppearanceSection />
           <DataSection />
           <AboutSection settings={settings} mutate={mutate} />
