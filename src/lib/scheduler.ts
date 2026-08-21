@@ -22,6 +22,7 @@ import {
 } from "@/lib/ai";
 import { scanGmail } from "@/lib/google/gmail";
 import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
+import { MAX_INBOX_ALERTS_PER_DAY, readAlertBudget } from "@/lib/alertbudget";
 import {
   addDaysToDateKey,
   isoWeekKey,
@@ -41,6 +42,7 @@ const KV_LAST_BRIEFING_DAY = "sched.lastBriefingDay";
 const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
 const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
 const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
+const KV_INBOX_ALERTS = "sched.inboxAlerts";
 
 /** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
 const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
@@ -93,6 +95,30 @@ async function runBackupModelRefresh(settings: AppSettings, now: Date): Promise<
 }
 
 // ── 1. Task reminders ──────────────────────────────────────────────────────
+
+/**
+ * Send an "open your inbox" alert unless today's allowance is spent. Triage
+ * still runs its full cadence — this only caps the interruptions. A suppressed
+ * run is silent by design: the items are in the inbox and the tab badge counts
+ * them. Reminders, briefings and the weekly review are unaffected.
+ */
+async function notifyInbox(
+  tz: string,
+  payload: { title: string; body: string; url: string },
+): Promise<boolean> {
+  if (!hasPushSubscriptions()) return false;
+  const dayKey = localDateKey(new Date(), tz);
+  const budget = readAlertBudget(settingsRepo.getKV(KV_INBOX_ALERTS), dayKey);
+  if (!budget.allowed || !budget.next) {
+    console.log(
+      `[scheduler] inbox alert held back — ${MAX_INBOX_ALERTS_PER_DAY}/day already sent`,
+    );
+    return false;
+  }
+  await sendPushToAll(payload);
+  settingsRepo.setKV(KV_INBOX_ALERTS, budget.next);
+  return true;
+}
 
 async function runReminders(settings: AppSettings): Promise<void> {
   try {
@@ -218,7 +244,7 @@ async function runGmailScan(settings: AppSettings): Promise<void> {
     if (created > 0) {
       const survived = Math.max(0, inboxRepo.newCount() - before);
       if (survived > 0) {
-        await sendPushToAll({
+        await notifyInbox(settings.tz, {
           title: "Inbox",
           body: `${survived} new item${survived === 1 ? "" : "s"} to triage`,
           url: "/inbox",
@@ -289,7 +315,7 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
         updated > 0 ? `${updated} task${updated === 1 ? "" : "s"} updated` : "",
         dismissed > 0 ? `${dismissed} auto-dismissed` : "",
       ].filter(Boolean);
-      await sendPushToAll({ title: "Inbox triage", body: parts.join(" · "), url: "/inbox" });
+      await notifyInbox(tz, { title: "Inbox triage", body: parts.join(" · "), url: "/inbox" });
     }
   } catch (err) {
     console.error("[scheduler] triage", err);

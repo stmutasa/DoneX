@@ -193,6 +193,16 @@ so it has something cached to show you later.
 
 ## Notifications
 
+**Inbox alerts are capped at twice a day.** Triage still runs its full cadence
+(6am, 2pm, 8pm, plus the hourly mail check) — the cap only limits how often it
+interrupts you. Once two alerts have gone out, later runs stay silent: the
+items are still in the Inbox and the tab badge still counts them, you just find
+them when you look. The allowance resets at local midnight.
+
+Task reminders, the morning briefing and the weekly review are separate and are
+never affected by that cap.
+
+
 Three kinds, all controlled in Settings → Notifications:
 
 - ⏰ a task's due time arrives
