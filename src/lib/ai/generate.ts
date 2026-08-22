@@ -70,6 +70,9 @@ async function jsonCall(prompt: string, maxTokens = 1400): Promise<Record<string
     }
     const second = extractJsonObject(raw);
     if (second) return second;
+    console.error(
+      `[ai] unparseable JSON reply (${raw.length} chars): ${raw.slice(0, 400)}`,
+    );
     throw new Error("The model did not return valid JSON.");
   });
 }
@@ -357,7 +360,7 @@ export async function generateTaskBreakdown(
       tz,
       existingTasks: existing,
     }),
-    1800,
+    4000,
   );
 
   return parseBreakdown(payload).map((item) => {
