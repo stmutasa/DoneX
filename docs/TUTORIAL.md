@@ -139,6 +139,12 @@ Save keeps your typing too: it saves on the way out rather than discarding it.
 The trick Keep never had: the assistant can write into them. Say *"add
 sunscreen to the groceries list"* from the couch, or mid-jog in Walk Mode.
 
+**Paste a whole paragraph, get separate tasks.** Open any project and tap
+**Paste text → tasks**. Dump in an email, meeting notes, or a rambling thought
+— the AI splits it into individual tasks (with dates and deadlines where the
+text names them), shows you the list, and you untick anything you don't want
+before adding. Nothing is created until you say so.
+
 **Rule of thumb for the Keep habit:** if it's something to *do*, make it a task
 (it'll chase you). If it's something to *remember*, make it a note (it'll wait
 quietly).

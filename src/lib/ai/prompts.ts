@@ -136,6 +136,40 @@ Rules:
 - "suggestions" holds 2–4 short actionable strings (max 12 words each) for next week, grounded in what actually happened.`;
 }
 
+export function breakdownPrompt(input: {
+  text: string;
+  projectName: string;
+  todayKey: string;
+  weekday: string;
+  tz: string;
+  existingTasks: string;
+}): string {
+  return `The user pasted a paragraph into their project "${input.projectName}" in a personal task app. Break it into separate, actionable tasks.
+
+TODAY: ${input.todayKey} (${input.weekday}), timezone ${input.tz}
+
+THE PARAGRAPH
+"""
+${input.text.slice(0, 4000)}
+"""
+
+TASKS ALREADY IN THIS PROJECT (do not duplicate these)
+${input.existingTasks || "(none)"}
+
+Return JSON exactly like:
+{"tasks": [{"title": string, "notes": string, "dueAtLocal": string|null, "dueKind": "on"|"by", "priority": 0|1|2|3, "tags": string[]}]}
+
+Rules:
+- One task per real action. Split compound sentences ("call the vendor and send the deposit" → two tasks); merge restatements of the same action into one.
+- Only actions the USER must take. Background, feelings, and context are not tasks — fold useful context into the "notes" of the task it supports (max 200 chars), else drop it.
+- "title": imperative, at most 80 characters, no trailing punctuation, understandable without the paragraph.
+- "dueAtLocal": "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve relative dates against ${input.todayKey} in ${input.tz}. Otherwise null.
+- "dueKind": "by" when the date is a deadline (by/before/due Friday — doable any day up to then). "on" when it happens at that moment (appointments, meetings, events).
+- "priority": 3 only for explicit urgency ("urgent", "asap", a hard deadline within 2 days), 2 for clearly important, else 1 or 0.
+- "tags": at most 2, lowercase single words, [] when none fit. Never invent projects.
+- Preserve the paragraph's order. At most 20 tasks. If nothing in the text is actionable, return {"tasks": []}.`;
+}
+
 export function triagePrompt(input: {
   content: string;
   fromLabel: string;

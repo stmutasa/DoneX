@@ -17,6 +17,7 @@ import { deadlineLabel, effectivePriority } from "@/lib/deadline";
 import type {
   Briefing,
   DayPlan,
+  TaskDraft,
   InboxItem,
   InboxSuggestion,
   Priority,
@@ -27,11 +28,12 @@ import type {
 import { PRIORITY_META } from "@/lib/types";
 import { callWithFailover } from "@/lib/ai/adapters";
 import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
-import { asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
+import { asArray, asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
 import { describeDue, instantOf, normalizePlanBlocks, utcFromLocal } from "@/lib/ai/tools";
 import {
   JSON_SYSTEM,
+  breakdownPrompt,
   briefingPrompt,
   planPrompt,
   reviewPrompt,
@@ -288,6 +290,89 @@ export async function generateWeeklyReview(
   };
   reviewsRepo.save(review);
   return review;
+}
+
+// ── Paragraph → tasks (project breakdown) ─────────────────────────────────
+
+export interface BreakdownItem {
+  title: string;
+  notes: string;
+  dueAtLocal: string | null;
+  dueKind: "on" | "by";
+  priority: Priority;
+  tags: string[];
+}
+
+/** Pure normalization of the model's breakdown JSON — malformed entries are
+ *  dropped rather than guessed at, and everything is clamped to app limits. */
+export function parseBreakdown(payload: Record<string, unknown>): BreakdownItem[] {
+  const out: BreakdownItem[] = [];
+  for (const entry of asArray(payload.tasks)) {
+    const rec = asRecord(entry);
+    if (!rec) continue;
+    const title = (asString(rec.title) ?? "").trim().replace(/[.!,;:]+$/, "").slice(0, 80);
+    if (!title) continue;
+    const priorityNum = asNumber(rec.priority) ?? 0;
+    out.push({
+      title,
+      notes: (asString(rec.notes) ?? "").trim().slice(0, 200),
+      dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
+      dueKind: asString(rec.dueKind)?.toLowerCase() === "by" ? "by" : "on",
+      priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
+      tags: (asStringArray(rec.tags) ?? [])
+        .map((t) => t.trim().toLowerCase().replace(/^#/, ""))
+        .filter(Boolean)
+        .slice(0, 2),
+    });
+    if (out.length === 20) break;
+  }
+  return out;
+}
+
+/**
+ * Turn a pasted paragraph into proposed TaskDrafts for one project. Proposes
+ * only — nothing is created here; the user picks which drafts to keep and the
+ * client files them through the normal task API.
+ */
+export async function generateTaskBreakdown(
+  text: string,
+  projectId: string,
+): Promise<TaskDraft[]> {
+  const settings = settingsRepo.getApp();
+  const tz = settings.tz;
+  const now = new Date();
+  const project = projectsRepo.get(projectId);
+  const existing = tasksRepo
+    .list({ projectId })
+    .slice(0, 30)
+    .map((t) => `- ${t.title}`)
+    .join("\n");
+
+  const payload = await jsonCall(
+    breakdownPrompt({
+      text,
+      projectName: project?.name ?? "their project",
+      todayKey: localDateKey(now, tz),
+      weekday: format(new TZDate(now, tz), "EEEE"),
+      tz,
+      existingTasks: existing,
+    }),
+    1800,
+  );
+
+  return parseBreakdown(payload).map((item) => {
+    const due = parseLocalDue(item.dueAtLocal, tz);
+    return {
+      title: item.title,
+      notes: item.notes,
+      priority: item.priority,
+      dueAt: due.dueAt,
+      dueKind: due.dueAt ? item.dueKind : "on",
+      allDay: due.allDay,
+      projectId,
+      tags: item.tags,
+    };
+  });
 }
 
 // ── Inbox triage ───────────────────────────────────────────────────────────

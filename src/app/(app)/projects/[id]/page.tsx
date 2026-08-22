@@ -11,7 +11,8 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { EmptyState, SkeletonRows } from "@/components/ui/Misc";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
-import { IconArchive, IconChevronLeft, IconPencil, IconPlus, IconTrash } from "@/components/ui/icons";
+import { IconArchive, IconChevronLeft, IconPencil, IconPlus, IconSparkles, IconTrash } from "@/components/ui/icons";
+import { BreakdownSheet } from "@/components/projects/BreakdownSheet";
 import { ProjectSheet } from "@/components/projects/ProjectSheet";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
@@ -37,6 +38,7 @@ export default function ProjectDetailPage() {
   const [editingProject, setEditingProject] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
 
   const projects = useMemo(() => projectData?.projects ?? [], [projectData]);
   const project = projects.find((p) => p.id === id) ?? null;
@@ -117,14 +119,22 @@ export default function ProjectDetailPage() {
         </div>
       </header>
 
-      <Button
-        block
-        className="mb-5"
-        icon={<IconPlus className="h-4 w-4 text-accent" />}
-        onClick={() => setQuickOpen(true)}
-      >
-        Add to {project?.name ?? "project"}
-      </Button>
+      <div className="mb-5 flex gap-2">
+        <Button
+          block
+          icon={<IconPlus className="h-4 w-4 text-accent" />}
+          onClick={() => setQuickOpen(true)}
+        >
+          Add to {project?.name ?? "project"}
+        </Button>
+        <Button
+          block
+          icon={<IconSparkles className="h-4 w-4 text-accent" />}
+          onClick={() => setBreakdownOpen(true)}
+        >
+          Paste text → tasks
+        </Button>
+      </div>
 
       {isLoading ? (
         <SkeletonRows rows={4} />
@@ -162,6 +172,12 @@ export default function ProjectDetailPage() {
       />
       <TaskEditor open={!!editingTask} task={editingTask} onClose={() => setEditingTask(null)} />
       <QuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} projectId={id} />
+      <BreakdownSheet
+        open={breakdownOpen}
+        onClose={() => setBreakdownOpen(false)}
+        projectId={id}
+        projectName={project?.name ?? "this project"}
+      />
     </Page>
   );
 }

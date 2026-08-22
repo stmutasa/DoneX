@@ -228,6 +228,12 @@ export const projectsApi = {
       body: JSON.stringify(patch),
     }),
   remove: (id: string) => request<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
+  breakdown: (id: string, text: string) =>
+    request<{ drafts: TaskDraft[] }>(`/api/projects/${id}/breakdown`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
 };
 
 // ── Notes ─────────────────────────────────────────────────────────────────
