@@ -56,8 +56,9 @@ export function NoteEditor({
     setSavedAt(note.updatedAt);
   }, [note, open]);
 
-  const persist = useCallback(async () => {
-    if (!note) return;
+  /** Returns true only when the note actually reached the server. */
+  const persist = useCallback(async (): Promise<boolean> => {
+    if (!note) return false;
     setSaving(true);
     try {
       const { note: saved } = await notesApi.update(note.id, {
@@ -70,12 +71,21 @@ export function NoteEditor({
       setSavedAt(saved.updatedAt);
       setDirty(false);
       onChanged();
+      toast.success("Note saved");
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save note");
+      return false;
     } finally {
       setSaving(false);
     }
   }, [note, title, content, items, color, pinned, onChanged, toast]);
+
+  // Save puts the note away. A failed write keeps the editor open so what you
+  // typed is still there to retry, rather than vanishing with the sheet.
+  const saveAndClose = async () => {
+    if (await persist()) onClose();
+  };
 
   const touch = () => setDirty(true);
 
@@ -196,7 +206,7 @@ export function NoteEditor({
             ))}
           </div>
           {dirty ? (
-            <Button size="sm" variant="primary" loading={saving} onClick={persist}>
+            <Button size="sm" variant="primary" loading={saving} onClick={saveAndClose}>
               Save
             </Button>
           ) : savedAt ? (

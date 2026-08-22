@@ -132,7 +132,9 @@ Two kinds:
 - **List** — a checklist with tap-to-tick boxes and a progress count ("Groceries 3/8").
 
 Tap **+ Note** or **+ List** up top, pick a color, pin the important ones,
-search finds anything. Everything autosaves as you type, Keep-style.
+search finds anything. Notes save when you tap **Save** — which also puts the
+note away, so you're back to the grid in one tap. Backing out without tapping
+Save keeps your typing too: it saves on the way out rather than discarding it.
 
 The trick Keep never had: the assistant can write into them. Say *"add
 sunscreen to the groceries list"* from the couch, or mid-jog in Walk Mode.
