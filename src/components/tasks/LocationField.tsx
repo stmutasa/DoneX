@@ -118,7 +118,7 @@ export function LocationField({
       {needsKey ? (
         <p className="mt-1.5 px-1 text-[12.5px] leading-relaxed text-muted">
           Add a Maps API key in{" "}
-          <Link href="/settings#google" className="font-medium text-accent">
+          <Link href="/settings/google" className="font-medium text-accent">
             Settings → Google
           </Link>{" "}
           to attach places

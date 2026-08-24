@@ -16,7 +16,7 @@ export function AiNudge({ onDismiss, what = "briefing" }: { onDismiss?: () => vo
           Add a provider key and DoneX can write your {what}, plan your day, and chat with you.
         </p>
         <Link
-          href="/settings#ai"
+          href="/settings/ai"
           className="mt-2.5 inline-flex min-h-[36px] items-center rounded-xl bg-sunrise px-3 text-[13px] font-medium text-on-accent"
         >
           Open AI settings

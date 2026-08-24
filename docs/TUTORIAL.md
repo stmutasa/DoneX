@@ -235,6 +235,11 @@ assistant copes fine.
 
 ## Settings worth knowing about
 
+Settings is now a **menu**: five short groups (You · Intelligence ·
+Connections · Alerts & triage · App), each row showing its current state at a
+glance — tap through for the details. Old links like Settings → Capture still
+work; they just open that row's own page.
+
 - **AI Models** — swap between your OpenAI models, Claude, or any compatible
   endpoint, any time. The dropdown lists whatever your keys can access.
 - **Backup model** (under AI Models) — pick a second provider and DoneX
