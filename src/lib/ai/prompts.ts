@@ -71,40 +71,6 @@ Rules:
 - "focusTaskIds" holds 1–3 task ids copied verbatim from the lists above — the ones worth doing first. Use [] only when there is genuinely nothing open.`;
 }
 
-export function planPrompt(input: {
-  ctx: AssistantContext;
-  dateLocal: string;
-  tasks: string;
-  anytime: string;
-  briefing: string;
-}): string {
-  return `Build a realistic time-blocked plan for ${input.dateLocal} (${input.ctx.weekday}). You decide WHAT gets worked on today, not just when.
-
-CURRENT LOCAL TIME: ${input.ctx.timeLabel} — do not schedule anything before this time.
-
-MUST CONSIDER — due today, overdue, or a live deadline ("by …" means it must be finished by that date; "(escalated)" means the deadline is close, treat it as urgent)
-${input.tasks || "(nothing dated)"}
-
-ANYTIME CANDIDATES — undated tasks. Pick the 1–3 most worthwhile IF the day has room; skip the rest.
-${input.anytime || "(none)"}
-
-CALENDAR — these are immovable and must appear as blocks with kind "event"
-${input.ctx.calendarList}
-${input.briefing ? `\nTHIS MORNING'S BRIEFING\n${input.briefing}\n` : ""}
-Return JSON exactly like:
-{"summary": string, "blocks": [{"start": "HH:mm", "end": "HH:mm", "label": string, "taskIds": [string], "kind": "focus"|"break"|"errand"|"event", "estimateMin": number}]}
-
-Rules:
-- Choose deliberately: everything urgent or escalated gets a block; deadlines still days away can wait if today is tight; anytime tasks fill genuine spare room only.
-- "estimateMin" is YOUR estimate of the real work in the block, in minutes — judge each task from its title and notes (a phone call ≈ 10–15, an errand ≈ 30, deep work ≈ 60–90). Never omit it on focus/errand blocks. Make the block a little longer than the estimate.
-- Blocks are 15–90 minutes, in chronological order, never overlapping, all after ${input.ctx.timeLabel}.
-- Include at least one short break when the plan runs longer than three hours.
-- "taskIds" must contain ids copied verbatim from the lists above, or be empty for breaks and events.
-- Calendar entries become blocks with kind "event" at their real times.
-- Do not plan past 21:00. Leave slack; an over-packed day is a failed plan.
-- "summary" is 1–2 sentences on the shape of the day and what you chose to leave out. No markdown.`;
-}
-
 export function reviewPrompt(input: {
   weekKey: string;
   range: string;

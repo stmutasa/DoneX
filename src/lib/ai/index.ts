@@ -5,7 +5,7 @@
  * scheduler, API routes and UI depend on them exactly as declared):
  *
  *  - runChatTurn(input): ReadableStream of SSE bytes following ChatStreamEvent
- *  - generateBriefing / generateDayPlan / generateWeeklyReview: cached per
+ *  - generateBriefing / generateWeeklyReview: cached per
  *    key unless force; persist via briefings/plans/reviews repos
  *  - triageInboxItem: fills item.suggestion via the utility model
  *  - listModels / testProvider: live model registry per provider
@@ -18,7 +18,6 @@ export { runChatTurn } from "@/lib/ai/chat";
 
 export {
   generateBriefing,
-  generateDayPlan,
   generateTaskBreakdown,
   generateWeeklyReview,
   sweepAutoDismissable,

@@ -13,7 +13,6 @@ import type {
   InboxSuggestion,
   Note,
   Briefing,
-  DayPlan,
   Project,
   StatsSummary,
   Task,
@@ -902,47 +901,6 @@ export const feedbackRepo = {
 };
 
 // ── Plans / briefings / reviews ────────────────────────────────────────────
-
-export const plansRepo = {
-  get(dateLocal: string): DayPlan | null {
-    const r = getDb().prepare("SELECT * FROM plans WHERE date_local=?").get(dateLocal) as
-      | { date_local: string; summary: string; blocks: string; accepted: number; generated_at: string }
-      | undefined;
-    if (!r) return null;
-    return {
-      dateLocal: r.date_local,
-      summary: r.summary,
-      blocks: JSON.parse(r.blocks || "[]"),
-      accepted: !!r.accepted,
-      generatedAt: r.generated_at,
-    };
-  },
-  save(plan: DayPlan): void {
-    getDb()
-      .prepare(
-        `INSERT INTO plans(date_local,summary,blocks,accepted,generated_at) VALUES(?,?,?,?,?)
-         ON CONFLICT(date_local) DO UPDATE SET summary=excluded.summary, blocks=excluded.blocks,
-         accepted=excluded.accepted, generated_at=excluded.generated_at`
-      )
-      .run(plan.dateLocal, plan.summary, JSON.stringify(plan.blocks), plan.accepted ? 1 : 0, plan.generatedAt);
-  },
-  /** Most recently generated plan, today's or not — Today keeps showing it until replaced. */
-  latest(): DayPlan | null {
-    const r = getDb()
-      .prepare("SELECT * FROM plans ORDER BY date_local DESC LIMIT 1")
-      .get() as
-      | { date_local: string; summary: string; blocks: string; accepted: number; generated_at: string }
-      | undefined;
-    if (!r) return null;
-    return {
-      dateLocal: r.date_local,
-      summary: r.summary,
-      blocks: JSON.parse(r.blocks || "[]"),
-      accepted: !!r.accepted,
-      generatedAt: r.generated_at,
-    };
-  },
-};
 
 export const briefingsRepo = {
   get(dateLocal: string): Briefing | null {

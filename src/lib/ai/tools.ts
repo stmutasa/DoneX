@@ -2,14 +2,13 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import {
   notesRepo,
-  plansRepo,
   projectsRepo,
   settingsRepo,
   statsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
 import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, newId, nowIso } from "@/lib/utils";
-import type { PlanBlock, Priority, RecurrenceRule, Task } from "@/lib/types";
+import type { Priority, RecurrenceRule, Task } from "@/lib/types";
 import { asArray, asNumber, asRecord, asString } from "@/lib/ai/json";
 
 // ── Schema shape (subset of JSON Schema both providers accept) ─────────────
@@ -237,24 +236,6 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
     },
     required: ["freq"],
   },
-};
-
-const PLAN_BLOCK_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    start: { type: "string", description: "Local start time, 24h HH:mm" },
-    end: { type: "string", description: "Local end time, 24h HH:mm" },
-    label: { type: "string", description: "What happens in this block" },
-    taskIds: { type: "array", description: "Real task ids covered by the block", items: { type: "string" } },
-    kind: { type: "string", enum: ["focus", "break", "errand", "event"] },
-    estimateMin: {
-      type: "integer",
-      description: "Estimated minutes of actual work in this block (5–240)",
-      minimum: 5,
-      maximum: 240,
-    },
-  },
-  required: ["start", "end", "label", "kind"],
 };
 
 export const TOOLS: ToolSpec[] = [
@@ -779,39 +760,6 @@ export const TOOLS: ToolSpec[] = [
     },
   },
 
-  {
-    name: "save_day_plan",
-    description:
-      "Save a time-blocked plan for today. Blocks are 30–90 minutes, must not overlap, and taskIds must be real task ids.",
-    parameters: {
-      type: "object",
-      properties: {
-        summary: { type: "string", description: "One or two sentences about the shape of the day" },
-        blocks: { type: "array", items: PLAN_BLOCK_SCHEMA },
-      },
-      required: ["summary", "blocks"],
-    },
-    mutating: true,
-    label(args) {
-      const n = asArray(args.blocks).length;
-      return `Saved today's plan · ${n} block${n === 1 ? "" : "s"}`;
-    },
-    run(args, ctx) {
-      const blocks = normalizePlanBlocks(args.blocks);
-      if (blocks.length === 0) return { ok: false, payload: { error: "blocks is empty or malformed" } };
-      plansRepo.save({
-        dateLocal: ctx.todayKey,
-        summary: readString(args, "summary") ?? "",
-        blocks,
-        accepted: false,
-        generatedAt: nowIso(),
-      });
-      return {
-        label: `Saved today's plan · ${blocks.length} block${blocks.length === 1 ? "" : "s"}`,
-        payload: { dateLocal: ctx.todayKey, blocks: blocks.length },
-      };
-    },
-  },
 ];
 
 function splitLines(text: string): string[] {
@@ -819,38 +767,6 @@ function splitLines(text: string): string[] {
     .split("\n")
     .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
     .filter(Boolean);
-}
-
-const TIME_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/;
-
-export function normalizePlanBlocks(raw: unknown): PlanBlock[] {
-  const out: PlanBlock[] = [];
-  for (const entry of asArray(raw)) {
-    const rec = asRecord(entry);
-    if (!rec) continue;
-    const start = asString(rec.start)?.trim() ?? "";
-    const end = asString(rec.end)?.trim() ?? "";
-    const label = asString(rec.label)?.trim() ?? "";
-    if (!TIME_RE.test(start) || !TIME_RE.test(end) || !label) continue;
-    const kindRaw = asString(rec.kind);
-    const kind: PlanBlock["kind"] =
-      kindRaw === "break" || kindRaw === "errand" || kindRaw === "event" ? kindRaw : "focus";
-    const taskIds = asArray(rec.taskIds)
-      .map((v) => (typeof v === "string" ? v.trim() : ""))
-      .filter(Boolean);
-    const estRaw = asNumber(rec.estimateMin ?? rec.estimate);
-    const block: PlanBlock = { start: pad(start), end: pad(end), label, taskIds, kind };
-    if (estRaw !== null && estRaw > 0) {
-      block.estimateMin = Math.round(Math.min(240, Math.max(5, estRaw)));
-    }
-    out.push(block);
-  }
-  return out.sort((a, b) => a.start.localeCompare(b.start));
-}
-
-function pad(time: string): string {
-  const [h, m] = time.split(":");
-  return `${h.padStart(2, "0")}:${m}`;
 }
 
 // ── Provider schema mapping ────────────────────────────────────────────────

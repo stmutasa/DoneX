@@ -144,25 +144,7 @@ export interface InboxItem {
   createdAt: string;
 }
 
-// ── Planning / briefing / review ───────────────────────────────────────────
-
-export interface PlanBlock {
-  start: string; // "09:00" local
-  end: string; // "09:45"
-  label: string;
-  taskIds: string[];
-  kind: "focus" | "break" | "errand" | "event";
-  /** AI's estimate of the work inside this block, in minutes */
-  estimateMin?: number;
-}
-
-export interface DayPlan {
-  dateLocal: string; // YYYY-MM-DD
-  summary: string;
-  blocks: PlanBlock[];
-  accepted: boolean;
-  generatedAt: string;
-}
+// ── Briefing / review ──────────────────────────────────────────────────────
 
 export interface Briefing {
   dateLocal: string;

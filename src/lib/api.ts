@@ -9,7 +9,6 @@ import type {
   ChatMessageRecord,
   ChatStreamEvent,
   Conversation,
-  DayPlan,
   GoogleSettings,
   GoogleStatus,
   InboxItem,
@@ -21,7 +20,6 @@ import type {
   PlaceResult,
   Note,
   NotificationSettings,
-  PlanBlock,
   Project,
   StatsSummary,
   Task,
@@ -158,7 +156,6 @@ export const keys = {
   history: (conversationId?: string | null) =>
     `/api/chat/history${query({ conversationId: conversationId ?? undefined })}`,
   briefing: (refresh?: boolean) => `/api/assistant/briefing${query({ refresh })}`,
-  plan: () => "/api/assistant/plan",
   review: (refresh?: boolean) => `/api/assistant/review${query({ refresh })}`,
   stats: () => "/api/stats",
   settings: () => "/api/settings",
@@ -296,16 +293,6 @@ export const inboxApi = {
 
 export const assistantApi = {
   briefing: (refresh = false) => request<{ briefing: Briefing }>(keys.briefing(refresh)),
-  plan: (refresh = false) =>
-    request<{ plan: DayPlan }>("/api/assistant/plan", {
-      method: "POST",
-      body: JSON.stringify({ refresh }),
-    }),
-  acceptPlan: (blocks: PlanBlock[], addToCalendar = false) =>
-    request<{ plan: DayPlan }>("/api/assistant/plan/accept", {
-      method: "POST",
-      body: JSON.stringify({ blocks, addToCalendar }),
-    }),
   review: (refresh = false) => request<{ review: WeeklyReview }>(keys.review(refresh)),
 };
 

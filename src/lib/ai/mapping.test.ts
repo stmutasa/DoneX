@@ -16,7 +16,6 @@ import {
 import {
   TOOLS,
   findTool,
-  normalizePlanBlocks,
   parseDueInput,
   toAnthropicTools,
   toOpenAiTools,
@@ -44,7 +43,6 @@ const EXPECTED_TOOLS = [
   "get_nearby_errands",
   "set_task_location",
   "get_stats",
-  "save_day_plan",
 ];
 
 describe("tool schema mapping", () => {
@@ -244,19 +242,6 @@ describe("argument coercion", () => {
     expect(parseDueInput(undefined, "UTC")).toBeUndefined();
   });
 
-  it("normalises plan blocks and drops malformed ones", () => {
-    const blocks = normalizePlanBlocks([
-      { start: "9:00", end: "09:45", label: "Deep work", taskIds: ["t1"], kind: "focus" },
-      { start: "08:00", end: "08:15", label: "Coffee", kind: "break" },
-      { start: "nope", end: "10:00", label: "Broken", kind: "focus" },
-      { start: "11:00", end: "11:30", label: "Odd kind", kind: "nap" },
-    ]);
-    expect(blocks).toEqual([
-      { start: "08:00", end: "08:15", label: "Coffee", taskIds: [], kind: "break" },
-      { start: "09:00", end: "09:45", label: "Deep work", taskIds: ["t1"], kind: "focus" },
-      { start: "11:00", end: "11:30", label: "Odd kind", taskIds: [], kind: "focus" },
-    ]);
-  });
 });
 
 describe("JSON extraction from model replies", () => {

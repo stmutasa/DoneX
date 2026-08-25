@@ -17,7 +17,6 @@ import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { BriefingCard } from "@/components/today/BriefingCard";
 import { CalendarStrip } from "@/components/today/CalendarStrip";
-import { PlanStrip } from "@/components/plan/PlanStrip";
 
 const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -113,7 +112,6 @@ export default function TodayPage() {
       <div className="mb-6 space-y-3">
         {leadWith ? <BriefingCard tasks={all} onFocusTask={setEditing} /> : null}
         <CalendarStrip />
-        {leadWith ? <PlanStrip tasks={all} /> : null}
       </div>
 
       {isLoading ? (
@@ -181,8 +179,7 @@ export default function TodayPage() {
       )}
 
       {trailWith ? (
-        <div className="mt-6 space-y-3">
-          <PlanStrip tasks={all} />
+        <div className="mt-6">
           <BriefingCard tasks={all} onFocusTask={setEditing} />
         </div>
       ) : null}

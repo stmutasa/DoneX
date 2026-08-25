@@ -81,13 +81,6 @@ CREATE TABLE IF NOT EXISTS inbox_items (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_external
   ON inbox_items(external_id) WHERE external_id IS NOT NULL;
-CREATE TABLE IF NOT EXISTS plans (
-  date_local TEXT PRIMARY KEY,
-  summary TEXT DEFAULT '',
-  blocks TEXT DEFAULT '[]',
-  accepted INTEGER DEFAULT 0,
-  generated_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS briefings (
   date_local TEXT PRIMARY KEY,
   content TEXT NOT NULL,

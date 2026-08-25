@@ -16,7 +16,7 @@ Five things live in the bottom bar of your phone:
 
 | Tab | What it's for |
 |---|---|
-| **Today** | Your home screen. What's due, what's overdue, your plan for the day. |
+| **Today** | Your home screen. What's due, what's overdue, what you could pick up. |
 | **Upcoming** | Everything with a future date, grouped by day. |
 | **⦿ (the glowing orb)** | The assistant — tap to chat. |
 | **Notes** | The Google Keep part. Notes and checklists. |
@@ -67,15 +67,7 @@ Top to bottom:
 2. **Morning briefing** — the AI reads your day (tasks, overdue stuff, calendar)
    and writes you 2–4 sentences with 1–3 suggested focus tasks. Tap ↻ to redo it.
 3. **Calendar strip** — today's Google Calendar events, since you connected it.
-4. **Plan my day** — the good stuff. Tap it and the AI *chooses what you should
-   work on today* — due-today tasks, approaching deadlines, plus a couple of
-   anytime tasks if there's room — and blocks out a realistic schedule with a
-   **time estimate** (~30m) on each work block. **Accept** it as-is,
-   **Reshuffle** if you don't like it, and optionally have it write the focus
-   blocks into your Google Calendar. Tap the **🔊 speaker** to have the plan
-   read aloud. The plan **stays on the page until you replace it** — even
-   tomorrow, yesterday's plan is still there with a "Plan today" button.
-5. **Your tasks** — Overdue (red), Today (deadlines ride along with escalating
+4. **Your tasks** — Overdue (red), Today (deadlines ride along with escalating
    priority), **Anytime** (your undated list, so a clear day is never blank),
    and Done today (collapsed at the bottom).
 
@@ -84,10 +76,10 @@ Top to bottom:
 when it's actually pressing (overdue, due today, or a deadline landing by
 tomorrow), so nothing important hides from you.
 
-**The page reshapes itself through the day.** In the morning the briefing and
-your day plan sit at the top, where you want them. From noon they slide below
-your task list — the list is what you need at eye level in the afternoon. (The
-"Install on your home screen" button now lives in **Settings → Appearance**.)
+**The page reshapes itself through the day.** In the morning the briefing sits
+at the top, where you want it. From noon it slides below your task list — the
+list is what you need at eye level in the afternoon. (The "Install on your home
+screen" button lives in **Settings → Appearance**.)
 
 **The Anytime section rotates.** It shows a handful at a time and swaps in a
 different few every three hours, so the same eight tasks don't sit there being
@@ -105,7 +97,6 @@ its hands on your actual lists. Things people actually say:
 - "Move the budget review to Thursday morning"
 - "I finished the passport thing" (it checks it off)
 - "What's on my plate this week?"
-- "Plan my day but keep the afternoon free"
 
 Little chips under its replies show exactly what it did ("✓ Added *Buy milk* —
 tomorrow"). It never invents tasks silently.
@@ -247,7 +238,7 @@ work; they just open that row's own page.
   rate limit, outage, or a model that just won't answer. You don't choose a
   model: it uses that provider's newest and re-checks daily, so it moves to a
   newer one on its own when they ship it. It applies everywhere
-  — chat, walk mode, briefings, day plans and inbox triage. When it happens,
+  — chat, walk mode, briefings, reviews and inbox triage. When it happens,
   the AI section shows what filled in and what the main provider said, so you
   find out from the app rather than from silence. It needs an API key stored
   for that second provider; without one the backup can't run and the section
@@ -272,7 +263,7 @@ work; they just open that row's own page.
 | Grocery checklist | Notes → **+ List** (or tell the orb to add items) |
 | Pin an important note | Pin it — same idea, same result |
 | Scroll around hoping to spot what's urgent | Open **Today** — it's already sorted |
-| Paste your list into ChatGPT and ask what to do | Tap **Plan my day** |
+| Paste your list into ChatGPT and ask what to do | Ask the orb: *"what should I do next?"* |
 | Reminders app on the side | Due times push to your phone on their own |
 | Screenshot a text so you don't forget it | It's already in your **Inbox** with a suggested task |
 

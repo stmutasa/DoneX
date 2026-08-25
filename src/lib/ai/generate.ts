@@ -5,7 +5,6 @@ import {
   completionsRepo,
   feedbackRepo,
   inboxRepo,
-  plansRepo,
   projectsRepo,
   reviewsRepo,
   settingsRepo,
@@ -16,7 +15,6 @@ import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority } from "@/lib/deadline";
 import type {
   Briefing,
-  DayPlan,
   TaskDraft,
   InboxItem,
   InboxSuggestion,
@@ -30,12 +28,11 @@ import { callWithFailover } from "@/lib/ai/adapters";
 import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
 import { asArray, asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
-import { describeDue, instantOf, normalizePlanBlocks, utcFromLocal } from "@/lib/ai/tools";
+import { describeDue, instantOf, utcFromLocal } from "@/lib/ai/tools";
 import {
   JSON_SYSTEM,
   breakdownPrompt,
   briefingPrompt,
-  planPrompt,
   reviewPrompt,
   triagePrompt,
 } from "@/lib/ai/prompts";
@@ -149,56 +146,6 @@ export async function generateBriefing(
   };
   briefingsRepo.save(briefing);
   return briefing;
-}
-
-// ── Day plan ───────────────────────────────────────────────────────────────
-
-export async function generateDayPlan(
-  dateLocal: string,
-  opts: { force?: boolean } = {}
-): Promise<DayPlan> {
-  const cached = plansRepo.get(dateLocal);
-  if (cached && !opts.force) return cached;
-
-  const ctx = await buildAssistantContext();
-  const tz = ctx.tz;
-  const startOfToday = instantOf(utcFromLocal(dateLocal, "00:00", tz));
-  const open = tasksRepo.list({ view: "today" });
-  const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
-  const ordered = [...open.filter(isOverdue), ...open.filter((t) => !isOverdue(t))];
-  // Anytime tasks are candidates too — the planner picks a few worth doing today.
-  const anytime = tasksRepo
-    .list({ view: "anytime" })
-    .sort((a, b) => b.priority - a.priority)
-    .slice(0, 12);
-  const briefing = briefingsRepo.get(dateLocal);
-
-  const payload = await jsonCall(
-    planPrompt({
-      ctx,
-      dateLocal,
-      tasks: digestLines(ordered, tz, 24),
-      anytime: digestLines(anytime, tz, 12),
-      briefing: briefing ? briefing.narrative : "",
-    }),
-    1800
-  );
-
-  const realIds = new Set([...ordered, ...anytime].map((t) => t.id));
-  const blocks = normalizePlanBlocks(payload.blocks).map((b) => ({
-    ...b,
-    taskIds: b.taskIds.filter((id) => realIds.has(id)),
-  }));
-
-  const plan: DayPlan = {
-    dateLocal,
-    summary: (asString(payload.summary) ?? "").trim(),
-    blocks,
-    accepted: false,
-    generatedAt: nowIso(),
-  };
-  plansRepo.save(plan);
-  return plan;
 }
 
 // ── Weekly review ──────────────────────────────────────────────────────────
