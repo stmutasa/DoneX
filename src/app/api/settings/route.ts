@@ -3,6 +3,7 @@ import { z } from "zod";
 import { autoPickModelIfNeeded, lastFallbackEvent, refreshFallbackModel } from "@/lib/ai";
 import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
+import { JOINT_COLOR_IDS } from "@/lib/jointColors";
 import type { AppSettings, MaskedSettings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,8 @@ function maskSettings(settings: AppSettings): MaskedSettings {
     joint: {
       ownerName: joint.ownerName,
       partnerName: joint.partnerName,
+      ownerColor: joint.ownerColor,
+      partnerColor: joint.partnerColor,
       partnerPinSet: !!joint.partnerPinHash,
       ownerIcsSet: !!joint.ownerIcsUrl,
       partnerIcsSet: !!joint.partnerIcsUrl,
@@ -102,6 +105,8 @@ const patchSchema = z.object({
       partnerName: z.string().max(30).optional(),
       ownerIcsUrl: z.string().max(2000).optional(),
       partnerIcsUrl: z.string().max(2000).optional(),
+      ownerColor: z.enum(JOINT_COLOR_IDS).optional(),
+      partnerColor: z.enum(JOINT_COLOR_IDS).optional(),
     })
     .optional(),
 });

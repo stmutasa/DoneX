@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 import type { CalendarEvent, Task } from "@/lib/types";
+import { hueSoftVar, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
 import { dayHeading, timeLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Segmented } from "@/components/ui/Segmented";
@@ -21,15 +23,17 @@ interface Payload {
   from: string;
 }
 
-// Two clearly different hues: warm orange = owner, cool blue = partner.
-const WHO_DOT: Record<Entry["who"], string> = {
-  owner: "bg-accent",
-  partner: "bg-partner",
-};
-const WHO_BLOCK: Record<Entry["who"], string> = {
-  owner: "bg-accent-soft border-accent text-ink",
-  partner: "bg-partner-soft border-partner text-ink",
-};
+/** Each person's resolved color, defaults blue (owner) / pink (partner). */
+interface WhoColors {
+  owner: JointColorId;
+  partner: JointColorId;
+}
+
+const dotStyle = (c: JointColorId): CSSProperties => ({ background: hueVar(c) });
+const blockColors = (c: JointColorId): CSSProperties => ({
+  background: hueSoftVar(c),
+  borderColor: hueVar(c),
+});
 
 type Mode = "agenda" | "week";
 const MODE_KEY = "donex.jointCal.mode";
@@ -90,7 +94,17 @@ interface Selected {
 }
 
 /** The couple calendar: an agenda list, or a Google-Calendar-style week grid. */
-export function JointCalendar({ names }: { names: { owner: string; partner: string } }) {
+export function JointCalendar({
+  names,
+  colors,
+}: {
+  names: { owner: string; partner: string };
+  colors?: { owner?: string; partner?: string };
+}) {
+  const who: WhoColors = {
+    owner: normalizeJointColor(colors?.owner, "blue"),
+    partner: normalizeJointColor(colors?.partner, "pink"),
+  };
   const { data, isLoading } = useSWR<Payload>("/api/joint/calendar?days=7", fetcher, {
     refreshInterval: 5 * 60_000,
   });
@@ -116,10 +130,10 @@ export function JointCalendar({ names }: { names: { owner: string; partner: stri
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-4 px-1 text-[12px] text-muted">
           <span className="inline-flex items-center gap-1.5">
-            <span className={cn("h-2.5 w-2.5 rounded-full", WHO_DOT.owner)} /> {names.owner}
+            <span className="h-2.5 w-2.5 rounded-full" style={dotStyle(who.owner)} /> {names.owner}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className={cn("h-2.5 w-2.5 rounded-full", WHO_DOT.partner)} /> {names.partner}
+            <span className="h-2.5 w-2.5 rounded-full" style={dotStyle(who.partner)} /> {names.partner}
           </span>
         </div>
         <Segmented
@@ -142,9 +156,9 @@ export function JointCalendar({ names }: { names: { owner: string; partner: stri
       ))}
 
       {mode === "week" ? (
-        <WeekGrid data={data} onPick={setSelected} whoName={whoName} />
+        <WeekGrid data={data} onPick={setSelected} whoName={whoName} colors={who} />
       ) : (
-        <Agenda data={data} />
+        <Agenda data={data} colors={who} />
       )}
 
       <Sheet
@@ -155,7 +169,7 @@ export function JointCalendar({ names }: { names: { owner: string; partner: stri
         {selected ? (
           <div className="space-y-2 pb-2 text-[14px] text-ink">
             <p className="flex items-center gap-2">
-              <span className={cn("h-2.5 w-2.5 rounded-full", WHO_DOT[selected.who])} />
+              <span className="h-2.5 w-2.5 rounded-full" style={dotStyle(who[selected.who])} />
               {whoName(selected.who)}
             </p>
             <p className="text-muted">{selected.when}</p>
@@ -169,7 +183,7 @@ export function JointCalendar({ names }: { names: { owner: string; partner: stri
 
 // ── Agenda (the original list) ─────────────────────────────────────────────
 
-function Agenda({ data }: { data: Payload | undefined }) {
+function Agenda({ data, colors }: { data: Payload | undefined; colors: WhoColors }) {
   const byDay = useMemo(() => {
     const map = new Map<string, { events: Entry[]; tasks: Task[] }>();
     for (const e of data?.events ?? []) {
@@ -209,7 +223,7 @@ function Agenda({ data }: { data: Payload | undefined }) {
                 key={e.id}
                 className={cn("flex items-center gap-3 px-3.5 py-2.5", i > 0 && "border-t border-stroke")}
               >
-                <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", WHO_DOT[e.who])} />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={dotStyle(colors[e.who])} />
                 <span className="w-[74px] shrink-0 text-[12.5px] tabular-nums text-muted">
                   {e.allDay ? "all day" : timeLabel(e.start)}
                 </span>
@@ -254,10 +268,12 @@ function WeekGrid({
   data,
   onPick,
   whoName,
+  colors,
 }: {
   data: Payload | undefined;
   onPick: (s: Selected) => void;
   whoName: (w: Entry["who"]) => string;
+  colors: WhoColors;
 }) {
   const days = useMemo(() => {
     const start = data?.from ? new Date(data.from) : new Date();
@@ -346,10 +362,8 @@ function WeekGrid({
                     key={e.id}
                     type="button"
                     onClick={() => onPick({ title: e.title, who: e.who, when: "All day", location: e.location })}
-                    className={cn(
-                      "block w-full truncate rounded border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight",
-                      WHO_BLOCK[e.who],
-                    )}
+                    className="block w-full truncate rounded border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight text-ink"
+                    style={blockColors(colors[e.who])}
                   >
                     {e.title}
                   </button>
@@ -419,15 +433,13 @@ function WeekGrid({
                         location: e.location,
                       })
                     }
-                    className={cn(
-                      "absolute overflow-hidden rounded-md border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight",
-                      WHO_BLOCK[e.who],
-                    )}
+                    className="absolute overflow-hidden rounded-md border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight text-ink"
                     style={{
                       top,
                       height,
                       left: `calc(${slot.lane * width}% + 2px)`,
                       width: `calc(${width}% - 4px)`,
+                      ...blockColors(colors[e.who]),
                     }}
                     title={`${e.title} · ${whoName(e.who)}`}
                   >

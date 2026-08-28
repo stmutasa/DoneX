@@ -14,5 +14,7 @@ export async function GET() {
     jointEnabled: !!joint.partnerPinHash,
     ownerName: joint.ownerName || "Me",
     partnerName: joint.partnerName || "Partner",
+    ownerColor: joint.ownerColor || "blue",
+    partnerColor: joint.partnerColor || "pink",
   });
 }

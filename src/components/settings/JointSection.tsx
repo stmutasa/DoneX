@@ -3,11 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { authApi } from "@/lib/api";
+import { JOINT_COLOR_IDS, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { Segmented } from "@/components/ui/Segmented";
+import { IconCheck } from "@/components/ui/icons";
 import { Divider, SettingsCard, useSettingsPatch, type SectionProps } from "./common";
 
 /**
@@ -26,6 +29,12 @@ export function JointSection({ settings, mutate }: SectionProps) {
   const [ownerIcs, setOwnerIcs] = useState("");
   const [partnerIcs, setPartnerIcs] = useState("");
   const [partnerCalKind, setPartnerCalKind] = useState<"icloud" | "google">("icloud");
+  const [ownerColor, setOwnerColor] = useState<JointColorId>(
+    normalizeJointColor(settings.joint.ownerColor, "blue"),
+  );
+  const [partnerColor, setPartnerColor] = useState<JointColorId>(
+    normalizeJointColor(settings.joint.partnerColor, "pink"),
+  );
 
   const enabled = settings.joint.partnerPinSet;
   const pinValid = /^\d{4,8}$/.test(pin);
@@ -35,6 +44,15 @@ export function JointSection({ settings, mutate }: SectionProps) {
       { joint: { ownerName: ownerName.trim(), partnerName: partnerName.trim() } },
       "Names saved",
     );
+
+  const pickOwnerColor = (id: JointColorId) => {
+    setOwnerColor(id);
+    void patch({ joint: { ownerColor: id } }, "Color saved");
+  };
+  const pickPartnerColor = (id: JointColorId) => {
+    setPartnerColor(id);
+    void patch({ joint: { partnerColor: id } }, "Color saved");
+  };
 
   const savePin = async () => {
     if (!pinValid) return;
@@ -91,6 +109,18 @@ export function JointSection({ settings, mutate }: SectionProps) {
           onChange={(e) => setPartnerName(e.target.value.slice(0, 30))}
           onBlur={saveNames}
         />
+      </div>
+
+      <div className="space-y-3">
+        <ColorRow label="Your color" value={ownerColor} onPick={pickOwnerColor} />
+        <ColorRow
+          label={`${partnerName.trim() || "Partner"}'s color`}
+          value={partnerColor}
+          onPick={pickPartnerColor}
+        />
+        <p className="text-[12px] leading-snug text-faint">
+          These tint the joint calendar and the “who added it” chips — for both of you.
+        </p>
       </div>
 
       <Divider />
@@ -193,5 +223,44 @@ export function JointSection({ settings, mutate }: SectionProps) {
         </>
       ) : null}
     </SettingsCard>
+  );
+}
+
+/** A row of color swatches; the picked one is ringed and checked. */
+function ColorRow({
+  label,
+  value,
+  onPick,
+}: {
+  label: string;
+  value: JointColorId;
+  onPick: (id: JointColorId) => void;
+}) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-[13px] font-medium text-muted">{label}</span>
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={label}>
+        {JOINT_COLOR_IDS.map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={id === value}
+            aria-label={id}
+            title={id}
+            onClick={() => onPick(id)}
+            className={cn(
+              "grid h-8 w-8 place-items-center rounded-full border-2 transition-transform",
+              id === value ? "scale-110 border-ink" : "border-transparent",
+            )}
+            style={{ background: hueVar(id) }}
+          >
+            {id === value ? (
+              <IconCheck className="h-3.5 w-3.5 text-white" strokeWidth={3} />
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

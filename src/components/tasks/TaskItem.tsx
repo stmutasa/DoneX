@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Project, Task } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
+import { hueSoftVar, hueVar, normalizeJointColor } from "@/lib/jointColors";
 import { deadlineChip, dueLabel, isOverdue } from "@/lib/format";
 import { effectivePriority } from "@/lib/deadline";
 import { cn } from "@/lib/utils";
@@ -33,8 +34,8 @@ export function TaskItem({
   project?: Project;
   onOpen?: (task: Task) => void;
   showProject?: boolean;
-  /** joint list: names to attribute tasks to */
-  attribution?: { owner: string; partner: string };
+  /** joint list: names to attribute tasks to, tinted with their chosen color */
+  attribution?: { owner: string; partner: string; colors?: { owner?: string; partner?: string } };
 }) {
   const { complete } = useTaskMutations();
   const [done, setDone] = useState(task.status === "done");
@@ -56,6 +57,13 @@ export function TaskItem({
     ? task.priority
     : effectivePriority(task, Intl.DateTimeFormat().resolvedOptions().timeZone);
   const escalated = priority > task.priority;
+  const byPartner = task.createdBy === "partner";
+  const attributionColor = attribution
+    ? normalizeJointColor(
+        byPartner ? attribution.colors?.partner : attribution.colors?.owner,
+        byPartner ? "pink" : "blue",
+      )
+    : null;
 
   const toggle = async () => {
     if (busy) return;
@@ -151,9 +159,12 @@ export function TaskItem({
             </span>
           ))}
 
-          {attribution ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
-              {task.createdBy === "partner" ? attribution.partner : attribution.owner}
+          {attribution && attributionColor ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+              style={{ background: hueSoftVar(attributionColor), color: hueVar(attributionColor) }}
+            >
+              {byPartner ? attribution.partner : attribution.owner}
             </span>
           ) : null}
 

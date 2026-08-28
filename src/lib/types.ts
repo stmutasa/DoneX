@@ -306,6 +306,9 @@ export interface JointSettings {
   ownerIcsUrl: string;
   /** ICS feed for the partner's calendar */
   partnerIcsUrl: string;
+  /** each person's color on shared surfaces — a JointColorId (see jointColors.ts) */
+  ownerColor: string;
+  partnerColor: string;
 }
 
 export interface AppSettings {

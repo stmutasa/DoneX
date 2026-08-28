@@ -20,8 +20,8 @@ export function TaskList({
   projects: Project[];
   onOpen?: (task: Task) => void;
   showProject?: boolean;
-  /** joint list: show who added each task */
-  attribution?: { owner: string; partner: string };
+  /** joint list: show who added each task, tinted with their chosen color */
+  attribution?: { owner: string; partner: string; colors?: { owner?: string; partner?: string } };
   className?: string;
 }) {
   const byId = new Map(projects.map((p) => [p.id, p]));

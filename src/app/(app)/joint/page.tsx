@@ -29,6 +29,8 @@ export default function JointPage() {
     role: "owner" | "partner";
     ownerName: string;
     partnerName: string;
+    ownerColor?: string;
+    partnerColor?: string;
   }>(keys.me(), fetcher);
 
   const [editing, setEditing] = useState<Task | null>(null);
@@ -41,6 +43,8 @@ export default function JointPage() {
   const done = tasks.filter((t) => t.status === "done").slice(0, 20);
 
   const names = { owner: me?.ownerName || "Me", partner: me?.partnerName || "Partner" };
+  const colors = { owner: me?.ownerColor, partner: me?.partnerColor };
+  const attribution = { ...names, colors };
 
   const add = async () => {
     const value = draft.trim();
@@ -78,7 +82,7 @@ export default function JointPage() {
       </div>
 
       {tab === "calendar" ? (
-        <JointCalendar names={names} />
+        <JointCalendar names={names} colors={colors} />
       ) : (
         <>
       <div className="mb-5 flex items-center gap-2 rounded-2xl border border-stroke bg-elev px-3.5 py-1.5">
@@ -118,7 +122,7 @@ export default function JointPage() {
         <>
           {open.length ? (
             <TaskGroup title="To do" count={open.length}>
-              <TaskList tasks={open} projects={[]} onOpen={setEditing} showProject={false} attribution={names} />
+              <TaskList tasks={open} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
             </TaskGroup>
           ) : (
             <div className="mb-6 rounded-2xl border border-stroke bg-elev px-4 py-6 text-center">
@@ -128,7 +132,7 @@ export default function JointPage() {
           )}
           {done.length ? (
             <TaskGroup title="Done" count={done.length} tone="muted" collapsible defaultCollapsed>
-              <TaskList tasks={done} projects={[]} onOpen={setEditing} showProject={false} attribution={names} />
+              <TaskList tasks={done} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
             </TaskGroup>
           ) : null}
         </>

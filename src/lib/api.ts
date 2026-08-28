@@ -193,6 +193,8 @@ export const authApi = {
       jointEnabled: boolean;
       ownerName: string;
       partnerName: string;
+      ownerColor: string;
+      partnerColor: string;
     }>("/api/auth/me"),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   changePin: (pin: string) =>
@@ -463,7 +465,14 @@ export type SettingsPatch = {
   notifications?: Partial<NotificationSettings>;
   google?: Partial<GoogleSettings>;
   smsCaptureEnabled?: boolean;
-  joint?: { ownerName?: string; partnerName?: string; ownerIcsUrl?: string; partnerIcsUrl?: string };
+  joint?: {
+    ownerName?: string;
+    partnerName?: string;
+    ownerIcsUrl?: string;
+    partnerIcsUrl?: string;
+    ownerColor?: string;
+    partnerColor?: string;
+  };
 };
 
 export const statsApi = {
