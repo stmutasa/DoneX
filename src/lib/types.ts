@@ -76,6 +76,8 @@ export interface TaskListFilter {
   tag?: string;
   q?: string;
   includeDone?: boolean;
+  /** hide anything filed under a project — project work lives on its own tab */
+  excludeProjects?: boolean;
   /** ISO date bound for scheduler queries */
   dueBefore?: string;
 }

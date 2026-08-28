@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get("q");
   if (q) filter.q = q;
   if (searchParams.get("includeDone") === "1") filter.includeDone = true;
+  if (searchParams.get("excludeProjects") === "1") filter.excludeProjects = true;
 
   return NextResponse.json({ tasks: tasksRepo.list(filter) });
 }

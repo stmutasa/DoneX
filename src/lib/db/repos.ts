@@ -254,6 +254,8 @@ export const tasksRepo = {
     if (filter.projectId) {
       where.push("project_id = ?");
       params.push(filter.projectId);
+    } else if (filter.excludeProjects) {
+      where.push("project_id IS NULL");
     }
     if (filter.tag) {
       where.push("tags LIKE ?");
@@ -423,10 +425,12 @@ export const tasksRepo = {
   },
 
   /** Open, top-level tasks that carry a location. */
+  /** Open, top-level, project-less tasks that carry a location. */
   located(): Task[] {
     const rows = getDb()
       .prepare(
-        "SELECT * FROM tasks WHERE status='open' AND parent_id IS NULL AND location IS NOT NULL LIMIT 200"
+        `SELECT * FROM tasks WHERE status='open' AND parent_id IS NULL
+         AND project_id IS NULL AND location IS NOT NULL LIMIT 200`
       )
       .all() as TaskRow[];
     return rows.map(rowToTask);
@@ -502,7 +506,10 @@ export const completionsRepo = {
   logbook(fromKey: string, toKey: string): { dateLocal: string; entries: { taskId: string; title: string; completedAt: string }[] }[] {
     const rows = getDb()
       .prepare(
-        "SELECT task_id, title, completed_at, date_local FROM completions WHERE date_local >= ? AND date_local <= ? ORDER BY completed_at DESC LIMIT 500"
+        `SELECT c.task_id, c.title, c.completed_at, c.date_local
+         FROM completions c LEFT JOIN tasks t ON t.id = c.task_id
+         WHERE c.date_local >= ? AND c.date_local <= ? AND t.project_id IS NULL
+         ORDER BY c.completed_at DESC LIMIT 500`
       )
       .all(fromKey, toKey) as { task_id: string; title: string; completed_at: string; date_local: string }[];
     const byDay = new Map<string, { taskId: string; title: string; completedAt: string }[]>();

@@ -52,8 +52,14 @@ function buildBuckets(tasks: Task[]): Bucket[] {
 }
 
 export default function UpcomingPage() {
-  const { data, isLoading } = useSWR<{ tasks: Task[] }>(keys.tasks({ view: "upcoming" }), fetcher);
-  const { data: anytimeData } = useSWR<{ tasks: Task[] }>(keys.tasks({ view: "anytime" }), fetcher);
+  const { data, isLoading } = useSWR<{ tasks: Task[] }>(
+    keys.tasks({ view: "upcoming", excludeProjects: true }),
+    fetcher,
+  );
+  const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
+    keys.tasks({ view: "anytime", excludeProjects: true }),
+    fetcher,
+  );
   const { data: projectData } = useSWR<{ projects: Project[] }>(keys.projects(), fetcher);
 
   const [editing, setEditing] = useState<Task | null>(null);

@@ -110,7 +110,8 @@ export async function generateBriefing(
   const ctx = await buildAssistantContext();
   const tz = ctx.tz;
   const startOfToday = instantOf(utcFromLocal(dateLocal, "00:00", tz));
-  const today = tasksRepo.list({ view: "today" });
+  // Mirrors what Today actually shows: project work stays on its own tab.
+  const today = tasksRepo.list({ view: "today", excludeProjects: true });
   const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
   const overdue = today.filter(isOverdue);
   const dueToday = today.filter((t) => !isOverdue(t));
@@ -132,7 +133,7 @@ export async function generateBriefing(
   );
 
   const known = new Set(today.map((t) => t.id));
-  for (const t of tasksRepo.list({ view: "anytime" })) known.add(t.id);
+  for (const t of tasksRepo.list({ view: "anytime", excludeProjects: true })) known.add(t.id);
   const focusTaskIds = asStringArray(payload.focusTaskIds)
     .filter((id) => known.has(id))
     .slice(0, 3);

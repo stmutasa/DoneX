@@ -147,6 +147,7 @@ export const keys = {
       tag: filter.tag,
       q: filter.q,
       includeDone: filter.includeDone,
+      excludeProjects: filter.excludeProjects,
     })}`,
   tags: () => "/api/tags",
   projects: () => "/api/projects",

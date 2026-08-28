@@ -6,7 +6,6 @@ import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
 import { greeting, isOverdue, longDateLine } from "@/lib/format";
-import { isUrgent } from "@/lib/deadline";
 import { rotatingSample, rotationSlot } from "@/lib/rotate";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
@@ -18,15 +17,13 @@ import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { BriefingCard } from "@/components/today/BriefingCard";
 import { CalendarStrip } from "@/components/today/CalendarStrip";
 
-const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
 export default function TodayPage() {
   const { data, isLoading } = useSWR<{ tasks: Task[] }>(
-    keys.tasks({ view: "today", includeDone: true }),
+    keys.tasks({ view: "today", includeDone: true, excludeProjects: true }),
     fetcher,
   );
   const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
-    keys.tasks({ view: "anytime" }),
+    keys.tasks({ view: "anytime", excludeProjects: true }),
     fetcher,
   );
   const { data: projectData } = useSWR<{ projects: Project[] }>(keys.projects(), fetcher);
@@ -53,31 +50,24 @@ export default function TodayPage() {
   }, []);
 
   const projects = projectData?.projects ?? [];
+  // Project work never appears here — the server already excluded it.
   const all = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
-  // Project work lives on its own tab — except when it's about to bite:
-  // overdue, due today, or a deadline landing by tomorrow.
-  const loose = useMemo(
-    () => all.filter((t) => !t.projectId || isUrgent(t, deviceTz, now ?? undefined)),
-    [all, now],
-  );
 
   const { overdue, today, done } = useMemo(() => {
     const o: Task[] = [];
     const t: Task[] = [];
     const d: Task[] = [];
-    for (const task of loose) {
+    for (const task of all) {
       if (task.status === "done") d.push(task);
       else if (isOverdue(task.dueAt, task.allDay)) o.push(task);
       else t.push(task);
     }
     return { overdue: o, today: t, done: d };
-  }, [loose]);
+  }, [all]);
 
   const anytime = useMemo(
     () =>
-      (anytimeData?.tasks ?? []).filter(
-        (t) => !t.parentId && !t.projectId && t.status !== "done",
-      ),
+      (anytimeData?.tasks ?? []).filter((t) => !t.parentId && t.status !== "done"),
     [anytimeData],
   );
   // A different handful every few hours, steady in between.
