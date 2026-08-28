@@ -71,10 +71,12 @@ Top to bottom:
    priority), **Anytime** (your undated list, so a clear day is never blank),
    and Done today (collapsed at the bottom).
 
-**Project tasks live on the Projects tab and nowhere else.** Once a task is
-filed under a project it stops appearing on Today, Upcoming, Nearby and the
-Logbook — even when it's overdue. Today, Upcoming and the rest are your loose,
-unfiled list; project work is something you go and look at deliberately.
+**Project tasks live on the Projects tab.** Once a task is filed under a
+project it stops appearing on Upcoming, Nearby and the Logbook — those are your
+loose, unfiled lists, and project work is something you go and look at
+deliberately. The one exception is Today: a project task breaks through there
+when it's actually pressing (overdue, due today, or a deadline landing by
+tomorrow), so nothing important hides from you.
 
 **The page reshapes itself through the day.** In the morning the briefing sits
 at the top, where you want it. From noon it slides below your task list — the

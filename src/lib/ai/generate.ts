@@ -12,7 +12,7 @@ import {
   tasksRepo,
 } from "@/lib/db/repos";
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
-import { deadlineLabel, effectivePriority } from "@/lib/deadline";
+import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
 import type {
   Briefing,
   TaskDraft,
@@ -110,8 +110,11 @@ export async function generateBriefing(
   const ctx = await buildAssistantContext();
   const tz = ctx.tz;
   const startOfToday = instantOf(utcFromLocal(dateLocal, "00:00", tz));
-  // Mirrors what Today actually shows: project work stays on its own tab.
-  const today = tasksRepo.list({ view: "today", excludeProjects: true });
+  // Mirrors what Today actually shows: project work stays on its own tab
+  // unless it is overdue or lands within a day.
+  const today = tasksRepo
+    .list({ view: "today" })
+    .filter((t) => !t.projectId || isUrgent(t, tz));
   const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
   const overdue = today.filter(isOverdue);
   const dueToday = today.filter((t) => !isOverdue(t));

@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
 import { greeting, isOverdue, longDateLine } from "@/lib/format";
+import { isUrgent } from "@/lib/deadline";
 import { rotatingSample, rotationSlot } from "@/lib/rotate";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
@@ -17,9 +18,11 @@ import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { BriefingCard } from "@/components/today/BriefingCard";
 import { CalendarStrip } from "@/components/today/CalendarStrip";
 
+const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
 export default function TodayPage() {
   const { data, isLoading } = useSWR<{ tasks: Task[] }>(
-    keys.tasks({ view: "today", includeDone: true, excludeProjects: true }),
+    keys.tasks({ view: "today", includeDone: true }),
     fetcher,
   );
   const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
@@ -50,8 +53,15 @@ export default function TodayPage() {
   }, []);
 
   const projects = projectData?.projects ?? [];
-  // Project work never appears here — the server already excluded it.
-  const all = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
+  // Project work lives on the Projects tab — except when it's about to bite:
+  // overdue, due today, or a deadline landing by tomorrow.
+  const all = useMemo(
+    () =>
+      (data?.tasks ?? []).filter(
+        (t) => !t.parentId && (!t.projectId || isUrgent(t, deviceTz, now ?? undefined)),
+      ),
+    [data, now],
+  );
 
   const { overdue, today, done } = useMemo(() => {
     const o: Task[] = [];
