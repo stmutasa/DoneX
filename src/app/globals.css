@@ -24,6 +24,9 @@
   --grad-b: #f0442e;
   --ok: #2f9e44;
   --warn: #e8a002;
+  /* the partner's color on shared surfaces — cool blue against the warm accent */
+  --partner: #2f6fdd;
+  --partner-soft: rgba(47, 111, 221, 0.14);
   --danger: #e03131;
   --shadow-soft: 0 6px 24px rgba(35, 31, 24, 0.07);
   --shadow-lift: 0 12px 40px rgba(35, 31, 24, 0.13);
@@ -47,6 +50,8 @@
   --grad-b: #ff6b6b;
   --ok: #4ade80;
   --warn: #fbbf24;
+  --partner: #6ea8ff;
+  --partner-soft: rgba(110, 168, 255, 0.16);
   --danger: #f87171;
   --shadow-soft: 0 6px 24px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 16px 48px rgba(0, 0, 0, 0.5);

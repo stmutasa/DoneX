@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   if (joint.ownerIcsUrl) {
     try {
       for (const e of await icsEventsBetween({ url: joint.ownerIcsUrl, from, to })) {
-        events.push({ ...e, who: "owner" });
+        events.push({ ...e, id: `owner:${e.id}`, who: "owner" });
       }
     } catch {
       warnings.push(`${joint.ownerName || "Your"} calendar feed is unreachable`);
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
   } else {
     try {
       for (const e of await listEventsRange(fromIso, toIso)) {
-        events.push({ ...e, who: "owner" });
+        events.push({ ...e, id: `owner:${e.id}`, who: "owner" });
       }
     } catch {
       warnings.push("Google Calendar is unreachable");
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
   if (joint.partnerIcsUrl) {
     try {
       for (const e of await icsEventsBetween({ url: joint.partnerIcsUrl, from, to })) {
-        events.push({ ...e, who: "partner" });
+        events.push({ ...e, id: `partner:${e.id}`, who: "partner" });
       }
     } catch {
       warnings.push(`${joint.partnerName || "Partner"} calendar feed is unreachable`);

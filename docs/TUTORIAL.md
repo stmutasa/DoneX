@@ -166,8 +166,10 @@ phones. You can also tell the orb *"add milk to our list"* — "our" means the
 shared list.
 
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
-with their calendar, color-coded per person, next 7 days, plus any dated
-shared tasks. Their calendar connects with one link — Settings → Shared list
+with their calendar — orange is you, blue is them — for the next 7 days, plus
+any dated shared tasks. Two styles, remembered per device: **Agenda** (a
+simple list) or **Week** (a Google-Calendar-style grid with time blocks, a
+today marker and a red now-line — tap any block for details). Their calendar connects with one link — Settings → Shared list
 has a picker with exact steps for both kinds: **iPhone/iCloud** (Calendar →
 Public Calendar → Share Link) or **Google Calendar** (Integrate calendar →
 secret iCal address). Whichever she uses, paste the link and it syncs.
