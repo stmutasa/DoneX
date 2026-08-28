@@ -144,6 +144,35 @@ quietly).
 
 ---
 
+## Ours (the list you share)
+
+The **Ours** tab is a to-do list and calendar for the two of you — synced,
+separate from everything personal.
+
+**Setting it up (once):** Settings → **Shared list** → put in both names →
+**Set PIN** to create a partner PIN (different from yours). That PIN is the
+whole account system: whoever signs in with it sees the shared list and
+*nothing else* — none of your tasks, notes, inbox, email, or chat.
+
+**On their iPhone:** open your DoneX address in Safari → **Share → Add to
+Home Screen** → open it from the home screen → sign in with the partner PIN.
+It works like an app, including notifications (iOS 16.4+) and offline. They
+land on Ours and stay there.
+
+**Using it:** either of you adds things ("pick up the cake saturday 2pm" —
+plain-English dates work); every task shows a chip for who added it; checking
+things off syncs both ways. Due-time reminders for shared tasks buzz both
+phones. You can also tell the orb *"add milk to our list"* — "our" means the
+shared list.
+
+**The joint calendar:** the Calendar view on Ours merges your Google Calendar
+with their calendar, color-coded per person, next 7 days, plus any dated
+shared tasks. Their calendar connects with one link: on iPhone, iCloud
+Calendar → share → Public Calendar → paste that link in Settings → Shared
+list. (Google Calendar works too, via its "secret address in iCal format".)
+
+---
+
 ## The Inbox (stuff flows in, you decide)
 
 More → **Inbox**. This is the "waiting room" for things that arrived on their

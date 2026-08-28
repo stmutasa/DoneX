@@ -13,12 +13,15 @@ export function TaskList({
   projects,
   onOpen,
   showProject = true,
+  attribution,
   className,
 }: {
   tasks: Task[];
   projects: Project[];
   onOpen?: (task: Task) => void;
   showProject?: boolean;
+  /** joint list: show who added each task */
+  attribution?: { owner: string; partner: string };
   className?: string;
 }) {
   const byId = new Map(projects.map((p) => [p.id, p]));
@@ -39,6 +42,7 @@ export function TaskList({
               project={task.projectId ? byId.get(task.projectId) : undefined}
               onOpen={onOpen}
               showProject={showProject}
+              attribution={attribution}
             />
           </motion.li>
         ))}

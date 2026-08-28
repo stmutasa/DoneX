@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireSession, sessionRole } from "@/lib/auth";
 import { pushRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +32,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid push subscription" }, { status: 400 });
   }
 
-  pushRepo.add(parsed.data.subscription);
+  pushRepo.add(parsed.data.subscription, (await sessionRole()) ?? "owner");
   return NextResponse.json({ ok: true });
 }

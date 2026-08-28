@@ -13,6 +13,8 @@ const baseTask = (over: Partial<Task>): Task => ({
   title: "Existing task",
   notes: "",
   status: "open",
+  space: "personal",
+  createdBy: "owner",
   priority: 0,
   dueAt: null,
   dueKind: "on",

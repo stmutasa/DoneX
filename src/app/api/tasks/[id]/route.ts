@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireSession, sessionRole } from "@/lib/auth";
 import { tasksRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +40,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const gate = await requireSession();
   if (gate) return gate;
   const { id } = await params;
+  const role = (await sessionRole()) ?? "owner";
+  if (role === "partner" && tasksRepo.get(id)?.space !== "joint") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -60,6 +64,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const gate = await requireSession();
   if (gate) return gate;
   const { id } = await params;
+  if (((await sessionRole()) ?? "owner") === "partner" && tasksRepo.get(id)?.space !== "joint") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   tasksRepo.remove(id);
   return NextResponse.json({ ok: true });

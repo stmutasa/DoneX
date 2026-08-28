@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { feedbackRepo, inboxRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ const bodySchema = z.object({
 /** Bring a dismissed/resolved item back to the inbox, optionally teaching
  *  triage why it should never have gone. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 

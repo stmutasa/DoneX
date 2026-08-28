@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { tasksRepo } from "@/lib/db/repos";
 import { haversineKm } from "@/lib/utils";
 import type { NearbyTask } from "@/lib/types";
@@ -7,7 +7,7 @@ import type { NearbyTask } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const lat = Number(req.nextUrl.searchParams.get("lat"));

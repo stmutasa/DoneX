@@ -5,13 +5,13 @@
  */
 import crypto from "crypto";
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const ingestToken = crypto.randomBytes(12).toString("hex");

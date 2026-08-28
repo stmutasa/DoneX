@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { consumeState, exchangeCode, resolveOrigin } from "@/lib/google/oauth";
 import { settingsRepo } from "@/lib/db/repos";
 import { scanGmail } from "@/lib/google/gmail";
@@ -7,7 +7,7 @@ import { scanGmail } from "@/lib/google/gmail";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const origin = resolveOrigin(request);

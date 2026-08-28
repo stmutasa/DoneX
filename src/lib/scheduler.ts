@@ -115,7 +115,7 @@ async function notifyInbox(
     );
     return false;
   }
-  await sendPushToAll(payload);
+  await sendPushToAll(payload, ["owner"]);
   settingsRepo.setKV(KV_INBOX_ALERTS, budget.next);
   return true;
 }
@@ -134,12 +134,16 @@ async function runReminders(settings: AppSettings): Promise<void> {
       if (task.dueAt) parts.push(`Due at ${formatLocalTime(task.dueAt, settings.tz)}`);
       const project = task.projectId ? projectNames.get(task.projectId) : undefined;
       if (project) parts.push(project);
-      await sendPushToAll({
-        title: `⏰ ${task.title}`,
-        body: parts.join(" · ") || "Due now",
-        url: "/today",
-        tag: `task-${task.id}`,
-      });
+      const joint = task.space === "joint";
+      await sendPushToAll(
+        {
+          title: `⏰ ${task.title}`,
+          body: (joint ? [...parts, "Joint list"] : parts).join(" · ") || "Due now",
+          url: joint ? "/joint" : "/today",
+          tag: `task-${task.id}`,
+        },
+        joint ? undefined : ["owner"],
+      );
       tasksRepo.markNotified(task.id);
     }
   } catch (err) {
@@ -170,11 +174,14 @@ async function runMorningBriefing(settings: AppSettings, now: Date): Promise<voi
     }
 
     const openToday = tasksRepo.list({ view: "today" }).length;
-    await sendPushToAll({
-      title: briefing?.greeting || "Good morning ☀️",
-      body: briefing?.narrative || `${openToday} tasks on deck today.`,
-      url: "/today",
-    });
+    await sendPushToAll(
+      {
+        title: briefing?.greeting || "Good morning ☀️",
+        body: briefing?.narrative || `${openToday} tasks on deck today.`,
+        url: "/today",
+      },
+      ["owner"],
+    );
   } catch (err) {
     console.error("[scheduler] briefing", err);
   }
@@ -207,11 +214,14 @@ async function runWeeklyReview(settings: AppSettings, now: Date): Promise<void> 
     const completed =
       review?.completedCount ??
       completionsRepo.countRange(addDaysToDateKey(dateLocal, -6), dateLocal);
-    await sendPushToAll({
-      title: "Your week in review",
-      body: firstSentence(review?.narrative) || `${completed} task(s) completed this week.`,
-      url: "/review",
-    });
+    await sendPushToAll(
+      {
+        title: "Your week in review",
+        body: firstSentence(review?.narrative) || `${completed} task(s) completed this week.`,
+        url: "/review",
+      },
+      ["owner"],
+    );
   } catch (err) {
     console.error("[scheduler] weekly review", err);
   }

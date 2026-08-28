@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { runChatTurn } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   let raw: unknown;

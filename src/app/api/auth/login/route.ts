@@ -19,10 +19,13 @@ export async function POST(req: NextRequest) {
 
   recordLoginAttempt();
   const settings = settingsRepo.getApp();
-  if (!settings.pinHash || !verifyPin(parsed.data.pin, settings.pinHash)) {
-    return NextResponse.json({ error: "Incorrect PIN" }, { status: 401 });
+  if (settings.pinHash && verifyPin(parsed.data.pin, settings.pinHash)) {
+    await createSession("owner");
+    return NextResponse.json({ ok: true, role: "owner" });
   }
-
-  await createSession();
-  return NextResponse.json({ ok: true });
+  if (settings.joint.partnerPinHash && verifyPin(parsed.data.pin, settings.joint.partnerPinHash)) {
+    await createSession("partner");
+    return NextResponse.json({ ok: true, role: "partner" });
+  }
+  return NextResponse.json({ error: "Incorrect PIN" }, { status: 401 });
 }

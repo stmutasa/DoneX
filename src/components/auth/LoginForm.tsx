@@ -19,8 +19,8 @@ export function LoginForm() {
     setBusy(true);
     setError("");
     try {
-      await authApi.login(pin);
-      router.push("/today");
+      const res = await authApi.login(pin);
+      router.push(res.role === "partner" ? "/joint" : "/today");
       router.refresh();
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;

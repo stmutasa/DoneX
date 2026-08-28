@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { mapsConfigured, searchPlaces } from "@/lib/google/places";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   if (!mapsConfigured()) {

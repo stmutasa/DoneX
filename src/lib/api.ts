@@ -148,6 +148,7 @@ export const keys = {
       q: filter.q,
       includeDone: filter.includeDone,
       excludeProjects: filter.excludeProjects,
+      space: filter.space,
     })}`,
   tags: () => "/api/tags",
   projects: () => "/api/projects",
@@ -160,6 +161,7 @@ export const keys = {
   review: (refresh?: boolean) => `/api/assistant/review${query({ refresh })}`,
   stats: () => "/api/stats",
   settings: () => "/api/settings",
+  me: () => "/api/auth/me",
   models: (provider: AISettings["provider"]) => `/api/settings/models${query({ provider })}`,
   googleStatus: () => "/api/google/status",
   calendarToday: () => "/api/calendar/today",
@@ -181,10 +183,25 @@ export const authApi = {
       body: JSON.stringify({ pin, tz }),
     }),
   login: (pin: string) =>
-    request<{ ok: true }>("/api/auth/login", { method: "POST", body: JSON.stringify({ pin }) }),
+    request<{ ok: true; role: "owner" | "partner" }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
+  me: () =>
+    request<{
+      role: "owner" | "partner";
+      jointEnabled: boolean;
+      ownerName: string;
+      partnerName: string;
+    }>("/api/auth/me"),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   changePin: (pin: string) =>
     request<{ ok: true }>("/api/auth/change-pin", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
+  setPartnerPin: (pin: string | null) =>
+    request<{ ok: true; enabled: boolean }>("/api/settings/partner-pin", {
       method: "POST",
       body: JSON.stringify({ pin }),
     }),
@@ -446,6 +463,7 @@ export type SettingsPatch = {
   notifications?: Partial<NotificationSettings>;
   google?: Partial<GoogleSettings>;
   smsCaptureEnabled?: boolean;
+  joint?: { ownerName?: string; partnerName?: string; ownerIcsUrl?: string; partnerIcsUrl?: string };
 };
 
 export const statsApi = {

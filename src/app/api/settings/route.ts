@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { autoPickModelIfNeeded, lastFallbackEvent, refreshFallbackModel } from "@/lib/ai";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import type { AppSettings, MaskedSettings } from "@/lib/types";
 
@@ -14,10 +14,17 @@ function last4(secret: string): string {
 }
 
 function maskSettings(settings: AppSettings): MaskedSettings {
-  const { ai, google, vapid, pinHash, ...rest } = settings;
+  const { ai, google, vapid, pinHash, joint, ...rest } = settings;
   return {
     ...rest,
     hasPin: !!pinHash,
+    joint: {
+      ownerName: joint.ownerName,
+      partnerName: joint.partnerName,
+      partnerPinSet: !!joint.partnerPinHash,
+      ownerIcsSet: !!joint.ownerIcsUrl,
+      partnerIcsSet: !!joint.partnerIcsUrl,
+    },
     ai: {
       provider: ai.provider,
       model: ai.model,
@@ -89,17 +96,25 @@ const patchSchema = z.object({
   notifications: notificationsPatchSchema.optional(),
   google: googlePatchSchema.optional(),
   smsCaptureEnabled: z.boolean().optional(),
+  joint: z
+    .object({
+      ownerName: z.string().max(30).optional(),
+      partnerName: z.string().max(30).optional(),
+      ownerIcsUrl: z.string().max(2000).optional(),
+      partnerIcsUrl: z.string().max(2000).optional(),
+    })
+    .optional(),
 });
 
 export async function GET() {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   return NextResponse.json(maskSettings(settingsRepo.getApp()));
 }
 
 export async function PATCH(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => null));
@@ -118,6 +133,14 @@ export async function PATCH(req: NextRequest) {
       else if (ai[key] === "__clear__") ai[key] = "";
     }
     patch.ai = ai;
+  }
+  if (data.joint) {
+    const joint = { ...data.joint };
+    for (const key of ["ownerIcsUrl", "partnerIcsUrl"] as const) {
+      if (joint[key] === "") delete joint[key];
+      else if (joint[key] === "__clear__") joint[key] = "";
+    }
+    patch.joint = joint;
   }
   if (data.google) {
     const google = { ...data.google };

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { projectsRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ const patchSchema = z.object({
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 
@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 

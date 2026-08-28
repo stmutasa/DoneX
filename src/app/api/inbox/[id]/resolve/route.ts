@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { feedbackRepo, inboxRepo, notesRepo, tasksRepo } from "@/lib/db/repos";
 import type { TaskDraft } from "@/lib/types";
 import { newId } from "@/lib/utils";
@@ -37,7 +37,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 

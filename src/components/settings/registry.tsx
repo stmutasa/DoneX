@@ -16,6 +16,7 @@ import {
   IconDownload,
   IconInbox,
   IconKeyboard,
+  IconLink,
   IconList,
   IconSparkles,
   IconSun,
@@ -23,6 +24,7 @@ import {
   IconWand,
 } from "@/components/ui/icons";
 import { AboutSection } from "./AboutSection";
+import { JointSection } from "./JointSection";
 import { AiSection } from "./AiSection";
 import { CaptureSection } from "./CaptureSection";
 import { GoogleSection } from "./GoogleSection";
@@ -119,6 +121,16 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
             ? `${g.email ?? "Connected"}${s.google.gmailScanEnabled ? " · scanning hourly" : ""}`
             : "Not connected",
         render: (s, m) => <GoogleSection settings={s} mutate={m} />,
+      },
+      {
+        slug: "joint",
+        title: "Shared list",
+        icon: IconLink,
+        subtitle: (s) =>
+          s.joint.partnerPinSet
+            ? `On — ${s.joint.ownerName || "you"} + ${s.joint.partnerName || "partner"}`
+            : "Off — set a partner PIN to start",
+        render: (s, m) => <JointSection settings={s} mutate={m} />,
       },
       {
         slug: "capture",

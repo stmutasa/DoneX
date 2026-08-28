@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { aiConfigured, generateBriefing } from "@/lib/ai";
 import { settingsRepo } from "@/lib/db/repos";
 import { localDateKey } from "@/lib/utils";
@@ -7,7 +7,7 @@ import { localDateKey } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   if (!aiConfigured()) return NextResponse.json({ error: "AI not configured" }, { status: 409 });
 

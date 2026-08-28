@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { getTodayEvents } from "@/lib/google/calendar";
 import { isGoogleConnected } from "@/lib/google/oauth";
 import type { CalendarEvent } from "@/lib/types";
@@ -7,7 +7,7 @@ import type { CalendarEvent } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const connected = isGoogleConnected();

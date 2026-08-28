@@ -27,16 +27,24 @@ interface GoogleEvent {
 }
 
 export async function getTodayEvents(): Promise<CalendarEvent[]> {
-  if (!isGoogleConnected()) return [];
-
   const tz = settingsRepo.getApp().tz;
   const todayKey = localDateKey(new Date(), tz);
+  return listEventsRange(
+    isoFromLocal(todayKey, "00:00", tz),
+    isoFromLocal(addDaysToDateKey(todayKey, 1), "00:00", tz),
+  );
+}
+
+/** Events between two ISO instants; [] when Google is not connected. */
+export async function listEventsRange(fromIso: string, toIso: string): Promise<CalendarEvent[]> {
+  if (!isGoogleConnected()) return [];
+
   const params = new URLSearchParams({
-    timeMin: isoFromLocal(todayKey, "00:00", tz),
-    timeMax: isoFromLocal(addDaysToDateKey(todayKey, 1), "00:00", tz),
+    timeMin: fromIso,
+    timeMax: toIso,
     singleEvents: "true",
     orderBy: "startTime",
-    maxResults: "25",
+    maxResults: "100",
   });
 
   const res = await googleFetch(`${EVENTS_URL}?${params.toString()}`);

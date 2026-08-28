@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { inboxRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ const bodySchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const status = new URL(req.url).searchParams.get("status");
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

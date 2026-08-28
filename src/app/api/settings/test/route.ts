@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { testProvider } from "@/lib/ai";
 import { settingsRepo } from "@/lib/db/repos";
 
@@ -11,7 +11,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   let raw: unknown = {};

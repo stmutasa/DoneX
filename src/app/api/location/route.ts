@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import { nowIso } from "@/lib/utils";
 
@@ -14,7 +14,7 @@ const bodySchema = z.object({
 /** Clients report their position here so briefings and voice sessions can be
  *  location-aware server-side. Only the latest fix is kept. */
 export async function POST(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

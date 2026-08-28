@@ -5,7 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { aiConfigured, generateTaskBreakdown } from "@/lib/ai";
 import { projectsRepo } from "@/lib/db/repos";
 
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({ text: z.string().min(1).max(4000) });
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   if (!aiConfigured()) return NextResponse.json({ error: "AI not configured" }, { status: 409 });
 

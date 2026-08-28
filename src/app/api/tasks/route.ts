@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireSession, sessionRole } from "@/lib/auth";
 import { projectsRepo, settingsRepo, tasksRepo } from "@/lib/db/repos";
 import { parseQuickAdd } from "@/lib/quickparse";
 import type { TaskDraft, TaskListFilter } from "@/lib/types";
@@ -37,6 +37,7 @@ const draftSchema = z.object({
   title: z.string(),
   notes: z.string().optional(),
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  space: z.enum(["personal", "joint"]).optional(),
   dueAt: z.string().nullable().optional(),
   dueKind: z.enum(["on", "by"]).optional(),
   allDay: z.boolean().optional(),
@@ -50,6 +51,7 @@ const draftSchema = z.object({
 export async function GET(req: NextRequest) {
   const gate = await requireSession();
   if (gate) return gate;
+  const role = (await sessionRole()) ?? "owner";
 
   const { searchParams } = new URL(req.url);
   const filter: TaskListFilter = {};
@@ -63,6 +65,9 @@ export async function GET(req: NextRequest) {
   if (q) filter.q = q;
   if (searchParams.get("includeDone") === "1") filter.includeDone = true;
   if (searchParams.get("excludeProjects") === "1") filter.excludeProjects = true;
+  if (searchParams.get("space") === "joint") filter.space = "joint";
+  // A partner session sees exactly one list, whatever it asked for.
+  if (role === "partner") filter.space = "joint";
 
   return NextResponse.json({ tasks: tasksRepo.list(filter) });
 }
@@ -70,6 +75,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await requireSession();
   if (gate) return gate;
+  const role = (await sessionRole()) ?? "owner";
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -87,6 +93,7 @@ export async function POST(req: NextRequest) {
       typeof capturedAtRaw === "string" ? new Date(capturedAtRaw) : undefined;
     const { draft: quickDraft, matchedText } = parseQuickAdd(quick, settings.tz, capturedAt);
     draft = quickDraft;
+    if ((body as Record<string, unknown>).space === "joint") draft.space = "joint";
     if (matchedText.project) {
       const project =
         projectsRepo.findByName(matchedText.project) ?? projectsRepo.create({ name: matchedText.project });
@@ -104,5 +111,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
   }
 
-  return NextResponse.json({ task: tasksRepo.create(draft) });
+  // Partner sessions write only to the joint list, and never into projects.
+  if (role === "partner") {
+    draft.space = "joint";
+    draft.projectId = null;
+    draft.parentId = null;
+  }
+
+  return NextResponse.json({ task: tasksRepo.create(draft, role) });
 }

@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { motion } from "framer-motion";
-import { fetcher, keys } from "@/lib/api";
+import { authApi, fetcher, keys } from "@/lib/api";
 import type { InboxItem, StatsSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -30,19 +30,31 @@ const TAB_ORDER = ["/today", "/upcoming", "/inbox"];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
 
+  const { data: me } = useSWR<{ role: "owner" | "partner" }>(keys.me(), fetcher);
+  const partner = me?.role === "partner";
+  // Owner-only fetches wait until the role is actually known.
+  const owner = me?.role === "owner";
+
   const { data: inbox } = useSWR<{ items: InboxItem[]; newCount: number }>(
-    keys.inbox("new"),
+    owner ? keys.inbox("new") : null,
     fetcher,
     { refreshInterval: 180_000 },
   );
-  const { data: stats } = useSWR<StatsSummary>(keys.stats(), fetcher);
+  const { data: stats } = useSWR<StatsSummary>(owner ? keys.stats() : null, fetcher);
+
+  // A partner session lives on the joint tab; everything else redirects there.
+  useEffect(() => {
+    if (partner && !pathname.startsWith("/joint")) router.replace("/joint");
+  }, [partner, pathname, router]);
 
   const newCount = inbox?.newCount ?? 0;
   const streak = stats?.streakDays ?? 0;
-  const hideFab = pathname.startsWith("/assistant") || pathname.startsWith("/voice");
+  const hideFab =
+    partner || pathname.startsWith("/assistant") || pathname.startsWith("/voice");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -56,6 +68,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => setMoreOpen(false), [pathname]);
+
+  if (partner) {
+    return (
+      <div className="min-h-dvh bg-bg">
+        <OfflineBanner />
+        <main className="pb-24">{children}</main>
+        <PartnerBar
+          onSignOut={async () => {
+            try {
+              await authApi.logout();
+            } catch {
+              /* signing out locally regardless */
+            }
+            window.location.href = "/login";
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-bg">
@@ -306,5 +337,37 @@ function MoreSheet({
         />
       </div>
     </Sheet>
+  );
+}
+
+function PartnerBar({ onSignOut }: { onSignOut: () => void }) {
+  const { theme, setTheme } = useTheme();
+  const next = theme === "dark" ? "light" : "dark";
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-md items-center justify-between px-6 py-2.5 pb-safe">
+        <span className="text-[13px] font-semibold tracking-tight text-ink">
+          Done<span className="text-sunrise">X</span>
+          <span className="ml-2 font-normal text-muted">shared list</span>
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTheme(next)}
+            aria-label="Switch theme"
+            className="grid h-10 w-10 place-items-center rounded-full text-muted transition-colors hover:text-ink"
+          >
+            {theme === "dark" ? <IconSun className="h-5 w-5" /> : <IconMoon className="h-5 w-5" />}
+          </button>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="min-h-[40px] rounded-full px-3 text-[13px] font-medium text-muted transition-colors hover:text-ink"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </nav>
   );
 }

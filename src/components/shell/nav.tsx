@@ -5,6 +5,7 @@ import {
   IconChat,
   IconFolder,
   IconInbox,
+  IconLink,
   IconLogbook,
   IconMapPin,
   IconNote,
@@ -21,6 +22,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/today", label: "Today", Icon: IconSun },
   { href: "/upcoming", label: "Upcoming", Icon: IconCalendar },
+  { href: "/joint", label: "Ours", Icon: IconLink },
   { href: "/assistant", label: "Assistant", Icon: IconChat },
   { href: "/notes", label: "Notes", Icon: IconNote },
   { href: "/projects", label: "Projects", Icon: IconFolder },
@@ -33,7 +35,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 // Inbox lives in the bottom tab bar; Notes moved in here to make room.
 export const MORE_ITEMS: NavItem[] = NAV_ITEMS.filter((i) =>
-  ["/notes", "/projects", "/nearby", "/logbook", "/review", "/settings"].includes(i.href),
+  ["/joint", "/notes", "/projects", "/nearby", "/logbook", "/review", "/settings"].includes(i.href),
 );
 
 export function isActive(pathname: string, href: string): boolean {

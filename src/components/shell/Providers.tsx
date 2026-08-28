@@ -9,8 +9,9 @@ import { ConfirmProvider } from "@/components/ui/Confirm";
 import { ThemeProvider } from "./ThemeProvider";
 import { UpdateBanner } from "./UpdateBanner";
 
-/** Quietly expected statuses that pages handle with their own inline UI. */
-const SILENT = new Set([401, 409]);
+/** Quietly expected statuses that pages handle with their own inline UI.
+ *  403 = a partner session touching an owner surface — by design, not news. */
+const SILENT = new Set([401, 403, 409]);
 
 function SWRBridge({ children }: { children: ReactNode }) {
   const toast = useToast();

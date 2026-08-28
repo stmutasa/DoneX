@@ -51,12 +51,14 @@ export function buildTaskDigest(tz: string, todayKey: string): string {
     .list({ view: "upcoming" })
     .filter((t) => !todayIds.has(t.id) && t.dueAt !== null && instantOf(t.dueAt) < weekEnd);
   const anytime = tasksRepo.list({ view: "anytime" });
+  const joint = tasksRepo.list({ space: "joint" });
 
   const sections: { heading: string; tasks: Task[]; cap: number }[] = [
     { heading: "OVERDUE", tasks: overdue, cap: 10 },
     { heading: "ON TODAY'S LIST (due today + live deadlines)", tasks: dueToday, cap: 14 },
     { heading: "NEXT 7 DAYS", tasks: upcoming, cap: 12 },
     { heading: "ANYTIME (no date)", tasks: anytime, cap: 8 },
+    { heading: "JOINT LIST (shared with the partner)", tasks: joint, cap: 8 },
   ];
 
   const lines: string[] = [];

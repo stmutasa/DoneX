@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { completionsRepo, settingsRepo } from "@/lib/db/repos";
 import { addDaysToDateKey, clamp, localDateKey } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const days = clamp(Number(req.nextUrl.searchParams.get("days")) || 30, 1, 365);

@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
-  user_agent TEXT DEFAULT ''
+  user_agent TEXT DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'owner'
 );
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -30,6 +31,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority INTEGER DEFAULT 0,
   due_at TEXT,
   due_kind TEXT NOT NULL DEFAULT 'on',
+  space TEXT NOT NULL DEFAULT 'personal',
+  created_by TEXT NOT NULL DEFAULT 'owner',
   all_day INTEGER DEFAULT 0,
   project_id TEXT,
   tags TEXT DEFAULT '[]',
@@ -109,7 +112,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, create
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT PRIMARY KEY,
   subscription TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'owner'
 );
 CREATE TABLE IF NOT EXISTS triage_feedback (
   id TEXT PRIMARY KEY,
@@ -144,6 +148,22 @@ function migrate(db: Database.Database): void {
   }
   if (!taskCols.has("due_kind")) {
     db.exec("ALTER TABLE tasks ADD COLUMN due_kind TEXT NOT NULL DEFAULT 'on'");
+  }
+  if (!taskCols.has("space")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN space TEXT NOT NULL DEFAULT 'personal'");
+    db.exec("ALTER TABLE tasks ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
+  }
+  const sessionCols = new Set(
+    (db.pragma("table_info(sessions)") as { name: string }[]).map((c) => c.name)
+  );
+  if (!sessionCols.has("role")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'");
+  }
+  const pushCols = new Set(
+    (db.pragma("table_info(push_subscriptions)") as { name: string }[]).map((c) => c.name)
+  );
+  if (!pushCols.has("role")) {
+    db.exec("ALTER TABLE push_subscriptions ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'");
   }
 }
 

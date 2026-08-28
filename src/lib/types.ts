@@ -12,6 +12,12 @@ export type Priority = 0 | 1 | 2 | 3; // 0 none · 1 low · 2 medium · 3 high
 
 export type TaskStatus = "open" | "done";
 
+/** Which list a task lives on: yours, or the one shared with your partner. */
+export type TaskSpace = "personal" | "joint";
+
+/** Who a signed-in session belongs to. */
+export type SessionRole = "owner" | "partner";
+
 export interface RecurrenceRule {
   freq: "daily" | "weekly" | "monthly" | "yearly";
   /** every N units, default 1 */
@@ -34,6 +40,9 @@ export interface Task {
   title: string;
   notes: string;
   status: TaskStatus;
+  space: TaskSpace;
+  /** who created it — meaningful on the joint list */
+  createdBy: SessionRole;
   priority: Priority;
   /** ISO datetime (UTC) or null. If allDay, time component is 00:00 local encoded at creation. */
   dueAt: string | null;
@@ -57,6 +66,7 @@ export interface Task {
 export interface TaskDraft {
   title: string;
   notes?: string;
+  space?: TaskSpace;
   priority?: Priority;
   dueAt?: string | null;
   dueKind?: "on" | "by";
@@ -78,6 +88,8 @@ export interface TaskListFilter {
   includeDone?: boolean;
   /** hide anything filed under a project — project work lives on its own tab */
   excludeProjects?: boolean;
+  /** which list; repo defaults to "personal" so joint tasks never leak in */
+  space?: TaskSpace;
   /** ISO date bound for scheduler queries */
   dueBefore?: string;
 }
@@ -284,6 +296,18 @@ export interface LastLocation {
   at: string; // ISO
 }
 
+/** The shared list: a second PIN that opens ONLY the joint tab. */
+export interface JointSettings {
+  /** "" = joint list not set up */
+  partnerPinHash: string;
+  ownerName: string;
+  partnerName: string;
+  /** ICS feed for the owner's calendar ("" = use the Google connection) */
+  ownerIcsUrl: string;
+  /** ICS feed for the partner's calendar */
+  partnerIcsUrl: string;
+}
+
 export interface AppSettings {
   pinHash: string; // "" until setup
   tz: string; // IANA, e.g. "America/New_York"
@@ -292,6 +316,7 @@ export interface AppSettings {
   voice: VoiceSettings;
   notifications: NotificationSettings;
   google: GoogleSettings;
+  joint: JointSettings;
   ingestToken: string;
   /** master switch for the SMS webhook — off rejects every forwarded text */
   smsCaptureEnabled: boolean;
@@ -302,8 +327,13 @@ export interface AppSettings {
 
 /** GET /api/settings — secrets replaced by presence markers */
 export interface MaskedSettings
-  extends Omit<AppSettings, "pinHash" | "ai" | "google" | "vapid"> {
+  extends Omit<AppSettings, "pinHash" | "ai" | "google" | "vapid" | "joint"> {
   hasPin: boolean;
+  joint: Omit<JointSettings, "partnerPinHash" | "ownerIcsUrl" | "partnerIcsUrl"> & {
+    partnerPinSet: boolean;
+    ownerIcsSet: boolean;
+    partnerIcsSet: boolean;
+  };
   ai: Omit<AISettings, "openaiKey" | "anthropicKey" | "customKey"> & {
     openaiKey: SecretMark;
     anthropicKey: SecretMark;

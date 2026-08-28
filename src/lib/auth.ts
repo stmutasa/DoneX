@@ -43,9 +43,9 @@ export function recordLoginAttempt(): void {
 
 // ── Session helpers ────────────────────────────────────────────────────────
 
-export async function createSession(): Promise<void> {
+export async function createSession(role: "owner" | "partner" = "owner"): Promise<void> {
   const h = await headers();
-  const token = sessionsRepo.create(h.get("user-agent") ?? "");
+  const token = sessionsRepo.create(h.get("user-agent") ?? "", role);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -69,6 +69,13 @@ export async function isAuthed(): Promise<boolean> {
   return !!token && sessionsRepo.verify(token);
 }
 
+/** Role of the signed-in session, or null when signed out. */
+export async function sessionRole(): Promise<"owner" | "partner" | null> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  return token ? sessionsRepo.roleOf(token) : null;
+}
+
 export type AuthState = "setup" | "login" | "ok";
 
 /** For server components: which gate applies right now */
@@ -84,5 +91,18 @@ export async function getAuthState(): Promise<AuthState> {
  */
 export async function requireSession(): Promise<NextResponse | null> {
   if (await isAuthed()) return null;
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+/**
+ * Owner-only routes — everything except the joint task surface. A partner
+ * session gets a 403 the UI reads as "not yours to see".
+ */
+export async function requireOwner(): Promise<NextResponse | null> {
+  const role = await sessionRole();
+  if (role === "owner") return null;
+  if (role === "partner") {
+    return NextResponse.json({ error: "This part is not shared" }, { status: 403 });
+  }
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }

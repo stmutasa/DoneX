@@ -46,10 +46,13 @@ function toSubscription(raw: Record<string, unknown>): PushSubscription | null {
   return { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } };
 }
 
-/** Fan-out to every stored subscription. Never throws; returns deliveries sent. */
-export async function sendPushToAll(payload: PushPayload): Promise<number> {
+/** Fan-out to stored subscriptions (optionally one role's). Never throws. */
+export async function sendPushToAll(
+  payload: PushPayload,
+  roles?: ("owner" | "partner")[]
+): Promise<number> {
   try {
-    const rows = pushRepo.list();
+    const rows = pushRepo.list(roles);
     if (rows.length === 0) return 0;
 
     const { publicKey, privateKey } = ensureVapid();

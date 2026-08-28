@@ -61,6 +61,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     gmailQuery: "",
     mapsApiKey: "",
   },
+  joint: { partnerPinHash: "", ownerName: "", partnerName: "", ownerIcsUrl: "", partnerIcsUrl: "" },
   lastLocation: null,
   ingestToken: "",
   smsCaptureEnabled: true,
@@ -123,12 +124,24 @@ export const settingsRepo = {
 // ── Sessions ───────────────────────────────────────────────────────────────
 
 export const sessionsRepo = {
-  create(userAgent: string): string {
+  create(userAgent: string, role: "owner" | "partner" = "owner"): string {
     const token = crypto.randomBytes(32).toString("hex");
     getDb()
-      .prepare("INSERT INTO sessions(token, created_at, last_seen_at, user_agent) VALUES(?,?,?,?)")
-      .run(token, nowIso(), nowIso(), userAgent.slice(0, 300));
+      .prepare(
+        "INSERT INTO sessions(token, created_at, last_seen_at, user_agent, role) VALUES(?,?,?,?,?)"
+      )
+      .run(token, nowIso(), nowIso(), userAgent.slice(0, 300), role);
     return token;
+  },
+  /** null = no such session */
+  roleOf(token: string): "owner" | "partner" | null {
+    if (!token) return null;
+    const row = getDb().prepare("SELECT role FROM sessions WHERE token=?").get(token) as
+      | { role: string }
+      | undefined;
+    if (!row) return null;
+    getDb().prepare("UPDATE sessions SET last_seen_at=? WHERE token=?").run(nowIso(), token);
+    return row.role === "partner" ? "partner" : "owner";
   },
   verify(token: string): boolean {
     if (!token) return false;
@@ -152,6 +165,8 @@ interface TaskRow {
   title: string;
   notes: string;
   status: string;
+  space: string;
+  created_by: string;
   priority: number;
   due_at: string | null;
   due_kind: string;
@@ -174,6 +189,8 @@ function rowToTask(r: TaskRow): Task {
     title: r.title,
     notes: r.notes,
     status: r.status as Task["status"],
+    space: r.space === "joint" ? "joint" : "personal",
+    createdBy: r.created_by === "partner" ? "partner" : "owner",
     priority: r.priority as Task["priority"],
     dueAt: r.due_at,
     dueKind: r.due_kind === "by" ? "by" : "on",
@@ -227,8 +244,8 @@ export const tasksRepo = {
     const todayKey = localDateKey(new Date(), tz);
     const tomorrowStartIso = isoStartOfLocalDay(addDaysToDateKey(todayKey, 1), tz);
 
-    const where: string[] = ["parent_id IS NULL"];
-    const params: unknown[] = [];
+    const where: string[] = ["parent_id IS NULL", "space = ?"];
+    const params: unknown[] = [filter.space === "joint" ? "joint" : "personal"];
 
     if (filter.view === "today") {
       // open tasks due before tomorrow (today + overdue), plus live "by"
@@ -293,19 +310,21 @@ export const tasksRepo = {
     return tasks;
   },
 
-  create(draft: TaskDraft): Task {
+  create(draft: TaskDraft, createdBy: "owner" | "partner" = "owner"): Task {
     const id = newId();
     const now = nowIso();
     getDb()
       .prepare(
-        `INSERT INTO tasks(id,title,notes,status,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO tasks(id,title,notes,status,space,created_by,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         id,
         draft.title.trim(),
         draft.notes ?? "",
         "open",
+        draft.space === "joint" ? "joint" : "personal",
+        createdBy,
         draft.priority ?? 0,
         draft.dueAt ?? null,
         draft.dueKind === "by" ? "by" : "on",
@@ -430,7 +449,7 @@ export const tasksRepo = {
     const rows = getDb()
       .prepare(
         `SELECT * FROM tasks WHERE status='open' AND parent_id IS NULL
-         AND project_id IS NULL AND location IS NOT NULL LIMIT 200`
+         AND space='personal' AND project_id IS NULL AND location IS NOT NULL LIMIT 200`
       )
       .all() as TaskRow[];
     return rows.map(rowToTask);
@@ -438,7 +457,7 @@ export const tasksRepo = {
 
   allTags(): string[] {
     const rows = getDb()
-      .prepare("SELECT tags FROM tasks WHERE status='open'")
+      .prepare("SELECT tags FROM tasks WHERE status='open' AND space='personal'")
       .all() as { tags: string }[];
     const set = new Set<string>();
     for (const r of rows) {
@@ -453,13 +472,13 @@ export const tasksRepo = {
     const startToday = isoStartOfLocalDay(todayKey, settings.tz);
     const open = (
       getDb()
-        .prepare("SELECT COUNT(*) c FROM tasks WHERE status='open' AND parent_id IS NULL")
+        .prepare("SELECT COUNT(*) c FROM tasks WHERE status='open' AND parent_id IS NULL AND space='personal'")
         .get() as { c: number }
     ).c;
     const overdue = (
       getDb()
         .prepare(
-          "SELECT COUNT(*) c FROM tasks WHERE status='open' AND parent_id IS NULL AND due_at IS NOT NULL AND due_at < ?"
+          "SELECT COUNT(*) c FROM tasks WHERE status='open' AND parent_id IS NULL AND space='personal' AND due_at IS NOT NULL AND due_at < ?"
         )
         .get(startToday) as { c: number }
     ).c;
@@ -508,7 +527,7 @@ export const completionsRepo = {
       .prepare(
         `SELECT c.task_id, c.title, c.completed_at, c.date_local
          FROM completions c LEFT JOIN tasks t ON t.id = c.task_id
-         WHERE c.date_local >= ? AND c.date_local <= ? AND t.project_id IS NULL
+         WHERE c.date_local >= ? AND c.date_local <= ? AND t.project_id IS NULL AND (t.space IS NULL OR t.space='personal')
          ORDER BY c.completed_at DESC LIMIT 500`
       )
       .all(fromKey, toKey) as { task_id: string; title: string; completed_at: string; date_local: string }[];
@@ -1011,20 +1030,30 @@ export const conversationsRepo = {
 // ── Push subscriptions ─────────────────────────────────────────────────────
 
 export const pushRepo = {
-  add(subscription: { endpoint: string } & Record<string, unknown>): void {
+  add(
+    subscription: { endpoint: string } & Record<string, unknown>,
+    role: "owner" | "partner" = "owner"
+  ): void {
     getDb()
       .prepare(
-        `INSERT INTO push_subscriptions(endpoint,subscription,created_at) VALUES(?,?,?)
-         ON CONFLICT(endpoint) DO UPDATE SET subscription=excluded.subscription`
+        `INSERT INTO push_subscriptions(endpoint,subscription,created_at,role) VALUES(?,?,?,?)
+         ON CONFLICT(endpoint) DO UPDATE SET subscription=excluded.subscription, role=excluded.role`
       )
-      .run(subscription.endpoint, JSON.stringify(subscription), nowIso());
+      .run(subscription.endpoint, JSON.stringify(subscription), nowIso(), role);
   },
-  list(): { endpoint: string; subscription: Record<string, unknown> }[] {
-    const rows = getDb().prepare("SELECT * FROM push_subscriptions").all() as {
+  list(roles?: ("owner" | "partner")[]): {
+    endpoint: string;
+    subscription: Record<string, unknown>;
+  }[] {
+    const all = getDb().prepare("SELECT * FROM push_subscriptions").all() as {
       endpoint: string;
       subscription: string;
+      role: string;
     }[];
-    return rows.map((r) => ({ endpoint: r.endpoint, subscription: JSON.parse(r.subscription) }));
+    const wanted = roles ?? ["owner", "partner"];
+    return all
+      .filter((r) => wanted.includes(r.role === "partner" ? "partner" : "owner"))
+      .map((r) => ({ endpoint: r.endpoint, subscription: JSON.parse(r.subscription) }));
   },
   remove(endpoint: string): void {
     getDb().prepare("DELETE FROM push_subscriptions WHERE endpoint=?").run(endpoint);

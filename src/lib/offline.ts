@@ -123,6 +123,8 @@ export function synthesizeTask(body: Record<string, unknown>, offlineId: string)
     title: (draft.title ?? "").toString().trim() || "New task",
     notes: draft.notes ?? "",
     status: "open",
+    space: (body.space === "joint" ? "joint" : "personal") as Task["space"],
+    createdBy: "owner",
     priority: draft.priority ?? 0,
     dueAt: draft.dueAt ?? null,
     dueKind: draft.dueKind === "by" ? "by" : "on",
@@ -196,10 +198,10 @@ export function enqueueFailedRequest(
 
 // ── Overlay: replay the queue on top of (possibly stale) reads ─────────────
 
-function parseView(key: string): string | null {
+function parseParam(key: string, name: string): string | null {
   const q = key.split("?")[1];
   if (!q) return null;
-  return new URLSearchParams(q).get("view");
+  return new URLSearchParams(q).get(name);
 }
 
 function startOfTomorrowIso(): string {
@@ -222,13 +224,19 @@ export function applyOps<T>(key: string, data: T, ops: OutboxOp[]): T {
   const record = data as { tasks?: Task[] } | null | undefined;
   if (!record || !Array.isArray(record.tasks)) return data;
 
-  const view = parseView(key);
+  const view = parseParam(key, "view");
+  const keySpace = parseParam(key, "space") === "joint" ? "joint" : "personal";
   let tasks = record.tasks.slice();
 
   for (const op of ops) {
     if (op.kind === "task-create" && op.synth) {
       const exists = tasks.some((t) => t.id === op.synth!.id);
-      if (!exists && op.synth.parentId === null && belongsInView(op.synth, view)) {
+      if (
+        !exists &&
+        op.synth.parentId === null &&
+        op.synth.space === keySpace &&
+        belongsInView(op.synth, view)
+      ) {
         tasks = [op.synth, ...tasks];
       }
     } else if (op.kind === "task-complete") {

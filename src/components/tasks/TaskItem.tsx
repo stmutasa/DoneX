@@ -27,11 +27,14 @@ export function TaskItem({
   project,
   onOpen,
   showProject = true,
+  attribution,
 }: {
   task: Task;
   project?: Project;
   onOpen?: (task: Task) => void;
   showProject?: boolean;
+  /** joint list: names to attribute tasks to */
+  attribution?: { owner: string; partner: string };
 }) {
   const { complete } = useTaskMutations();
   const [done, setDone] = useState(task.status === "done");
@@ -147,6 +150,12 @@ export function TaskItem({
               #{t}
             </span>
           ))}
+
+          {attribution ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+              {task.createdBy === "partner" ? attribution.partner : attribution.owner}
+            </span>
+          ) : null}
 
           {priority > 0 ? (
             <span

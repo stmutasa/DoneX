@@ -185,6 +185,7 @@ function compactTask(task: Task, tz: string): Record<string, unknown> {
     due: task.dueAt ? describeDue(task.dueAt, task.allDay, tz) : null,
     dueAt: task.dueAt,
     dueKind: task.dueKind,
+    list: task.space,
     priority: task.priority,
     project: projectName(task.projectId),
     tags: task.tags,
@@ -205,6 +206,12 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
     type: "string",
     description:
       "Due moment as ISO 8601 (e.g. 2026-08-09T15:00) or YYYY-MM-DD for an all-day task. Use null to clear.",
+  },
+  space: {
+    type: "string",
+    enum: ["personal", "joint"],
+    description:
+      '"joint" = the list shared with the user\'s partner ("our list", "the joint list", "for us"). Default "personal".',
   },
   dueKind: {
     type: "string",
@@ -281,6 +288,7 @@ export const TOOLS: ToolSpec[] = [
       const task = tasksRepo.create({
         title,
         notes: readString(args, "notes") ?? "",
+        space: readString(args, "space") === "joint" ? "joint" : "personal",
         dueAt: due?.dueAt ?? null,
         dueKind: readString(args, "dueKind") === "by" ? "by" : "on",
         allDay,
@@ -334,6 +342,8 @@ export const TOOLS: ToolSpec[] = [
       }
       const dueKind = readString(args, "dueKind");
       if (dueKind === "by" || dueKind === "on") patch.dueKind = dueKind;
+      const space = readString(args, "space");
+      if (space === "joint" || space === "personal") patch.space = space;
       const priority = readPriority(args);
       if (priority !== undefined) patch.priority = priority;
       const project = readString(args, "projectName");
@@ -429,6 +439,11 @@ export const TOOLS: ToolSpec[] = [
         q: { type: "string", description: "Text search over title and notes" },
         projectName: { type: "string" },
         tag: { type: "string" },
+        list: {
+          type: "string",
+          enum: ["personal", "joint"],
+          description: 'Which list to search. "joint" = the shared list. Default personal.',
+        },
         includeDone: { type: "boolean" },
       },
     },
@@ -452,6 +467,7 @@ export const TOOLS: ToolSpec[] = [
         q: readString(args, "q"),
         projectId: project?.id,
         tag: readString(args, "tag"),
+        space: readString(args, "list") === "joint" ? "joint" : "personal",
         includeDone: readBoolean(args, "includeDone") ?? false,
       });
       const trimmed = tasks.slice(0, 60);

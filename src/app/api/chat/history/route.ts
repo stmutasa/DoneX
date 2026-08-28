@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { conversationsRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const id = new URL(req.url).searchParams.get("conversationId");

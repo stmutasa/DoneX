@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { notesRepo } from "@/lib/db/repos";
 import { NOTE_COLORS } from "@/lib/types";
 
@@ -23,7 +23,7 @@ const patchSchema = z.object({
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 
@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   const { id } = await params;
 

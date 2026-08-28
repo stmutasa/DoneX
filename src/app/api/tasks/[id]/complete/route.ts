@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireSession, sessionRole } from "@/lib/auth";
 import { tasksRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const gate = await requireSession();
   if (gate) return gate;
   const { id } = await params;
+  if (((await sessionRole()) ?? "owner") === "partner" && tasksRepo.get(id)?.space !== "joint") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {

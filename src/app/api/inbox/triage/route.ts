@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { aiConfigured, sweepAutoDismissable, triageInboxItem } from "@/lib/ai";
 import { inboxRepo } from "@/lib/db/repos";
 import { mapLimit } from "@/lib/utils";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({ id: z.string().min(1).optional() });
 
 export async function POST(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
   if (!aiConfigured()) return NextResponse.json({ error: "AI not configured" }, { status: 409 });
 

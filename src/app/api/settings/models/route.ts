@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { listModels } from "@/lib/ai";
 import { settingsRepo } from "@/lib/db/repos";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const providerSchema = z.enum(["openai", "anthropic", "custom"]);
 
 export async function GET(req: Request): Promise<Response> {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const settings = settingsRepo.getApp();

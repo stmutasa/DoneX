@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireOwner } from "@/lib/auth";
 import { exportAll, settingsRepo } from "@/lib/db/repos";
 import { localDateKey } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const gate = await requireSession();
+  const gate = await requireOwner();
   if (gate) return gate;
 
   const data = exportAll();
