@@ -167,9 +167,10 @@ shared list.
 
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
 with their calendar, color-coded per person, next 7 days, plus any dated
-shared tasks. Their calendar connects with one link: on iPhone, iCloud
-Calendar → share → Public Calendar → paste that link in Settings → Shared
-list. (Google Calendar works too, via its "secret address in iCal format".)
+shared tasks. Their calendar connects with one link — Settings → Shared list
+has a picker with exact steps for both kinds: **iPhone/iCloud** (Calendar →
+Public Calendar → Share Link) or **Google Calendar** (Integrate calendar →
+secret iCal address). Whichever she uses, paste the link and it syncs.
 
 ---
 

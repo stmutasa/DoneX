@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
+import { Segmented } from "@/components/ui/Segmented";
 import { Divider, SettingsCard, useSettingsPatch, type SectionProps } from "./common";
 
 /**
@@ -24,6 +25,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
   const [saving, setSaving] = useState(false);
   const [ownerIcs, setOwnerIcs] = useState("");
   const [partnerIcs, setPartnerIcs] = useState("");
+  const [partnerCalKind, setPartnerCalKind] = useState<"icloud" | "google">("icloud");
 
   const enabled = settings.joint.partnerPinSet;
   const pinValid = /^\d{4,8}$/.test(pin);
@@ -140,13 +142,27 @@ export function JointSection({ settings, mutate }: SectionProps) {
           <div>
             <div className="text-[15px] text-ink">Joint calendar feeds</div>
             <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
-              The Ours tab merges both calendars. Yours uses the Google connection
-              automatically{settings.joint.ownerIcsSet ? " (overridden by the feed below)" : ""};
-              paste an iCal/ICS link for {settings.joint.partnerName || "your partner"} — iPhone:
-              iCloud Calendar → share calendar → Public Calendar → copy the webcal link. Google:
-              calendar settings → “Secret address in iCal format”.
+              The Ours tab merges both calendars. Yours uses your Google connection
+              automatically{settings.joint.ownerIcsSet ? " (overridden by the feed below)" : ""}.
+              For {settings.joint.partnerName || "your partner"}, pick where their calendar
+              lives and paste its link — either kind syncs the same way.
             </p>
             <div className="mt-3 space-y-3">
+              <Segmented
+                size="sm"
+                ariaLabel="Partner calendar kind"
+                value={partnerCalKind}
+                onChange={setPartnerCalKind}
+                options={[
+                  { value: "icloud" as const, label: "iPhone / iCloud" },
+                  { value: "google" as const, label: "Google Calendar" },
+                ]}
+              />
+              <p className="text-[12px] leading-snug text-faint">
+                {partnerCalKind === "icloud"
+                  ? "On their iPhone: Calendar app → Calendars → ⓘ next to their calendar → Public Calendar → Share Link → copy, then paste it here."
+                  : "On calendar.google.com: Settings → their calendar → Integrate calendar → copy the “Secret address in iCal format”, then paste it here. Their events stay private to you two."}
+              </p>
               <Input
                 label={`${settings.joint.partnerName || "Partner"}'s calendar link`}
                 placeholder={settings.joint.partnerIcsSet ? "Saved — paste to replace" : "webcal://… or https://…ics"}
