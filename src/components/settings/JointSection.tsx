@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { authApi } from "@/lib/api";
+import { authApi, jointApi, type CalendarTestResult } from "@/lib/api";
 import { JOINT_COLOR_IDS, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -13,9 +13,12 @@ import { Segmented } from "@/components/ui/Segmented";
 import { IconCheck } from "@/components/ui/icons";
 import { Divider, SettingsCard, useSettingsPatch, type SectionProps } from "./common";
 
+type PartnerCalKind = "shared" | "icloud" | "google";
+
 /**
- * The shared list: names for the two of you, and the partner PIN that opens
- * the joint tab (and nothing else) on the other phone.
+ * The shared list: names for the two of you, the partner PIN that opens the
+ * joint tab (and nothing else) on the other phone, and how her calendar
+ * reaches the joint view.
  */
 export function JointSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
@@ -28,7 +31,12 @@ export function JointSection({ settings, mutate }: SectionProps) {
   const [saving, setSaving] = useState(false);
   const [ownerIcs, setOwnerIcs] = useState("");
   const [partnerIcs, setPartnerIcs] = useState("");
-  const [partnerCalKind, setPartnerCalKind] = useState<"icloud" | "google">("icloud");
+  const [partnerCalKind, setPartnerCalKind] = useState<PartnerCalKind>(
+    settings.joint.partnerGoogleId ? "shared" : settings.joint.partnerIcsSet ? "icloud" : "shared",
+  );
+  const [partnerGoogleId, setPartnerGoogleId] = useState(settings.joint.partnerGoogleId);
+  const [testing, setTesting] = useState<"owner" | "partner" | null>(null);
+  const [testResult, setTestResult] = useState<(CalendarTestResult & { side: string }) | null>(null);
   const [ownerColor, setOwnerColor] = useState<JointColorId>(
     normalizeJointColor(settings.joint.ownerColor, "blue"),
   );
@@ -44,6 +52,21 @@ export function JointSection({ settings, mutate }: SectionProps) {
       { joint: { ownerName: ownerName.trim(), partnerName: partnerName.trim() } },
       "Names saved",
     );
+
+  const partnerLabel = partnerName.trim() || settings.joint.partnerName || "your partner";
+
+  const runTest = async (side: "owner" | "partner") => {
+    setTesting(side);
+    setTestResult(null);
+    try {
+      const res = await jointApi.testCalendar(side);
+      setTestResult({ ...res, side: side === "owner" ? "Yours" : partnerLabel });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not test that calendar");
+    } finally {
+      setTesting(null);
+    }
+  };
 
   const pickOwnerColor = (id: JointColorId) => {
     setOwnerColor(id);
@@ -170,12 +193,12 @@ export function JointSection({ settings, mutate }: SectionProps) {
           <Divider />
 
           <div>
-            <div className="text-[15px] text-ink">Joint calendar feeds</div>
+            <div className="text-[15px] text-ink">Joint calendar</div>
             <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
               The Ours tab merges both calendars. Yours uses your Google connection
-              automatically{settings.joint.ownerIcsSet ? " (overridden by the feed below)" : ""}.
-              For {settings.joint.partnerName || "your partner"}, pick where their calendar
-              lives and paste its link — either kind syncs the same way.
+              automatically{settings.joint.ownerIcsSet ? " (overridden by the link below)" : ""}.
+              For {partnerLabel}, pick how their calendar reaches DoneX — none of these
+              make a calendar public.
             </p>
             <div className="mt-3 space-y-3">
               <Segmented
@@ -184,25 +207,75 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 value={partnerCalKind}
                 onChange={setPartnerCalKind}
                 options={[
-                  { value: "icloud" as const, label: "iPhone / iCloud" },
-                  { value: "google" as const, label: "Google Calendar" },
+                  { value: "shared" as const, label: "Shared with you" },
+                  { value: "icloud" as const, label: "iPhone link" },
+                  { value: "google" as const, label: "Google link" },
                 ]}
               />
               <p className="text-[12px] leading-snug text-faint">
-                {partnerCalKind === "icloud"
-                  ? "On their iPhone: Calendar app → Calendars → ⓘ next to their calendar → Public Calendar → Share Link → copy, then paste it here."
-                  : "On calendar.google.com: Settings → their calendar → Integrate calendar → copy the “Secret address in iCal format”, then paste it here. Their events stay private to you two."}
+                {partnerCalKind === "shared"
+                  ? `Best option, and nothing gets published. On her phone: Google Calendar → ☰ → Settings → her calendar → Share with specific people → add your Google address with “See all event details”. Then put that same address of hers below — DoneX reads her calendar through your own Google connection, and she can un-share any time.`
+                  : partnerCalKind === "icloud"
+                    ? "On her iPhone: Calendar app → Calendars → ⓘ next to her calendar → Public Calendar → Share Link → copy, then paste it below."
+                    : "On a computer at calendar.google.com: Settings → her calendar → Integrate calendar → copy the “Secret address in iCal format” (the private one, NOT the public address), then paste it below."}
               </p>
-              <Input
-                label={`${settings.joint.partnerName || "Partner"}'s calendar link`}
-                placeholder={settings.joint.partnerIcsSet ? "Saved — paste to replace" : "webcal://… or https://…ics"}
-                value={partnerIcs}
-                onChange={(e) => setPartnerIcs(e.target.value)}
-                onBlur={() => {
-                  const v = partnerIcs.trim();
-                  if (v) void patch({ joint: { partnerIcsUrl: v } }, "Partner calendar linked");
-                }}
-              />
+
+              {partnerCalKind === "shared" ? (
+                <Input
+                  label={`${partnerLabel}'s Google address`}
+                  placeholder="her.name@gmail.com"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  value={partnerGoogleId}
+                  onChange={(e) => setPartnerGoogleId(e.target.value.trim())}
+                  onBlur={() => {
+                    const v = partnerGoogleId.trim();
+                    if (!v || v === settings.joint.partnerGoogleId) return;
+                    // A pasted link would otherwise keep winning over the address.
+                    void patch(
+                      { joint: { partnerGoogleId: v, partnerIcsUrl: "__clear__" } },
+                      "Saved — now tap Test",
+                    );
+                  }}
+                />
+              ) : (
+                <Input
+                  label={`${partnerLabel}'s calendar link`}
+                  placeholder={
+                    settings.joint.partnerIcsSet ? "Saved — paste to replace" : "webcal://… or https://…ics"
+                  }
+                  value={partnerIcs}
+                  onChange={(e) => setPartnerIcs(e.target.value)}
+                  onBlur={() => {
+                    const v = partnerIcs.trim();
+                    if (!v) return;
+                    void patch(
+                      { joint: { partnerIcsUrl: v, partnerGoogleId: "__clear__" } },
+                      "Saved — now tap Test",
+                    );
+                  }}
+                />
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" loading={testing === "partner"} onClick={() => void runTest("partner")}>
+                  Test {partnerLabel}&apos;s calendar
+                </Button>
+                <Button size="sm" loading={testing === "owner"} onClick={() => void runTest("owner")}>
+                  Test yours
+                </Button>
+              </div>
+              {testResult ? (
+                <p
+                  className={cn(
+                    "rounded-2xl border border-stroke bg-sunken px-3.5 py-2.5 text-[12.5px] leading-snug",
+                    testResult.ok ? "text-ok" : "text-warn",
+                  )}
+                >
+                  {testResult.side}: {testResult.message}
+                </p>
+              ) : null}
+
               <Input
                 label="Your calendar link (optional)"
                 placeholder={settings.joint.ownerIcsSet ? "Saved — paste to replace" : "Leave empty to use Google"}
@@ -210,7 +283,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 onChange={(e) => setOwnerIcs(e.target.value)}
                 onBlur={() => {
                   const v = ownerIcs.trim();
-                  if (v) void patch({ joint: { ownerIcsUrl: v } }, "Your calendar feed linked");
+                  if (v) void patch({ joint: { ownerIcsUrl: v } }, "Your calendar link saved");
                 }}
               />
             </div>

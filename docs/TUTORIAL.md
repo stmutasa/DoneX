@@ -166,15 +166,27 @@ phones. You can also tell the orb *"add milk to our list"* — "our" means the
 shared list.
 
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
-with their calendar — you're blue, they're pink, and either of you can be any
-of eight colors (Settings → **Shared list** → the color swatches; events and
-"who added it" chips recolor everywhere) — for the next 7 days, plus
-any dated shared tasks. Two styles, remembered per device: **Agenda** (a
+with hers — you're blue, she's pink, and either of you can be any of eight
+colors (Settings → **Shared list** → the color swatches) — for the next 7 days,
+plus any dated shared tasks. Two styles, remembered per device: **Agenda** (a
 simple list) or **Week** (a Google-Calendar-style grid with time blocks, a
-today marker and a red now-line — tap any block for details). Their calendar connects with one link — Settings → Shared list
-has a picker with exact steps for both kinds: **iPhone/iCloud** (Calendar →
-Public Calendar → Share Link) or **Google Calendar** (Integrate calendar →
-secret iCal address). Whichever she uses, paste the link and it syncs.
+today marker and a red now-line — tap any block for details).
+
+**Connecting her calendar — three ways, none of them public** (Settings →
+Shared list):
+
+| Option | How it works | When to use it |
+|---|---|---|
+| **Shared with you** *(best)* | She shares her Google calendar with *your* Google address ("See all event details"); you enter her address in DoneX, which reads it through your existing Google connection. | She uses Google Calendar. Nothing is published, no link exists to leak, and she can un-share in one tap. |
+| **iPhone link** | Calendar app → Calendars → ⓘ → Public Calendar → Share Link. | She keeps her calendar in Apple's Calendar app. |
+| **Google link** | calendar.google.com (on a computer) → Settings → her calendar → Integrate calendar → **Secret address in iCal format**. | Google, but she'd rather hand over a link than share the calendar. |
+
+A warning about Google's links: the **public address** and the
+`calendar/embed` / `cid=` links are *not* feeds — the public one only works if
+the calendar is shared with the entire world, and the others are web pages
+that need a sign-in. DoneX now refuses those at paste time and tells you which
+link to fetch instead. After saving, tap **Test** — it says exactly what
+happened ("Connected — 6 events in the next 7 days", or why not).
 
 ---
 

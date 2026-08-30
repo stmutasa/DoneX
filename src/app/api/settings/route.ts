@@ -4,6 +4,7 @@ import { autoPickModelIfNeeded, lastFallbackEvent, refreshFallbackModel } from "
 import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import { JOINT_COLOR_IDS } from "@/lib/jointColors";
+import { classifyCalendarLink } from "@/lib/calendarLinks";
 import type { AppSettings, MaskedSettings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       partnerName: joint.partnerName,
       ownerColor: joint.ownerColor,
       partnerColor: joint.partnerColor,
+      partnerGoogleId: joint.partnerGoogleId,
       partnerPinSet: !!joint.partnerPinHash,
       ownerIcsSet: !!joint.ownerIcsUrl,
       partnerIcsSet: !!joint.partnerIcsUrl,
@@ -107,6 +109,7 @@ const patchSchema = z.object({
       partnerIcsUrl: z.string().max(2000).optional(),
       ownerColor: z.enum(JOINT_COLOR_IDS).optional(),
       partnerColor: z.enum(JOINT_COLOR_IDS).optional(),
+      partnerGoogleId: z.string().max(200).optional(),
     })
     .optional(),
 });
@@ -144,6 +147,15 @@ export async function PATCH(req: NextRequest) {
     for (const key of ["ownerIcsUrl", "partnerIcsUrl"] as const) {
       if (joint[key] === "") delete joint[key];
       else if (joint[key] === "__clear__") joint[key] = "";
+      else if (joint[key]) {
+        // Say why a Google view/public link can't work now, rather than saving
+        // it and surfacing "feed unreachable" on the calendar later.
+        const verdict = classifyCalendarLink(joint[key] as string);
+        if (verdict.problem) return NextResponse.json({ error: verdict.problem }, { status: 400 });
+      }
+    }
+    if (joint.partnerGoogleId !== undefined) {
+      joint.partnerGoogleId = joint.partnerGoogleId === "__clear__" ? "" : joint.partnerGoogleId.trim();
     }
     patch.joint = joint;
   }

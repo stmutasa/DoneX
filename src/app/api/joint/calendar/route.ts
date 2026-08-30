@@ -1,13 +1,13 @@
 /**
- * The merged couple calendar: owner's Google Calendar (or ICS feed), the
- * partner's ICS feed, and dated joint tasks — one week, both roles. Feed
- * failures degrade to a named warning instead of failing the whole view.
+ * The merged couple calendar: each person's calendar (a pasted ICS feed, a
+ * Google calendar shared with the owner, or the owner's own Google) plus dated
+ * joint tasks — one week, both roles. A feed that fails degrades to a warning
+ * naming what went wrong, instead of failing the whole view.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { settingsRepo, tasksRepo } from "@/lib/db/repos";
-import { listEventsRange } from "@/lib/google/calendar";
-import { icsEventsBetween } from "@/lib/ics";
+import { ownerEvents, partnerEvents } from "@/lib/jointFeeds";
 import { addDaysToDateKey, clamp, isoFromLocal, localDateKey } from "@/lib/utils";
 import type { CalendarEvent } from "@/lib/types";
 
@@ -27,40 +27,20 @@ export async function GET(req: NextRequest) {
   const todayKey = localDateKey(new Date(), tz);
   const fromIso = isoFromLocal(todayKey, "00:00", tz);
   const toIso = isoFromLocal(addDaysToDateKey(todayKey, days), "00:00", tz);
-  const from = new Date(fromIso);
-  const to = new Date(toIso);
 
   const events: JointCalendarEntry[] = [];
   const warnings: string[] = [];
   const joint = settings.joint;
+  const window = { fromIso, toIso };
 
-  // Owner side: explicit ICS feed wins, else the Google connection.
-  if (joint.ownerIcsUrl) {
-    try {
-      for (const e of await icsEventsBetween({ url: joint.ownerIcsUrl, from, to })) {
-        events.push({ ...e, id: `owner:${e.id}`, who: "owner" });
-      }
-    } catch {
-      warnings.push(`${joint.ownerName || "Your"} calendar feed is unreachable`);
-    }
-  } else {
-    try {
-      for (const e of await listEventsRange(fromIso, toIso)) {
-        events.push({ ...e, id: `owner:${e.id}`, who: "owner" });
-      }
-    } catch {
-      warnings.push("Google Calendar is unreachable");
-    }
-  }
+  const [mine, theirs] = await Promise.all([
+    ownerEvents(joint, window),
+    partnerEvents(joint, window),
+  ]);
 
-  if (joint.partnerIcsUrl) {
-    try {
-      for (const e of await icsEventsBetween({ url: joint.partnerIcsUrl, from, to })) {
-        events.push({ ...e, id: `partner:${e.id}`, who: "partner" });
-      }
-    } catch {
-      warnings.push(`${joint.partnerName || "Partner"} calendar feed is unreachable`);
-    }
+  for (const [who, result] of [["owner", mine], ["partner", theirs]] as const) {
+    for (const e of result.events) events.push({ ...e, id: `${who}:${e.id}`, who });
+    if (result.warning) warnings.push(result.warning);
   }
 
   events.sort((a, b) => a.start.localeCompare(b.start));

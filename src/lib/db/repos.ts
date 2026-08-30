@@ -67,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     partnerName: "",
     ownerIcsUrl: "",
     partnerIcsUrl: "",
+    partnerGoogleId: "",
     ownerColor: "blue",
     partnerColor: "pink",
   },

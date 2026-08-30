@@ -11,6 +11,23 @@ import type { CalendarEvent } from "@/lib/types";
 
 const EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
+/** Events endpoint for any calendar the connected account can see — "primary"
+ *  for the owner's own, or an address for a calendar shared with them. */
+function eventsUrlFor(calendarId: string): string {
+  return `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+}
+
+/** Carries the HTTP status so callers can tell "not shared with you" (403/404)
+ *  apart from "Google is having a bad day". */
+export class GoogleCalendarError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GoogleCalendarError";
+    this.status = status;
+  }
+}
+
 interface GoogleEventTime {
   dateTime?: string;
   date?: string;
@@ -35,8 +52,14 @@ export async function getTodayEvents(): Promise<CalendarEvent[]> {
   );
 }
 
-/** Events between two ISO instants; [] when Google is not connected. */
-export async function listEventsRange(fromIso: string, toIso: string): Promise<CalendarEvent[]> {
+/** Events between two ISO instants; [] when Google is not connected.
+ *  `calendarId` defaults to the owner's own calendar; pass an address to read
+ *  a calendar someone has shared with the connected account. */
+export async function listEventsRange(
+  fromIso: string,
+  toIso: string,
+  calendarId = "primary",
+): Promise<CalendarEvent[]> {
   if (!isGoogleConnected()) return [];
 
   const params = new URLSearchParams({
@@ -47,8 +70,11 @@ export async function listEventsRange(fromIso: string, toIso: string): Promise<C
     maxResults: "100",
   });
 
-  const res = await googleFetch(`${EVENTS_URL}?${params.toString()}`);
-  if (!res.ok) throw await googleApiError(res, "Google Calendar");
+  const res = await googleFetch(`${eventsUrlFor(calendarId)}?${params.toString()}`);
+  if (!res.ok) {
+    const err = await googleApiError(res, "Google Calendar");
+    throw new GoogleCalendarError(err.message, res.status);
+  }
 
   const data = (await res.json()) as { items?: GoogleEvent[] };
   const events: CalendarEvent[] = [];

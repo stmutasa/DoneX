@@ -306,6 +306,9 @@ export interface JointSettings {
   ownerIcsUrl: string;
   /** ICS feed for the partner's calendar */
   partnerIcsUrl: string;
+  /** her Google calendar id (usually her address) when she shares it with the
+   *  owner's Google account — read through the owner's existing connection */
+  partnerGoogleId: string;
   /** each person's color on shared surfaces — a JointColorId (see jointColors.ts) */
   ownerColor: string;
   partnerColor: string;

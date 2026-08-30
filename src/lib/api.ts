@@ -472,7 +472,25 @@ export type SettingsPatch = {
     partnerIcsUrl?: string;
     ownerColor?: string;
     partnerColor?: string;
+    partnerGoogleId?: string;
   };
+};
+
+export interface CalendarTestResult {
+  ok: boolean;
+  message: string;
+  count: number;
+  source: "ics" | "google-shared" | "google-own" | "none";
+}
+
+export const jointApi = {
+  /** Try a person's configured calendar right now and report what happened. */
+  testCalendar: (side: "owner" | "partner") =>
+    request<CalendarTestResult>("/api/settings/joint-calendar-test", {
+      method: "POST",
+      body: JSON.stringify({ side }),
+      timeoutMs: 30_000,
+    }),
 };
 
 export const statsApi = {

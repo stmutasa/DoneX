@@ -19,14 +19,30 @@ function normalizeUrl(raw: string): string {
   return url.replace(/^webcal:\/\//i, "https://");
 }
 
+/** Carries the HTTP status so callers can explain *why* a feed failed —
+ *  a 404 on a Google "public address" means the calendar simply isn't public. */
+export class IcsFetchError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "IcsFetchError";
+    this.status = status;
+  }
+}
+
 async function fetchIcsBody(url: string): Promise<string> {
   const hit = cache.get(url);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(15_000),
-    headers: { accept: "text/calendar, text/plain, */*" },
-  });
-  if (!res.ok) throw new Error(`Calendar feed answered HTTP ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { accept: "text/calendar, text/plain, */*" },
+    });
+  } catch {
+    throw new IcsFetchError("Could not reach the calendar host", 0);
+  }
+  if (!res.ok) throw new IcsFetchError(`Calendar feed answered HTTP ${res.status}`, res.status);
   const body = await res.text();
   cache.set(url, { at: Date.now(), body });
   return body;
