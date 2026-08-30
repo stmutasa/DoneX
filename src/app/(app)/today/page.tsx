@@ -89,12 +89,13 @@ export default function TodayPage() {
   // The top of the page belongs to whatever is useful right now: the briefing
   // and the plan lead in the morning, then step aside for the list itself.
   // Rendered only once the clock is known, so nothing jumps after hydration.
-  const morning = now !== null && now.getHours() < 12;
-  const leadWith = now !== null && morning;
-  const trailWith = now !== null && !morning;
+  const leadWith = now !== null && now.getHours() < 12;
 
   return (
-    <Page>
+    <Page
+      aside={now ? <BriefingCard tasks={all} onFocusTask={setEditing} /> : null}
+      asideLeads={leadWith}
+    >
       <header className="mb-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
@@ -109,8 +110,7 @@ export default function TodayPage() {
         ) : null}
       </header>
 
-      <div className="mb-6 space-y-3">
-        {leadWith ? <BriefingCard tasks={all} onFocusTask={setEditing} /> : null}
+      <div className="mb-6">
         <CalendarStrip />
       </div>
 
@@ -178,11 +178,6 @@ export default function TodayPage() {
         </>
       )}
 
-      {trailWith ? (
-        <div className="mt-6">
-          <BriefingCard tasks={all} onFocusTask={setEditing} />
-        </div>
-      ) : null}
 
       <TaskEditor open={!!editing} task={editing} onClose={() => setEditing(null)} />
       <QuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} />

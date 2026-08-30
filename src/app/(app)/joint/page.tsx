@@ -11,6 +11,7 @@ import { IconPlus } from "@/components/ui/icons";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { Segmented } from "@/components/ui/Segmented";
+import { cn } from "@/lib/utils";
 import { JointCalendar } from "@/components/joint/JointCalendar";
 
 /**
@@ -62,13 +63,13 @@ export default function JointPage() {
   };
 
   return (
-    <Page>
+    <Page width="wide">
       <PageHeader
         title="Ours"
         subtitle={`What ${names.owner} and ${names.partner} share.`}
       />
 
-      <div className="mb-4">
+      <div className="mb-4 xl:hidden">
         <Segmented
           size="sm"
           ariaLabel="Joint view"
@@ -81,65 +82,66 @@ export default function JointPage() {
         />
       </div>
 
-      {tab === "calendar" ? (
-        <JointCalendar names={names} colors={colors} />
-      ) : (
-        <>
-      <div className="mb-5 flex items-center gap-2 rounded-2xl border border-stroke bg-elev px-3.5 py-1.5">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void add();
-            }
-          }}
-          placeholder="Add to our list… (“pick up the cake saturday 2pm”)"
-          enterKeyHint="done"
-          className="min-h-[44px] w-full bg-transparent text-[15px] text-ink outline-none placeholder:text-faint"
-        />
-        <button
-          type="button"
-          onClick={() => void add()}
-          disabled={!draft.trim() || adding}
-          aria-label="Add to the joint list"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sunrise text-on-accent disabled:opacity-40"
-        >
-          <IconPlus className="h-5 w-5" strokeWidth={2.2} />
-        </button>
-      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)] xl:gap-8">
+        <section className={cn(tab === "list" ? "block" : "hidden", "xl:block")}>
+          <div className="mb-5 flex items-center gap-2 rounded-2xl border border-stroke bg-elev px-3.5 py-1.5">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void add();
+                }
+              }}
+              placeholder="Add to our list… (“pick up the cake saturday 2pm”)"
+              enterKeyHint="done"
+              className="min-h-[44px] w-full bg-transparent text-[15px] text-ink outline-none placeholder:text-faint"
+            />
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={!draft.trim() || adding}
+              aria-label="Add to the joint list"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sunrise text-on-accent disabled:opacity-40"
+            >
+              <IconPlus className="h-5 w-5" strokeWidth={2.2} />
+            </button>
+          </div>
 
-      {isLoading ? (
-        <SkeletonRows rows={4} />
-      ) : open.length === 0 && done.length === 0 ? (
-        <EmptyState
-          emoji="💛"
-          title="Nothing here yet"
-          message="Add the first thing you two need to get done."
-        />
-      ) : (
-        <>
-          {open.length ? (
-            <TaskGroup title="To do" count={open.length}>
-              <TaskList tasks={open} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
-            </TaskGroup>
+          {isLoading ? (
+            <SkeletonRows rows={4} />
+          ) : open.length === 0 && done.length === 0 ? (
+            <EmptyState
+              emoji="💛"
+              title="Nothing here yet"
+              message="Add the first thing you two need to get done."
+            />
           ) : (
-            <div className="mb-6 rounded-2xl border border-stroke bg-elev px-4 py-6 text-center">
-              <p className="text-[15px] font-medium text-ink">All done 🎉</p>
-              <p className="mt-1 text-[13px] text-muted">The shared list is clear.</p>
-            </div>
+            <>
+              {open.length ? (
+                <TaskGroup title="To do" count={open.length}>
+                  <TaskList tasks={open} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
+                </TaskGroup>
+              ) : (
+                <div className="mb-6 rounded-2xl border border-stroke bg-elev px-4 py-6 text-center">
+                  <p className="text-[15px] font-medium text-ink">All done 🎉</p>
+                  <p className="mt-1 text-[13px] text-muted">The shared list is clear.</p>
+                </div>
+              )}
+              {done.length ? (
+                <TaskGroup title="Done" count={done.length} tone="muted" collapsible defaultCollapsed>
+                  <TaskList tasks={done} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
+                </TaskGroup>
+              ) : null}
+            </>
           )}
-          {done.length ? (
-            <TaskGroup title="Done" count={done.length} tone="muted" collapsible defaultCollapsed>
-              <TaskList tasks={done} projects={[]} onOpen={setEditing} showProject={false} attribution={attribution} />
-            </TaskGroup>
-          ) : null}
-        </>
-      )}
+        </section>
 
-        </>
-      )}
+        <section className={cn(tab === "calendar" ? "block" : "hidden", "xl:block")}>
+          <JointCalendar names={names} colors={colors} />
+        </section>
+      </div>
 
       <TaskEditor open={!!editing} task={editing} onClose={() => setEditing(null)} />
     </Page>

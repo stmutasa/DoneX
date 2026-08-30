@@ -26,7 +26,7 @@ export function TaskList({
 }) {
   const byId = new Map(projects.map((p) => [p.id, p]));
   return (
-    <ul className={cn("space-y-2", className)}>
+    <ul className={cn("space-y-2 lg:space-y-1.5", className)}>
       <AnimatePresence initial={false} mode="popLayout">
         {tasks.map((task) => (
           <motion.li

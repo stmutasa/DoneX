@@ -8,6 +8,7 @@ import type { CalendarEvent, Task } from "@/lib/types";
 import { hueSoftVar, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
 import { dayHeading, timeLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useIsWideScreen } from "@/hooks/useMediaQuery";
 import { Segmented } from "@/components/ui/Segmented";
 import { Sheet } from "@/components/ui/Sheet";
 import { SkeletonRows } from "@/components/ui/Misc";
@@ -139,7 +140,7 @@ export function JointCalendar({
         <Segmented
           size="sm"
           ariaLabel="Calendar style"
-          className="w-auto min-w-[150px]"
+          className="w-auto min-w-[150px] max-w-[230px]"
           value={mode}
           onChange={pickMode}
           options={[
@@ -261,8 +262,12 @@ function Agenda({ data, colors }: { data: Payload | undefined; colors: WhoColors
 
 // ── Week grid (the visual view) ────────────────────────────────────────────
 
-const HOUR_PX = 44;
-const GUTTER_PX = 44;
+// Phone-sized rows look lost in a desktop column; both scales are used with
+// the same maths, chosen once per breakpoint.
+const HOUR_PX_PHONE = 44;
+const HOUR_PX_WIDE = 62;
+const GUTTER_PX_PHONE = 44;
+const GUTTER_PX_WIDE = 56;
 
 function WeekGrid({
   data,
@@ -275,6 +280,9 @@ function WeekGrid({
   whoName: (w: Entry["who"]) => string;
   colors: WhoColors;
 }) {
+  const wide = useIsWideScreen();
+  const HOUR_PX = wide ? HOUR_PX_WIDE : HOUR_PX_PHONE;
+  const GUTTER_PX = wide ? GUTTER_PX_WIDE : GUTTER_PX_PHONE;
   const days = useMemo(() => {
     const start = data?.from ? new Date(data.from) : new Date();
     return Array.from({ length: 7 }, (_, i) => {
@@ -331,7 +339,8 @@ function WeekGrid({
               </span>
               <span
                 className={cn(
-                  "grid h-6 w-6 place-items-center rounded-full text-[12.5px] font-medium",
+                  "grid place-items-center rounded-full font-medium",
+                  wide ? "h-7 w-7 text-[14px]" : "h-6 w-6 text-[12.5px]",
                   isToday ? "bg-sunrise text-on-accent" : "text-ink",
                 )}
               >
@@ -362,7 +371,7 @@ function WeekGrid({
                     key={e.id}
                     type="button"
                     onClick={() => onPick({ title: e.title, who: e.who, when: "All day", location: e.location })}
-                    className="block w-full truncate rounded border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight text-ink"
+                    className={cn("block w-full truncate rounded border-l-2 px-1 py-0.5 text-left leading-tight text-ink", wide ? "text-[11.5px]" : "text-[9.5px]")}
                     style={blockColors(colors[e.who])}
                   >
                     {e.title}
@@ -393,7 +402,10 @@ function WeekGrid({
           {hours.map((h, i) => (
             <span
               key={h}
-              className="absolute right-1 -translate-y-1/2 text-[9.5px] tabular-nums text-faint"
+              className={cn(
+                "absolute right-1 -translate-y-1/2 tabular-nums text-faint",
+                wide ? "text-[11px]" : "text-[9.5px]",
+              )}
               style={{ top: i * HOUR_PX }}
             >
               {i === 0 ? "" : h % 12 === 0 ? 12 : h % 12}
@@ -416,7 +428,7 @@ function WeekGrid({
                   />
                 ) : null,
               )}
-              {key === todayKey ? <NowLine hourFrom={hourFrom} hourTo={hourTo} /> : null}
+              {key === todayKey ? <NowLine hourFrom={hourFrom} hourTo={hourTo} hourPx={HOUR_PX} /> : null}
               {dayEvents.map((e) => {
                 const { top, height } = blockStyle(e);
                 const slot = lanes.get(e.id) ?? { lane: 0, lanes: 1 };
@@ -433,7 +445,7 @@ function WeekGrid({
                         location: e.location,
                       })
                     }
-                    className="absolute overflow-hidden rounded-md border-l-2 px-1 py-0.5 text-left text-[9.5px] leading-tight text-ink"
+                    className={cn("absolute overflow-hidden rounded-md border-l-2 px-1.5 py-1 text-left leading-tight text-ink", wide ? "text-[11.5px]" : "text-[9.5px]")}
                     style={{
                       top,
                       height,
@@ -455,7 +467,15 @@ function WeekGrid({
   );
 }
 
-function NowLine({ hourFrom, hourTo }: { hourFrom: number; hourTo: number }) {
+function NowLine({
+  hourFrom,
+  hourTo,
+  hourPx,
+}: {
+  hourFrom: number;
+  hourTo: number;
+  hourPx: number;
+}) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -466,7 +486,7 @@ function NowLine({ hourFrom, hourTo }: { hourFrom: number; hourTo: number }) {
   return (
     <span
       className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-danger"
-      style={{ top: (h - hourFrom) * HOUR_PX }}
+      style={{ top: (h - hourFrom) * hourPx }}
     />
   );
 }

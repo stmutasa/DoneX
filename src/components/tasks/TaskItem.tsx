@@ -82,7 +82,7 @@ export function TaskItem({
   return (
     <div
       className={cn(
-        "group flex items-start gap-3 rounded-2xl border border-stroke bg-elev px-3 py-3 transition-colors",
+        "group flex items-start gap-3 rounded-2xl border border-stroke bg-elev px-3 py-3 transition-colors lg:py-2.5",
         "hover:border-stroke-strong",
         done && "opacity-70",
       )}

@@ -15,6 +15,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { Segmented } from "@/components/ui/Segmented";
 import {
   IconChat,
+  IconLogout,
   IconMonitor,
   IconMoon,
   IconMore,
@@ -69,21 +70,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => setMoreOpen(false), [pathname]);
 
+  const signOut = async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      /* signing out locally regardless */
+    }
+    window.location.href = "/login";
+  };
+
   if (partner) {
     return (
       <div className="min-h-dvh bg-bg">
         <OfflineBanner />
-        <main className="pb-24">{children}</main>
-        <PartnerBar
-          onSignOut={async () => {
-            try {
-              await authApi.logout();
-            } catch {
-              /* signing out locally regardless */
-            }
-            window.location.href = "/login";
-          }}
-        />
+        <PartnerTopBar onSignOut={signOut} />
+        <main className="pb-24 lg:pb-0">{children}</main>
+        <PartnerBar onSignOut={signOut} />
       </div>
     );
   }
@@ -91,7 +93,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-bg">
       <OfflineBanner />
-      <DesktopSidebar pathname={pathname} newCount={newCount} streak={streak} onQuickAdd={() => setQuickOpen(true)} />
+      <DesktopSidebar
+        pathname={pathname}
+        newCount={newCount}
+        streak={streak}
+        onQuickAdd={() => setQuickOpen(true)}
+        onSignOut={signOut}
+      />
 
       <main className="lg:pl-[248px]">{children}</main>
 
@@ -102,7 +110,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           type="button"
           onClick={() => setQuickOpen(true)}
           aria-label="Quick add task"
-          className="fixed right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-sunrise text-on-accent shadow-lift transition-transform active:scale-95 bottom-[calc(env(safe-area-inset-bottom,0px)+84px)] lg:bottom-8 lg:right-8"
+          className="fixed right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-sunrise text-on-accent shadow-lift transition-transform active:scale-95 bottom-[calc(env(safe-area-inset-bottom,0px)+84px)] lg:hidden"
         >
           <IconPlus className="h-6 w-6" strokeWidth={2.2} />
         </button>
@@ -119,12 +127,15 @@ function DesktopSidebar({
   newCount,
   streak,
   onQuickAdd,
+  onSignOut,
 }: {
   pathname: string;
   newCount: number;
   streak: number;
   onQuickAdd: () => void;
+  onSignOut: () => void;
 }) {
+  const { theme, setTheme } = useTheme();
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-stroke bg-elev px-3 py-5 lg:flex">
       <div className="flex items-center justify-between px-2 pb-5">
@@ -178,6 +189,21 @@ function DesktopSidebar({
         </span>
         Walk mode
       </Link>
+
+      {/* Theme and sign-out live in the phone's More sheet; on a desktop the
+          sidebar is where you'd go looking for them. */}
+      <div className="mt-3 flex items-center gap-1 border-t border-stroke pt-3">
+        <ThemeCycleButton theme={theme} setTheme={setTheme} />
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="flex min-h-[36px] items-center gap-2 rounded-xl px-2.5 text-[13px] text-muted transition-colors hover:bg-sunken hover:text-ink"
+        >
+          <IconLogout className="h-4 w-4" />
+          Sign out
+        </button>
+      </div>
     </aside>
   );
 }
@@ -344,7 +370,7 @@ function PartnerBar({ onSignOut }: { onSignOut: () => void }) {
   const { theme, setTheme } = useTheme();
   const next = theme === "dark" ? "light" : "dark";
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl lg:hidden">
       <div className="mx-auto flex max-w-md items-center justify-between px-6 py-2.5 pb-safe">
         <span className="text-[13px] font-semibold tracking-tight text-ink">
           Done<span className="text-sunrise">X</span>
@@ -369,5 +395,53 @@ function PartnerBar({ onSignOut }: { onSignOut: () => void }) {
         </div>
       </div>
     </nav>
+  );
+}
+
+/** Cycles system → light → dark, labelled for whichever is active. */
+function ThemeCycleButton({
+  theme,
+  setTheme,
+}: {
+  theme: "system" | "light" | "dark";
+  setTheme: (t: "system" | "light" | "dark") => void;
+}) {
+  const next = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+  const Icon = theme === "light" ? IconSun : theme === "dark" ? IconMoon : IconMonitor;
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(next)}
+      aria-label={`Theme: ${theme}. Switch to ${next}`}
+      title={`Theme: ${theme}`}
+      className="flex min-h-[36px] items-center gap-2 rounded-xl px-2.5 text-[13px] capitalize text-muted transition-colors hover:bg-sunken hover:text-ink"
+    >
+      <Icon className="h-4 w-4" />
+      {theme}
+    </button>
+  );
+}
+
+/** The partner's desktop chrome: one destination, so a top bar rather than a
+ *  sidebar — the phone keeps its bottom bar. */
+function PartnerTopBar({ onSignOut }: { onSignOut: () => void }) {
+  const { theme, setTheme } = useTheme();
+  return (
+    <header className="sticky top-0 z-30 hidden border-b border-stroke bg-elev/92 backdrop-blur-xl lg:block">
+      <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-3 px-6">
+        <Wordmark className="text-[19px]" />
+        <span className="text-[14px] text-muted">shared list</span>
+        <span className="flex-1" />
+        <ThemeCycleButton theme={theme} setTheme={setTheme} />
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="flex min-h-[36px] items-center gap-2 rounded-xl px-2.5 text-[13px] text-muted transition-colors hover:bg-sunken hover:text-ink"
+        >
+          <IconLogout className="h-4 w-4" />
+          Sign out
+        </button>
+      </div>
+    </header>
   );
 }

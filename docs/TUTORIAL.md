@@ -190,6 +190,29 @@ happened ("Connected — 6 events in the next 7 days", or why not).
 
 ---
 
+## On a computer
+
+DoneX reshapes itself when the window is wide — same app, laid out like a
+desktop one rather than a stretched phone:
+
+- **Sidebar instead of a bottom bar.** Every section down the left, with
+  **New task** at the top and the theme switch and **Sign out** at the bottom.
+  (The floating **+** button is a phone thing and steps aside.)
+- **Two columns where it helps.** Today keeps your list front and centre with
+  the morning briefing in a rail beside it; **Ours** shows the shared list and
+  the calendar side by side, so there's no tab to flip. The week grid draws
+  bigger — taller hours, readable event titles.
+- **Denser lists.** Rows tighten up, since you're not aiming with a thumb.
+
+Your partner's view gets the same treatment: on a laptop she gets a proper top
+bar (wordmark, theme, sign out) and the list-plus-calendar split; on her iPhone
+nothing changes.
+
+Nothing is lost either way — it's the same data and the same app, just arranged
+for the screen it's on.
+
+---
+
 ## The Inbox (stuff flows in, you decide)
 
 More → **Inbox**. This is the "waiting room" for things that arrived on their
