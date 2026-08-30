@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetcher, keys, tasksApi } from "@/lib/api";
 import type { Task } from "@/lib/types";
@@ -12,13 +12,15 @@ import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { Segmented } from "@/components/ui/Segmented";
 import { cn } from "@/lib/utils";
-import { JointCalendar } from "@/components/joint/JointCalendar";
+import { JointCalendar, type CalendarMode } from "@/components/joint/JointCalendar";
 
 /**
  * The shared list. Identical for both people: the owner reaches it as one tab
  * among many; a partner session lives here. Attribution chips show who added
  * what, so "we're out of milk" has a culprit.
  */
+const CAL_MODE_KEY = "donex.jointCal.mode";
+
 export default function JointPage() {
   const toast = useToast();
   const { data, isLoading, mutate } = useSWR<{ tasks: Task[] }>(
@@ -38,6 +40,29 @@ export default function JointPage() {
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [tab, setTab] = useState<"list" | "calendar">("list");
+  const [calMode, setCalMode] = useState<CalendarMode>("agenda");
+
+  // Remembered per device, like the tab itself.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(CAL_MODE_KEY);
+      if (stored === "week" || stored === "month" || stored === "agenda") setCalMode(stored);
+    } catch {
+      /* per-device convenience only */
+    }
+  }, []);
+
+  const pickCalMode = (m: CalendarMode) => {
+    setCalMode(m);
+    try {
+      localStorage.setItem(CAL_MODE_KEY, m);
+    } catch {
+      /* per-device convenience only */
+    }
+  };
+
+  // A grid wants the whole window; the agenda is happy beside the list.
+  const gridTakesOver = calMode !== "agenda";
 
   const tasks = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
   const open = tasks.filter((t) => t.status !== "done");
@@ -82,8 +107,13 @@ export default function JointPage() {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)] xl:gap-8">
-        <section className={cn(tab === "list" ? "block" : "hidden", "xl:block")}>
+      <div
+        className={cn(
+          "grid gap-6 xl:gap-8",
+          gridTakesOver ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]",
+        )}
+      >
+        <section className={cn(tab === "list" ? "block" : "hidden", gridTakesOver ? "xl:hidden" : "xl:block")}>
           <div className="mb-5 flex items-center gap-2 rounded-2xl border border-stroke bg-elev px-3.5 py-1.5">
             <input
               value={draft}
@@ -139,7 +169,7 @@ export default function JointPage() {
         </section>
 
         <section className={cn(tab === "calendar" ? "block" : "hidden", "xl:block")}>
-          <JointCalendar names={names} colors={colors} />
+          <JointCalendar names={names} colors={colors} mode={calMode} onModeChange={pickCalMode} />
         </section>
       </div>
 

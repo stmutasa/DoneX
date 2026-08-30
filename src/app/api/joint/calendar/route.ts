@@ -23,10 +23,14 @@ export async function GET(req: NextRequest) {
 
   const settings = settingsRepo.getApp();
   const tz = settings.tz;
-  const days = clamp(Number(req.nextUrl.searchParams.get("days")) || 7, 1, 14);
+  // A navigable window: `from` is a local date key, defaulting to today, and
+  // `days` stretches to a month grid's 42 cells.
+  const days = clamp(Number(req.nextUrl.searchParams.get("days")) || 7, 1, 45);
   const todayKey = localDateKey(new Date(), tz);
-  const fromIso = isoFromLocal(todayKey, "00:00", tz);
-  const toIso = isoFromLocal(addDaysToDateKey(todayKey, days), "00:00", tz);
+  const requested = req.nextUrl.searchParams.get("from") ?? "";
+  const startKey = /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : todayKey;
+  const fromIso = isoFromLocal(startKey, "00:00", tz);
+  const toIso = isoFromLocal(addDaysToDateKey(startKey, days), "00:00", tz);
 
   const events: JointCalendarEntry[] = [];
   const warnings: string[] = [];
@@ -48,7 +52,7 @@ export async function GET(req: NextRequest) {
   // Dated joint tasks ride along so "pick up the cake sat 2pm" shows here too.
   const tasks = tasksRepo
     .list({ space: "joint" })
-    .filter((t) => t.dueAt !== null && t.dueAt < toIso)
+    .filter((t) => t.dueAt !== null && t.dueAt >= fromIso && t.dueAt < toIso)
     .slice(0, 50);
 
   return NextResponse.json({ events, tasks, warnings, days, from: fromIso, to: toIso });

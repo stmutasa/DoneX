@@ -167,10 +167,21 @@ shared list.
 
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
 with hers — you're blue, she's pink, and either of you can be any of eight
-colors (Settings → **Shared list** → the color swatches) — for the next 7 days,
-plus any dated shared tasks. Two styles, remembered per device: **Agenda** (a
-simple list) or **Week** (a Google-Calendar-style grid with time blocks, a
-today marker and a red now-line — tap any block for details).
+colors (Settings → **Shared list** → the color swatches) — plus any dated
+shared tasks. Three ways to look at it, remembered per device:
+
+- **Agenda** — a simple list, day by day. On a computer it sits beside the
+  shared list so you can see both at once.
+- **Week** — a Google-Calendar-style grid: the full day laid out in columns,
+  a red now-line, all-day events along the top. On a computer it takes the
+  whole window and fills the height, opening at the hour your day starts.
+- **Month** — the month at a glance, a few events per day; click any date to
+  jump into that week.
+
+**Travelling in time:** **Today**, plus ‹ › arrows that step a week at a time
+(a month at a time in Month view), with the range you're looking at named in
+between. Events load for whatever window you land on, so you can look weeks or
+months ahead.
 
 **Connecting her calendar — three ways, none of them public** (Settings →
 Shared list):
