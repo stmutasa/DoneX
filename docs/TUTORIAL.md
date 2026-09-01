@@ -18,9 +18,9 @@ Five things live in the bottom bar of your phone:
 |---|---|
 | **Today** | Your home screen. What's due, what's overdue, what you could pick up. |
 | **Upcoming** | Everything with a future date, grouped by day. |
-| **⦿ (the glowing orb)** | The assistant — tap to chat. |
-| **Notes** | The Google Keep part. Notes and checklists. |
-| **More** | Projects, Inbox, Review, Settings — plus dark/light mode. |
+| **Ours** | The list and calendar you share — always one tap away. |
+| **Inbox** | Texts and email the AI has triaged for you. |
+| **More** | Notes, Projects, Assistant, Nearby, Logbook, Review, Settings — plus dark/light mode. |
 
 The round **+** button (bottom right) adds a task from anywhere.
 
@@ -47,7 +47,7 @@ as the date gets close (P3 four days out, P2 at two, P1 the last day). Things
 between **On this day** / **By this day** in the task editor.
 
 You'll see little chips appear as it understands you. Or skip typing entirely
-and tell the orb: *"Add a task to call the dentist tomorrow at 3."*
+and tell the assistant: *"Add a task to call the dentist tomorrow at 3."*
 
 **Checking things off:** tap the circle. Tap again if you fat-fingered it.
 Repeating tasks show a ↻ — checking them off just rolls them to the next date
@@ -91,8 +91,8 @@ ignored forever. Tap **See all** for the full undated list.
 
 ## Talking to it (chat and Walk Mode)
 
-**Chat (the orb):** talk to it like you talked to ChatGPT, except this one has
-its hands on your actual lists. Things people actually say:
+**Chat (More → Assistant):** talk to it like you talked to ChatGPT, except this
+one has its hands on your actual lists. Things people actually say:
 
 - "Add milk and eggs to my groceries list"
 - "What should I do next?"
@@ -162,7 +162,7 @@ land on Ours and stay there.
 **Using it:** either of you adds things ("pick up the cake saturday 2pm" —
 plain-English dates work); every task shows a chip for who added it; checking
 things off syncs both ways. Due-time reminders for shared tasks buzz both
-phones. You can also tell the orb *"add milk to our list"* — "our" means the
+phones. You can also tell the assistant *"add milk to our list"* — "our" means the
 shared list.
 
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
@@ -342,10 +342,10 @@ work; they just open that row's own page.
 | Old habit in Keep | New habit in DoneX |
 |---|---|
 | Jot a to-do in a note | **+** button, plain English ("renew passport friday") |
-| Grocery checklist | Notes → **+ List** (or tell the orb to add items) |
+| Grocery checklist | Notes → **+ List** (or ask the assistant to add items) |
 | Pin an important note | Pin it — same idea, same result |
 | Scroll around hoping to spot what's urgent | Open **Today** — it's already sorted |
-| Paste your list into ChatGPT and ask what to do | Ask the orb: *"what should I do next?"* |
+| Paste your list into ChatGPT and ask what to do | Ask the assistant: *"what should I do next?"* |
 | Reminders app on the side | Due times push to your phone on their own |
 | Screenshot a text so you don't forget it | It's already in your **Inbox** with a suggested task |
 

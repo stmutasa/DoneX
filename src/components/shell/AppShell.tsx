@@ -23,11 +23,9 @@ import {
   IconSun,
 } from "@/components/ui/icons";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
-import { MORE_ITEMS, NAV_ITEMS, Wordmark, isActive } from "./nav";
+import { MORE_ITEMS, NAV_ITEMS, TAB_ITEMS, Wordmark, isActive } from "./nav";
 import { OfflineBanner } from "./OfflineBanner";
 import { useTheme } from "./ThemeProvider";
-
-const TAB_ORDER = ["/today", "/upcoming", "/inbox"];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -217,30 +215,19 @@ function MobileTabBar({
   onMore: () => void;
   inboxBadge: number;
 }) {
-  const byHref = new Map(NAV_ITEMS.map((i) => [i.href, i]));
-  const [today, upcoming, inbox] = TAB_ORDER.map((href) => byHref.get(href)!);
   const moreActive = MORE_ITEMS.some((i) => isActive(pathname, i.href));
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl lg:hidden">
       <div className="mx-auto flex max-w-md items-stretch justify-around px-1 pb-safe">
-        <Tab item={today} pathname={pathname} />
-        <Tab item={upcoming} pathname={pathname} />
-
-        <div className="relative flex w-[68px] shrink-0 justify-center">
-          <Link
-            href="/assistant"
-            aria-label="Assistant"
-            className={cn(
-              "absolute -top-5 grid h-14 w-14 place-items-center rounded-full bg-sunrise text-on-accent shadow-lift transition-transform active:scale-95",
-              isActive(pathname, "/assistant") && "ring-4 ring-accent-soft",
-            )}
-          >
-            <IconChat className="h-6 w-6" />
-          </Link>
-        </div>
-
-        <Tab item={inbox} pathname={pathname} badge={inboxBadge} />
+        {TAB_ITEMS.map((item) => (
+          <Tab
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            badge={item.href === "/inbox" ? inboxBadge : 0}
+          />
+        ))}
 
         <button
           type="button"
