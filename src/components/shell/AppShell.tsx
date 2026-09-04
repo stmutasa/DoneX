@@ -52,8 +52,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const newCount = inbox?.newCount ?? 0;
   const streak = stats?.streakDays ?? 0;
+  // Quick add writes to your own list, so it stays out of the way where that
+  // would be misread — Ours has its own add box for the shared list.
   const hideFab =
-    partner || pathname.startsWith("/assistant") || pathname.startsWith("/voice");
+    partner ||
+    pathname.startsWith("/joint") ||
+    pathname.startsWith("/assistant") ||
+    pathname.startsWith("/voice");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
