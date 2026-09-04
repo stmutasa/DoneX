@@ -8,6 +8,7 @@ import type {
   Priority,
   Project,
   RecurrenceRule,
+  SessionRole,
   Task,
   TaskDraft,
   TaskLocation,
@@ -50,6 +51,7 @@ interface FormState {
   tags: string[];
   recurrence: RecurrenceRule | null;
   location: TaskLocation | null;
+  assignedTo: "" | SessionRole;
 }
 
 function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState {
@@ -57,6 +59,7 @@ function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState 
   const dueAt = src?.dueAt ?? null;
   const allDay = src?.allDay ?? false;
   return {
+    assignedTo: src?.assignedTo ?? "",
     title: src?.title ?? "",
     notes: src?.notes ?? "",
     dueDate: toDateInput(dueAt),
@@ -107,6 +110,14 @@ export function TaskEditor({
     fetcher,
   );
   const { data: tagData } = useSWR<{ tags: string[] }>(open ? keys.tags() : null, fetcher);
+  const { data: me } = useSWR<{ role: SessionRole; ownerName: string; partnerName: string }>(
+    open && task?.space === "joint" ? keys.me() : null,
+    fetcher,
+  );
+  const myRole: SessionRole = me?.role ?? "owner";
+  const theirRole: SessionRole = myRole === "owner" ? "partner" : "owner";
+  const theirName =
+    (myRole === "owner" ? me?.partnerName : me?.ownerName) || "Them";
   const projects = useMemo(() => projectData?.projects ?? [], [projectData]);
 
   useEffect(() => {
@@ -143,6 +154,7 @@ export function TaskEditor({
     tags: form.tags,
     recurrence: form.recurrence,
     location: form.location,
+    assignedTo: form.assignedTo || null,
   });
 
   const submit = async () => {
@@ -351,6 +363,23 @@ export function TaskEditor({
             ) : null}
           </div>
         </div>
+
+        {task?.space === "joint" ? (
+          <div>
+            <FieldLabel>Whose task</FieldLabel>
+            <Segmented
+              size="sm"
+              ariaLabel="Whose task"
+              value={form.assignedTo}
+              onChange={(v) => set("assignedTo", v)}
+              options={[
+                { value: "" as const, label: "Either of us" },
+                { value: myRole, label: "Me" },
+                { value: theirRole, label: theirName },
+              ]}
+            />
+          </div>
+        ) : null}
 
         <div>
           <FieldLabel>Priority</FieldLabel>

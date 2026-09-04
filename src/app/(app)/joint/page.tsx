@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetcher, keys, tasksApi } from "@/lib/api";
-import type { Task } from "@/lib/types";
+import type { SessionRole, Task } from "@/lib/types";
 import { Page } from "@/components/shell/Page";
 import { EmptyState, PageHeader, SkeletonRows } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
@@ -40,6 +40,8 @@ export default function JointPage() {
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [tab, setTab] = useState<"list" | "calendar">("list");
+  // "" = nobody in particular; otherwise the role the new task is for.
+  const [assignee, setAssignee] = useState<"" | SessionRole>("");
   const [calMode, setCalMode] = useState<CalendarMode>("agenda");
 
   // Remembered per device, like the tab itself.
@@ -70,6 +72,9 @@ export default function JointPage() {
 
   const names = { owner: me?.ownerName || "Me", partner: me?.partnerName || "Partner" };
   const colors = { owner: me?.ownerColor, partner: me?.partnerColor };
+  const myRole: SessionRole = me?.role ?? "owner";
+  const theirRole: SessionRole = myRole === "owner" ? "partner" : "owner";
+  const theirName = myRole === "owner" ? names.partner : names.owner;
   const attribution = { ...names, colors };
 
   const add = async () => {
@@ -77,7 +82,11 @@ export default function JointPage() {
     if (!value || adding) return;
     setAdding(true);
     try {
-      await tasksApi.create({ quick: value, space: "joint" });
+      await tasksApi.create({
+        quick: value,
+        space: "joint",
+        assignedTo: assignee || null,
+      });
       setDraft("");
       await mutate();
     } catch (err) {
@@ -114,7 +123,8 @@ export default function JointPage() {
         )}
       >
         <section className={cn(tab === "list" ? "block" : "hidden", gridTakesOver ? "xl:hidden" : "xl:block")}>
-          <div className="mb-5 flex items-center gap-2 rounded-2xl border border-stroke bg-elev px-3.5 py-1.5">
+          <div className="mb-5 rounded-2xl border border-stroke bg-elev">
+            <div className="flex items-center gap-2 px-3.5 py-1.5">
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -137,6 +147,25 @@ export default function JointPage() {
             >
               <IconPlus className="h-5 w-5" strokeWidth={2.2} />
             </button>
+            </div>
+            <div className="border-t border-stroke px-3.5 py-2">
+              <Segmented
+                size="sm"
+                ariaLabel="Who is this for"
+                value={assignee}
+                onChange={setAssignee}
+                options={[
+                  { value: "" as const, label: "Either of us" },
+                  { value: myRole, label: "Me" },
+                  { value: theirRole, label: theirName },
+                ]}
+              />
+              {assignee === theirRole ? (
+                <p className="mt-1.5 text-[11.5px] text-faint">
+                  {theirName} gets a notification when you add it.
+                </p>
+              ) : null}
+            </div>
           </div>
 
           {isLoading ? (

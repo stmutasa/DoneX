@@ -160,8 +160,15 @@ It works like an app, including notifications (iOS 16.4+) and offline. They
 land on Ours and stay there.
 
 **Using it:** either of you adds things ("pick up the cake saturday 2pm" —
-plain-English dates work); every task shows a chip for who added it; checking
-things off syncs both ways. Due-time reminders for shared tasks buzz both
+plain-English dates work); checking things off syncs both ways.
+
+**Tagging each other.** Under the add box is **Either of us / Me / <their
+name>**. Tag a new task with the other person and it lands on the shared list
+as *theirs* — the row shows a **For <name>** chip in their colour, and their
+phone gets a notification straight away ("Sam tagged you"). Left on *Either of
+us*, the chip just says who added it, and nobody is pinged. You can change
+whose it is later by opening the task — **Whose task** — and that notifies them
+too (unless you're tagging yourself, or it's already theirs). Due-time reminders for shared tasks buzz both
 phones. You can also tell the assistant *"add milk to our list"* — "our" means the
 shared list.
 

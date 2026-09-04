@@ -21,8 +21,10 @@ import type {
   Note,
   NotificationSettings,
   Project,
+  SessionRole,
   StatsSummary,
   Task,
+  TaskSpace,
   TaskDraft,
   TaskListFilter,
   TaskPatch,
@@ -211,7 +213,14 @@ export const authApi = {
 
 // ── Tasks ─────────────────────────────────────────────────────────────────
 
-export type TaskCreateInput = TaskDraft | { quick: string; projectId?: string | null };
+export type TaskCreateInput =
+  | TaskDraft
+  | {
+      quick: string;
+      projectId?: string | null;
+      space?: TaskSpace;
+      assignedTo?: SessionRole | null;
+    };
 
 export const tasksApi = {
   list: (filter: TaskListFilter = {}) => request<{ tasks: Task[] }>(keys.tasks(filter)),

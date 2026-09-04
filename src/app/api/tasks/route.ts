@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSession, sessionRole } from "@/lib/auth";
 import { projectsRepo, settingsRepo, tasksRepo } from "@/lib/db/repos";
 import { parseQuickAdd } from "@/lib/quickparse";
+import { alertAssignee } from "@/lib/assignNotify";
 import type { TaskDraft, TaskListFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,7 @@ const draftSchema = z.object({
   notes: z.string().optional(),
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
   space: z.enum(["personal", "joint"]).optional(),
+  assignedTo: z.enum(["owner", "partner"]).nullable().optional(),
   dueAt: z.string().nullable().optional(),
   dueKind: z.enum(["on", "by"]).optional(),
   allDay: z.boolean().optional(),
@@ -94,6 +96,8 @@ export async function POST(req: NextRequest) {
     const { draft: quickDraft, matchedText } = parseQuickAdd(quick, settings.tz, capturedAt);
     draft = quickDraft;
     if ((body as Record<string, unknown>).space === "joint") draft.space = "joint";
+    const tagged = (body as Record<string, unknown>).assignedTo;
+    if (tagged === "owner" || tagged === "partner") draft.assignedTo = tagged;
     if (matchedText.project) {
       const project =
         projectsRepo.findByName(matchedText.project) ?? projectsRepo.create({ name: matchedText.project });
@@ -117,6 +121,11 @@ export async function POST(req: NextRequest) {
     draft.projectId = null;
     draft.parentId = null;
   }
+  // Only the shared list has someone else to hand a task to.
+  if (draft.space !== "joint") draft.assignedTo = null;
 
-  return NextResponse.json({ task: tasksRepo.create(draft, role) });
+  const task = tasksRepo.create(draft, role);
+  await alertAssignee(task, role, null);
+  return NextResponse.json({ task });
 }
+

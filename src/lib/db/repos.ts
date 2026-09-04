@@ -176,6 +176,7 @@ interface TaskRow {
   status: string;
   space: string;
   created_by: string;
+  assigned_to: string | null;
   priority: number;
   due_at: string | null;
   due_kind: string;
@@ -200,6 +201,7 @@ function rowToTask(r: TaskRow): Task {
     status: r.status as Task["status"],
     space: r.space === "joint" ? "joint" : "personal",
     createdBy: r.created_by === "partner" ? "partner" : "owner",
+    assignedTo: r.assigned_to === "owner" || r.assigned_to === "partner" ? r.assigned_to : null,
     priority: r.priority as Task["priority"],
     dueAt: r.due_at,
     dueKind: r.due_kind === "by" ? "by" : "on",
@@ -324,8 +326,8 @@ export const tasksRepo = {
     const now = nowIso();
     getDb()
       .prepare(
-        `INSERT INTO tasks(id,title,notes,status,space,created_by,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO tasks(id,title,notes,status,space,created_by,assigned_to,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         id,
@@ -334,6 +336,7 @@ export const tasksRepo = {
         "open",
         draft.space === "joint" ? "joint" : "personal",
         createdBy,
+        draft.assignedTo === "owner" || draft.assignedTo === "partner" ? draft.assignedTo : null,
         draft.priority ?? 0,
         draft.dueAt ?? null,
         draft.dueKind === "by" ? "by" : "on",
@@ -357,6 +360,7 @@ export const tasksRepo = {
     const params: unknown[] = [nowIso()];
     const map: [keyof TaskPatch, string, (v: unknown) => unknown][] = [
       ["title", "title", (v) => String(v).trim()],
+      ["assignedTo", "assigned_to", (v) => (v === "owner" || v === "partner" ? v : null)],
       ["notes", "notes", (v) => v],
       ["priority", "priority", (v) => v],
       ["dueAt", "due_at", (v) => v],

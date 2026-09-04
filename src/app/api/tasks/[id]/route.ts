@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession, sessionRole } from "@/lib/auth";
 import { tasksRepo } from "@/lib/db/repos";
+import { alertAssignee } from "@/lib/assignNotify";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,7 @@ const patchSchema = z.object({
     .nullable()
     .optional(),
   sort: z.number().optional(),
+  assignedTo: z.enum(["owner", "partner"]).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,7 +43,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (gate) return gate;
   const { id } = await params;
   const role = (await sessionRole()) ?? "owner";
-  if (role === "partner" && tasksRepo.get(id)?.space !== "joint") {
+  const before = tasksRepo.get(id);
+  if (role === "partner" && before?.space !== "joint") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -56,6 +59,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const task = tasksRepo.update(id, parsed.data);
   if (!task) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if ("assignedTo" in parsed.data) {
+    await alertAssignee(task, role, before?.assignedTo ?? null);
   }
   return NextResponse.json({ task });
 }

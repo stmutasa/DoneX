@@ -125,6 +125,8 @@ export function synthesizeTask(body: Record<string, unknown>, offlineId: string)
     status: "open",
     space: (body.space === "joint" ? "joint" : "personal") as Task["space"],
     createdBy: "owner",
+    assignedTo:
+      body.assignedTo === "owner" || body.assignedTo === "partner" ? body.assignedTo : null,
     priority: draft.priority ?? 0,
     dueAt: draft.dueAt ?? null,
     dueKind: draft.dueKind === "by" ? "by" : "on",

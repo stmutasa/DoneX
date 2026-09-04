@@ -57,13 +57,17 @@ export function TaskItem({
     ? task.priority
     : effectivePriority(task, Intl.DateTimeFormat().resolvedOptions().timeZone);
   const escalated = priority > task.priority;
-  const byPartner = task.createdBy === "partner";
+  // An assigned task belongs to whoever it was handed to; otherwise the chip
+  // still says who added it.
+  const chipRole = task.assignedTo ?? task.createdBy;
+  const chipIsPartner = chipRole === "partner";
   const attributionColor = attribution
     ? normalizeJointColor(
-        byPartner ? attribution.colors?.partner : attribution.colors?.owner,
-        byPartner ? "pink" : "blue",
+        chipIsPartner ? attribution.colors?.partner : attribution.colors?.owner,
+        chipIsPartner ? "pink" : "blue",
       )
     : null;
+  const chipName = chipIsPartner ? attribution?.partner : attribution?.owner;
 
   const toggle = async () => {
     if (busy) return;
@@ -163,8 +167,9 @@ export function TaskItem({
             <span
               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
               style={{ background: hueSoftVar(attributionColor), color: hueVar(attributionColor) }}
+              title={task.assignedTo ? `${chipName}'s task` : `Added by ${chipName}`}
             >
-              {byPartner ? attribution.partner : attribution.owner}
+              {task.assignedTo ? `For ${chipName}` : chipName}
             </span>
           ) : null}
 

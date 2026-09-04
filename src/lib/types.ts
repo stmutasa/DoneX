@@ -43,6 +43,8 @@ export interface Task {
   space: TaskSpace;
   /** who created it — meaningful on the joint list */
   createdBy: SessionRole;
+  /** joint list: whose job this is, or null when it belongs to neither */
+  assignedTo: SessionRole | null;
   priority: Priority;
   /** ISO datetime (UTC) or null. If allDay, time component is 00:00 local encoded at creation. */
   dueAt: string | null;
@@ -67,6 +69,7 @@ export interface TaskDraft {
   title: string;
   notes?: string;
   space?: TaskSpace;
+  assignedTo?: SessionRole | null;
   priority?: Priority;
   dueAt?: string | null;
   dueKind?: "on" | "by";

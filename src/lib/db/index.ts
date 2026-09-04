@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   due_kind TEXT NOT NULL DEFAULT 'on',
   space TEXT NOT NULL DEFAULT 'personal',
   created_by TEXT NOT NULL DEFAULT 'owner',
+  assigned_to TEXT,
   all_day INTEGER DEFAULT 0,
   project_id TEXT,
   tags TEXT DEFAULT '[]',
@@ -152,6 +153,9 @@ function migrate(db: Database.Database): void {
   if (!taskCols.has("space")) {
     db.exec("ALTER TABLE tasks ADD COLUMN space TEXT NOT NULL DEFAULT 'personal'");
     db.exec("ALTER TABLE tasks ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
+  }
+  if (!taskCols.has("assigned_to")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN assigned_to TEXT");
   }
   const sessionCols = new Set(
     (db.pragma("table_info(sessions)") as { name: string }[]).map((c) => c.name)
