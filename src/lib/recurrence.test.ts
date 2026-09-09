@@ -8,6 +8,22 @@ function iso(dateLocal: string, time: string): string {
   return isoFromLocal(dateLocal, time, TZ);
 }
 
+describe("quarterly repeats", () => {
+  it("lands three months on, keeping the day", () => {
+    const next = nextOccurrence({ freq: "monthly", interval: 3, byMonthDay: 15 }, new Date("2026-01-15T09:00:00"), "America/New_York");
+    expect(next.getMonth()).toBe(3); // April
+    expect(next.getDate()).toBe(15);
+  });
+
+  it("is described as quarterly rather than 'every 3 months'", () => {
+    expect(describeRecurrence({ freq: "monthly", interval: 3 })).toBe("Quarterly");
+    expect(describeRecurrence({ freq: "monthly", interval: 3, byMonthDay: 15 })).toBe(
+      "Quarterly on day 15",
+    );
+    expect(describeRecurrence({ freq: "monthly", interval: 4 })).toBe("Every 4 months");
+  });
+});
+
 describe("nextOccurrence", () => {
   it("advances daily by the given interval", () => {
     const from = new Date(iso("2026-01-05", "09:30")); // Monday

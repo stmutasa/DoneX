@@ -68,8 +68,11 @@ export function describeRecurrence(rule: RecurrenceRule | null): string {
       const days = (rule.byWeekday ?? []).map((d) => names[d]).join(", ");
       return days ? `${every("week")} on ${days}` : every("week");
     }
-    case "monthly":
-      return rule.byMonthDay ? `${every("month")} on day ${rule.byMonthDay}` : every("month");
+    case "monthly": {
+      // Three months is a quarter, and people say quarterly.
+      const base = n === 3 ? "Quarterly" : every("month");
+      return rule.byMonthDay ? `${base} on day ${rule.byMonthDay}` : base;
+    }
     case "yearly":
       return every("year");
   }

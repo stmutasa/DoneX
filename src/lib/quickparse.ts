@@ -74,6 +74,8 @@ const RECUR_WEEKDAY_LIST_RE = new RegExp(
   "i"
 );
 const RECUR_INTERVAL_RE = /\bevery\s+(?:(\d+)\s+)?(day|week|month|year)s?\b/i;
+/** "quarterly" / "every quarter" — a quarter is three months. */
+const RECUR_QUARTERLY_RE = /\b(?:quarterly|every\s+quarter)\b/i;
 
 interface RecurrenceMatch {
   rule: RecurrenceRule;
@@ -87,6 +89,11 @@ function extractRecurrence(text: string): RecurrenceMatch | null {
     const interval = m[1] ? Math.max(1, parseInt(m[1], 10)) : 1;
     const byMonthDay = clamp(parseInt(m[2], 10), 1, 31);
     return { rule: { freq: "monthly", interval, byMonthDay }, match: m[0], index: m.index };
+  }
+
+  m = RECUR_QUARTERLY_RE.exec(text);
+  if (m) {
+    return { rule: { freq: "monthly", interval: 3 }, match: m[0], index: m.index };
   }
 
   m = RECUR_WEEKDAY_LIST_RE.exec(text);

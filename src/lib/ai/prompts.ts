@@ -175,7 +175,7 @@ Return JSON exactly like:
 {"decision": "task"|"note"|"update"|"duplicate"|"dismiss", "reason": string,
  "duplicateOf": string,
  "update": {"taskTitle": string, "dueAtLocal": string|null, "priority": 0|1|2|3|null, "note": string},
- "task": {"title": string, "dueAtLocal": string|null, "dueKind": "on"|"by", "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
+ "task": {"title": string, "summary": string, "dueAtLocal": string|null, "dueKind": "on"|"by", "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
  "note": {"title": string, "content": string}}
 
 Decisions:
@@ -189,6 +189,7 @@ Rules:
 - Include only the object matching your decision; omit the others.
 - "reason": at most 90 characters, plain words.
 - task.title: imperative, at most 80 characters, no trailing punctuation.
+- task.summary: 1–2 sentences, at most 300 characters, saying what the sender actually wants and the details the title had to drop — amounts, dates, reference or order numbers, the place, who is waiting on what. Write it to the user about the sender ("Ana needs the signed form before the 14th"), never as a re-greeting, and never repeat the title alone. Say "no further detail" only when the item genuinely carries none.
 - Any dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
 - task.dueKind: "by" when the date is a deadline (pay by, submit by, RSVP by, expires on) — doable any day up to then. "on" when it happens at that moment (appointments, pickups, events).
 - Priorities: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.

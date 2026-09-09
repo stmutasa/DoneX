@@ -27,6 +27,18 @@ describe("parseQuickAdd", () => {
     expect(draft.dueAt).toBeUndefined();
   });
 
+  it("reads 'quarterly' as every third month", () => {
+    const { draft, matchedText } = parseQuickAdd("change the water filter quarterly", TZ);
+    expect(draft.title).toBe("change the water filter");
+    expect(draft.recurrence).toEqual({ freq: "monthly", interval: 3 });
+    expect(matchedText.recurrence).toBe("quarterly");
+  });
+
+  it("reads 'every quarter' the same way", () => {
+    const { draft } = parseQuickAdd("estimated taxes every quarter", TZ);
+    expect(draft.recurrence).toEqual({ freq: "monthly", interval: 3 });
+  });
+
   it("parses a monthly recurrence with 'on the Nth' as byMonthDay (consumed before chrono sees it)", () => {
     const { draft, matchedText } = parseQuickAdd("pay rent every month on the 1st", TZ);
     expect(draft.title).toBe("pay rent");

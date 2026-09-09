@@ -3,11 +3,22 @@
 import type { RecurrenceRule } from "@/lib/types";
 import { WEEKDAY_INITIALS, WEEKDAY_NAMES, describeRecurrence } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Segmented } from "@/components/ui/Segmented";
 import { FieldLabel } from "@/components/ui/Field";
 import { IconMinus, IconPlusSmall } from "./stepper-icons";
 
-type Freq = RecurrenceRule["freq"] | "none";
+/** Quarterly isn't a separate rule — it is monthly, every third month. */
+type Freq = RecurrenceRule["freq"] | "quarterly" | "none";
+
+const QUARTER_MONTHS = 3;
+
+const CHOICES: { value: Freq; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "yearly", label: "Yearly" },
+];
 
 const UNIT: Record<RecurrenceRule["freq"], string> = {
   daily: "day",
@@ -23,15 +34,29 @@ export function RecurrenceBuilder({
   value: RecurrenceRule | null;
   onChange: (next: RecurrenceRule | null) => void;
 }) {
-  const freq: Freq = value?.freq ?? "none";
   const interval = Math.max(1, value?.interval ?? 1);
+  const freq: Freq = !value
+    ? "none"
+    : value.freq === "monthly" && interval === QUARTER_MONTHS
+      ? "quarterly"
+      : value.freq;
 
   const setFreq = (next: Freq) => {
     if (next === "none") {
       onChange(null);
       return;
     }
-    const base: RecurrenceRule = { freq: next, interval };
+    if (next === "quarterly") {
+      onChange({
+        freq: "monthly",
+        interval: QUARTER_MONTHS,
+        byMonthDay: value?.byMonthDay ?? new Date().getDate(),
+      });
+      return;
+    }
+    // Leaving quarterly shouldn't carry its 3 over to "every 3 days".
+    const carried = freq === "quarterly" ? 1 : interval;
+    const base: RecurrenceRule = { freq: next, interval: carried };
     if (next === "weekly") base.byWeekday = value?.byWeekday?.length ? value.byWeekday : [new Date().getDay()];
     if (next === "monthly") base.byMonthDay = value?.byMonthDay ?? new Date().getDate();
     onChange(base);
@@ -52,19 +77,25 @@ export function RecurrenceBuilder({
   return (
     <div>
       <FieldLabel>Repeat</FieldLabel>
-      <Segmented
-        size="sm"
-        ariaLabel="Repeat frequency"
-        value={freq}
-        onChange={setFreq}
-        options={[
-          { value: "none", label: "None" },
-          { value: "daily", label: "Daily" },
-          { value: "weekly", label: "Weekly" },
-          { value: "monthly", label: "Monthly" },
-          { value: "yearly", label: "Yearly" },
-        ]}
-      />
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Repeat frequency">
+        {CHOICES.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            role="radio"
+            aria-checked={freq === c.value}
+            onClick={() => setFreq(c.value)}
+            className={cn(
+              "min-h-[36px] rounded-full border px-3.5 text-[13.5px] font-medium transition-colors",
+              freq === c.value
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-stroke bg-elev text-muted hover:text-ink",
+            )}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
 
       {value ? (
         <div className="mt-3 space-y-3 rounded-2xl border border-stroke bg-sunken p-3">

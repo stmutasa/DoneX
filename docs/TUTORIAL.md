@@ -33,7 +33,7 @@ time. In DoneX, type the same thing into the **+** button and it becomes a real
 task with a real due date. Plain English works:
 
 - `Call the dentist tomorrow 3pm`
-- `Pay rent every month` ← repeats automatically
+- `Pay rent every month` ← repeats automatically (also `quarterly` / `every quarter`)
 - `Gym every mon wed fri 6am`
 - `Buy a gift for Sam friday !p1` ← `!p1` = high priority (also `!p2`, `!p3`)
 - `Fix the fence #Home @weekend` ← `#` puts it in a project, `@` adds a tag
@@ -231,10 +231,23 @@ for the screen it's on.
 
 ---
 
+## The Logbook
+
+More → **Logbook** is everything you've finished, newest day first. Ticked
+something off by mistake, or a job turned out not to be done? **Tap the green
+tick** and it goes straight back on your list — the entry leaves the log too.
+(For a repeating task, that only removes the log entry; the repeat keeps its
+next date.)
+
+---
+
 ## The Inbox (stuff flows in, you decide)
 
 More → **Inbox**. This is the "waiting room" for things that arrived on their
-own:
+own. When you turn one into a task, the task keeps a short note of what the
+message actually wanted — the sender, the amount, the date, the reference
+number — under a line saying where it came from, so the task still makes sense
+a week later:
 
 - **Texts from your Pixel** (via the MacroDroid forwarder you set up) — that
   "your cleaning is confirmed for Tue 3 PM" text shows up here.

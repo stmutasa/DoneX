@@ -188,7 +188,7 @@ export function describeRecurrence(rule: RecurrenceRule | null | undefined): str
       return days.length ? `${base} on ${days.join(", ")}` : base;
     }
     case "monthly": {
-      const base = n === 1 ? "Every month" : `Every ${n} months`;
+      const base = n === 1 ? "Every month" : n === 3 ? "Quarterly" : `Every ${n} months`;
       return rule.byMonthDay ? `${base} on the ${ordinal(rule.byMonthDay)}` : base;
     }
     case "yearly":

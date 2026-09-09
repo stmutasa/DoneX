@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/repos";
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
+import { composeInboxNotes } from "@/lib/inboxNotes";
 import type {
   Briefing,
   TaskDraft,
@@ -360,6 +361,8 @@ export interface ParsedTriage {
   } | null;
   task: {
     title: string;
+    /** what the item was actually asking for — becomes the task's notes */
+    summary: string;
     dueAtLocal: string | null;
     dueKind: "on" | "by";
     priority: Priority;
@@ -410,6 +413,7 @@ export function parseTriageDecision(
       .slice(0, 3);
     task = {
       title,
+      summary: (asString(rec.summary ?? rec.notes) ?? "").trim().slice(0, 400),
       dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
       dueKind: asString(rec.dueKind)?.toLowerCase() === "by" ? "by" : "on",
       priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
@@ -516,7 +520,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       sentDigest: await safeSentDigest(),
       feedbackDigest: buildFeedbackDigest(feedbackRepo.list(30)),
     }),
-    700
+    900
   );
 
   const parsed = parseTriageDecision(payload, item.content);
@@ -530,6 +534,13 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
     suggestion.action = "task";
     suggestion.task = {
       title: parsed.task.title,
+      notes: composeInboxNotes({
+        summary: parsed.task.summary,
+        content: item.content,
+        fromLabel: item.fromLabel,
+        source: item.source,
+        receivedAt: item.receivedAt,
+      }),
       dueAt: due.dueAt,
       dueKind: due.dueAt ? parsed.task.dueKind : "on",
       allDay: due.allDay,
