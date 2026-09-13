@@ -170,6 +170,7 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
               system,
               turns,
               tools: TOOLS,
+              feature: "chat",
               signal: timeoutSignal(),
               onText: (chunk) => {
                 if (!chunk) return;

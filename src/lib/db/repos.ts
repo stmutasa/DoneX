@@ -23,6 +23,7 @@ import type {
   TriageFeedback,
   WeeklyReview,
 } from "@/lib/types";
+import type { UsageRow } from "@/lib/usage";
 import crypto from "crypto";
 
 // ── Settings ───────────────────────────────────────────────────────────────
@@ -504,6 +505,82 @@ function isoStartOfLocalDay(dateKey: string, tz: string): string {
 }
 
 // ── Completions / stats ────────────────────────────────────────────────────
+
+/** Every AI call's token cost, so the Usage screen can add it up. */
+export const usageRepo = {
+  add(entry: {
+    provider: string;
+    model: string;
+    feature: string;
+    inputTokens: number;
+    outputTokens: number;
+    dateLocal: string;
+  }): void {
+    getDb()
+      .prepare(
+        "INSERT INTO ai_usage(id,at,date_local,provider,model,feature,input_tokens,output_tokens) VALUES(?,?,?,?,?,?,?,?)"
+      )
+      .run(
+        newId(),
+        nowIso(),
+        entry.dateLocal,
+        entry.provider,
+        entry.model.slice(0, 120),
+        entry.feature.slice(0, 40),
+        Math.max(0, Math.round(entry.inputTokens)),
+        Math.max(0, Math.round(entry.outputTokens))
+      );
+  },
+
+  /** Rows on or after a local date key, oldest first. */
+  since(fromKey: string): UsageRow[] {
+    const rows = getDb()
+      .prepare(
+        "SELECT date_local, provider, model, feature, input_tokens, output_tokens FROM ai_usage WHERE date_local >= ? ORDER BY date_local ASC"
+      )
+      .all(fromKey) as {
+      date_local: string;
+      provider: string;
+      model: string;
+      feature: string;
+      input_tokens: number;
+      output_tokens: number;
+    }[];
+    return rows.map((r) => ({
+      dateLocal: r.date_local,
+      provider: r.provider,
+      model: r.model,
+      feature: r.feature,
+      inputTokens: r.input_tokens,
+      outputTokens: r.output_tokens,
+    }));
+  },
+
+  /** Lifetime figures, without pulling every row into memory. */
+  lifetime(): { calls: number; input: number; output: number; total: number; firstDay: string | null } {
+    const row = getDb()
+      .prepare(
+        "SELECT COUNT(*) calls, COALESCE(SUM(input_tokens),0) input, COALESCE(SUM(output_tokens),0) output, MIN(date_local) first_day FROM ai_usage"
+      )
+      .get() as { calls: number; input: number; output: number; first_day: string | null };
+    return {
+      calls: row.calls,
+      input: row.input,
+      output: row.output,
+      total: row.input + row.output,
+      firstDay: row.first_day,
+    };
+  },
+
+  /** Keep roughly a year and a month, so "last month" is always whole. */
+  prune(beforeKey: string): number {
+    return getDb().prepare("DELETE FROM ai_usage WHERE date_local < ?").run(beforeKey).changes;
+  },
+
+  clear(): void {
+    getDb().prepare("DELETE FROM ai_usage").run();
+  },
+};
 
 export const completionsRepo = {
   log(taskId: string, title: string, completedAt: string, dateLocal: string): void {

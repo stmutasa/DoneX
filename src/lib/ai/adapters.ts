@@ -155,6 +155,7 @@ export async function testProvider(
       system: "You are a connectivity probe. Answer with one word.",
       prompt: "Reply with the single word: ok",
       maxTokens: 8,
+      feature: "test",
       signal: AbortSignal.timeout(30_000),
     });
     if (!text.trim()) return { ok: false, message: `${model} returned an empty reply.` };

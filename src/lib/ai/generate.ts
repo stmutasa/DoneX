@@ -14,6 +14,7 @@ import {
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
 import { composeInboxNotes } from "@/lib/inboxNotes";
+import type { AiFeature } from "@/lib/ai/usage";
 import type {
   Briefing,
   TaskDraft,
@@ -39,7 +40,11 @@ import {
 } from "@/lib/ai/prompts";
 
 /** One non-streaming JSON call, with a single stricter retry on parse failure. */
-async function jsonCall(prompt: string, maxTokens = 1400): Promise<Record<string, unknown>> {
+async function jsonCall(
+  prompt: string,
+  maxTokens = 1400,
+  feature: AiFeature = "other",
+): Promise<Record<string, unknown>> {
   // Wrapped in failover: a dead key, a rate limit or a model that simply
   // cannot produce JSON all hand off to the standby provider.
   return callWithFailover(async (cfg, adapter) => {
@@ -49,6 +54,7 @@ async function jsonCall(prompt: string, maxTokens = 1400): Promise<Record<string
         system: JSON_SYSTEM,
         prompt: text,
         maxTokens,
+        feature,
         signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
       });
 
@@ -133,7 +139,8 @@ export async function generateBriefing(
       doneYesterday,
       weather: await safeWeatherLine(tz),
     }),
-    900
+    900,
+    "briefing",
   );
 
   const known = new Set(today.map((t) => t.id));
@@ -222,7 +229,8 @@ export async function generateWeeklyReview(
       openNow: counts.open,
       overdueNow: counts.overdue,
     }),
-    1000
+    1000,
+    "review",
   );
 
   const modelBest = asString(payload.bestDay)?.trim() ?? "";
@@ -313,6 +321,7 @@ export async function generateTaskBreakdown(
       existingTasks: existing,
     }),
     4000,
+    "breakdown",
   );
 
   return parseBreakdown(payload).map((item) => {
@@ -520,7 +529,8 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       sentDigest: await safeSentDigest(),
       feedbackDigest: buildFeedbackDigest(feedbackRepo.list(30)),
     }),
-    900
+    900,
+    "triage",
   );
 
   const parsed = parseTriageDecision(payload, item.content);

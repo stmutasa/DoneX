@@ -1,4 +1,5 @@
 import type { ModelInfo } from "@/lib/types";
+import { readUsage, recordAiUsage } from "@/lib/ai/usage";
 import { asArray, asNumber, asRecord, asString, safeJsonParse } from "@/lib/ai/json";
 import { iterateSse } from "@/lib/ai/sse";
 import { toOpenAiTools } from "@/lib/ai/tools";
@@ -85,11 +86,15 @@ async function stream({
   tools,
   onText,
   signal,
+  feature,
 }: StreamArgs): Promise<StreamOutcome> {
   const buildBody = (disableReasoning: boolean): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       model: cfg.model,
       stream: true,
+      // Ask for a final usage chunk; servers that don't know the option
+      // simply never send one, and the call still works.
+      stream_options: { include_usage: true },
       messages: toOpenAiMessages(system, turns),
     };
     if (tools.length > 0) {
@@ -129,6 +134,9 @@ async function stream({
     if (msg.data === "[DONE]") break;
     const payload = asRecord(safeJsonParse(msg.data));
     if (!payload) continue;
+    if (payload.usage) {
+      recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload.usage) });
+    }
     const errMsg = asRecord(payload.error);
     if (errMsg) {
       const m = asString(errMsg.message);
@@ -177,6 +185,7 @@ async function complete({
   prompt,
   maxTokens,
   signal,
+  feature,
 }: CompleteArgs): Promise<string> {
   const messages = [
     { role: "system", content: system },
@@ -204,6 +213,7 @@ async function complete({
   }
 
   const payload = asRecord(safeJsonParse(await res.text()));
+  recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload?.usage) });
   const choice = asRecord(asArray(payload?.choices)[0]);
   const message = asRecord(choice?.message);
   const content = asString(message?.content);

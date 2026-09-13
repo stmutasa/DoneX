@@ -84,6 +84,8 @@ export interface StreamArgs {
   tools: ToolSpec[];
   onText: (text: string) => void;
   signal: AbortSignal;
+  /** what the tokens are being spent on, for the Usage screen */
+  feature?: string;
 }
 
 export interface StreamOutcome {
@@ -97,6 +99,8 @@ export interface CompleteArgs {
   prompt: string;
   maxTokens: number;
   signal: AbortSignal;
+  /** what the tokens are being spent on, for the Usage screen */
+  feature?: string;
 }
 
 export interface ProviderAdapter {

@@ -7,6 +7,10 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "src") },
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+      // Next's client/server guard; harmless and unresolvable in tests.
+      "server-only": path.resolve(__dirname, "src/test/server-only-stub.ts"),
+    },
   },
 });

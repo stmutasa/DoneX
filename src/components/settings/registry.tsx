@@ -13,6 +13,7 @@ import { APP_VERSION } from "@/lib/version";
 import {
   IconBell,
   IconCalendar,
+  IconChart,
   IconDownload,
   IconInbox,
   IconKeyboard,
@@ -24,6 +25,7 @@ import {
   IconWand,
 } from "@/components/ui/icons";
 import { AboutSection } from "./AboutSection";
+import { UsageSection } from "./UsageSection";
 import { JointSection } from "./JointSection";
 import { AiSection } from "./AiSection";
 import { CaptureSection } from "./CaptureSection";
@@ -98,6 +100,13 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
             : base;
         },
         render: (s, m) => <AiSection settings={s} mutate={m} />,
+      },
+      {
+        slug: "usage",
+        title: "Token usage",
+        icon: IconChart,
+        subtitle: () => "What the AI has spent, by model and company",
+        render: () => <UsageSection />,
       },
       {
         slug: "voice",

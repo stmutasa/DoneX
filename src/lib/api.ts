@@ -502,6 +502,10 @@ export const jointApi = {
     }),
 };
 
+export const usageApi = {
+  clear: () => request<{ ok: true }>("/api/usage", { method: "DELETE" }),
+};
+
 export const statsApi = {
   get: () => request<StatsSummary>(keys.stats()),
 };

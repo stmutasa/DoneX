@@ -326,6 +326,25 @@ assistant copes fine.
 
 ---
 
+## Token usage
+
+Settings → **Token usage** shows what the app's AI has actually spent:
+
+- **Headline numbers** for today, the last 7 days, the last 30 days, and all
+  time — tokens and how many calls made them.
+- **A bar per day** over 7, 30 or 90 days, so a runaway day is obvious.
+- **By company** (OpenAI / Anthropic / a custom endpoint), **by model**, and
+  **by what used it** — inbox triage, morning briefing, weekly review, paste →
+  tasks, assistant chat, connection tests. Each with its share of the window.
+
+The figures come from each provider's own usage counts on every reply, so they
+line up with what you're billed for — the app doesn't guess. Counting starts
+from this update; there's no history from before it. **Clear history** resets
+the counters and nothing else. Records older than about 13 months are dropped
+automatically, so "last 30 days" is always complete.
+
+---
+
 ## Settings worth knowing about
 
 Settings is now a **menu**: five short groups (You · Intelligence ·

@@ -1,4 +1,5 @@
 import type { ModelInfo } from "@/lib/types";
+import { readUsage, recordAiUsage } from "@/lib/ai/usage";
 import { asArray, asNumber, asRecord, asString, safeJsonParse } from "@/lib/ai/json";
 import { iterateSse } from "@/lib/ai/sse";
 import { toAnthropicTools } from "@/lib/ai/tools";
@@ -74,6 +75,7 @@ async function stream({
   tools,
   onText,
   signal,
+  feature,
 }: StreamArgs): Promise<StreamOutcome> {
   const body: Record<string, unknown> = {
     model: cfg.model,
@@ -93,6 +95,8 @@ async function stream({
   if (!res.ok || !res.body) throw await providerError(res);
 
   let text = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
   const blocks = new Map<number, BlockAcc>();
 
   for await (const msg of iterateSse(res.body)) {
@@ -104,6 +108,20 @@ async function stream({
       const err = asRecord(payload.error);
       const m = asString(err?.message);
       throw new Error(m && m.trim() ? m.trim() : "The AI provider returned an error.");
+    }
+
+    if (type === "message_start") {
+      const usage = readUsage(asRecord(payload.message)?.usage);
+      inputTokens = usage.inputTokens;
+      outputTokens = usage.outputTokens;
+      continue;
+    }
+
+    if (type === "message_delta") {
+      const usage = readUsage(payload.usage);
+      if (usage.outputTokens) outputTokens = usage.outputTokens;
+      if (usage.inputTokens) inputTokens = usage.inputTokens;
+      continue;
     }
 
     if (type === "content_block_start") {
@@ -137,6 +155,8 @@ async function stream({
     }
   }
 
+  recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, inputTokens, outputTokens });
+
   const toolCalls: LlmToolCall[] = [...blocks.entries()]
     .sort((a, b) => a[0] - b[0])
     .filter(([, b]) => b.type === "tool_use" && b.name.length > 0)
@@ -155,6 +175,7 @@ async function complete({
   prompt,
   maxTokens,
   signal,
+  feature,
 }: CompleteArgs): Promise<string> {
   const res = await fetch(`${cfg.baseUrl}/messages`, {
     method: "POST",
@@ -169,6 +190,7 @@ async function complete({
   });
   if (!res.ok) throw await providerError(res);
   const payload = asRecord(safeJsonParse(await res.text()));
+  recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload?.usage) });
   return asArray(payload?.content)
     .map((entry) => {
       const rec = asRecord(entry);
