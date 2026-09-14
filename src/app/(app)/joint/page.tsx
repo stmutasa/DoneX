@@ -14,6 +14,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { cn } from "@/lib/utils";
 import { JointCalendar, type CalendarMode } from "@/components/joint/JointCalendar";
 import { DigestRow } from "@/components/joint/DigestRow";
+import { AwayBanner } from "@/components/joint/AwayBanner";
 
 /**
  * The shared list. Identical for both people: the owner reaches it as one tab
@@ -103,6 +104,8 @@ export default function JointPage() {
         title="Ours"
         subtitle={`What ${names.owner} and ${names.partner} share.`}
       />
+
+      <AwayBanner />
 
       <div className="mb-4 xl:hidden">
         <Segmented

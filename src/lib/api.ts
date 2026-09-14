@@ -518,6 +518,14 @@ export const jointApi = {
     }),
 };
 
+export const tripsApi = {
+  packing: () =>
+    request<{ ok: true; noteId: string; added: number }>("/api/trips/packing", {
+      method: "POST",
+      timeoutMs: 60_000,
+    }),
+};
+
 export const backupsApi = {
   create: () =>
     request<{ ok: true; snapshot: { name: string; bytes: number; counts: Record<string, number> } }>(

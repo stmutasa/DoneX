@@ -17,6 +17,7 @@ import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 import { BriefingCard } from "@/components/today/BriefingCard";
 import { CalendarStrip } from "@/components/today/CalendarStrip";
+import { TripCard } from "@/components/today/TripCard";
 
 const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -111,6 +112,7 @@ export default function TodayPage() {
       </header>
 
       <div className="mb-6">
+        <TripCard />
         <CalendarStrip />
       </div>
 

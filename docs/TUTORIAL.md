@@ -357,6 +357,29 @@ automatically, so "last 30 days" is always complete.
 
 ---
 
+## Travelling
+
+Nothing to switch on. Flights, hotels and rental cars land on your calendar
+from confirmation emails, and DoneX reads them:
+
+- **A few days before you go**, Today shows the trip with a **Make a packing
+  list** button. One tap creates a pinned checklist in Notes, sized to the trip
+  — days of clothes, boarding pass, licence if you've booked a car, hold the
+  mail on longer trips. Tapping it again later tops it up rather than making a
+  second list.
+- **While you're away**, Today says where you are and when you're home, and
+  Annette sees a line on Ours saying the same — so she isn't guessing.
+- **Your morning briefing and digest follow the destination's clock**, taken
+  from the flight's own arrival time. 7am stays 7am where you woke up instead
+  of firing at 4am. Hers stays on home time, since she hasn't gone anywhere.
+  (This needs a calendar that carries timezones — Google does. A plain iCloud
+  link doesn't, so there the trip still shows but the times stay on home time.)
+
+A single rental car or a one-night hotel isn't treated as a trip; it takes a
+flight, or a stay spanning a night, before any of this appears.
+
+---
+
 ## Backups
 
 Settings → **Backups**. A full snapshot — tasks, notes, projects, inbox,

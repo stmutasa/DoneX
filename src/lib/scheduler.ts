@@ -26,6 +26,7 @@ import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
 import { MAX_INBOX_ALERTS_PER_DAY, readAlertBudget } from "@/lib/alertbudget";
 import {
   addDaysToDateKey,
+  isoFromLocal,
   isoWeekKey,
   isQuietTime,
   localDateKey,
@@ -34,6 +35,8 @@ import {
   nowIso,
 } from "@/lib/utils";
 import { runBackup } from "@/lib/backup";
+import { ownerEvents } from "@/lib/jointFeeds";
+import { activeTrip, detectTrips, wallClockAt, type Trip } from "@/lib/trips";
 import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
 import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
 
@@ -56,6 +59,47 @@ const kvLastDigestDay = (role: SessionRole) => `sched.lastJointDigest.${role}`;
 /** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
 const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
 
+/** Where you are right now, re-read hourly — shifts move week to week, so
+ *  this never assumes yesterday's answer still holds. */
+let awayCache: { at: number; trip: Trip | null } = { at: 0, trip: null };
+const AWAY_TTL_MS = 60 * 60 * 1000;
+
+async function currentTrip(settings: AppSettings, now: Date): Promise<Trip | null> {
+  if (now.getTime() - awayCache.at < AWAY_TTL_MS) return awayCache.trip;
+  try {
+    const tz = settings.tz;
+    const todayKey = localDateKey(now, tz);
+    const { events } = await ownerEvents(settings.joint, {
+      fromIso: isoFromLocal(addDaysToDateKey(todayKey, -1), "00:00", tz),
+      toIso: isoFromLocal(addDaysToDateKey(todayKey, 30), "00:00", tz),
+    });
+    awayCache = { at: now.getTime(), trip: activeTrip(detectTrips(events), now) };
+  } catch (err) {
+    console.error("[scheduler] trip lookup", err);
+    awayCache = { at: now.getTime(), trip: null };
+  }
+  return awayCache.trip;
+}
+
+/**
+ * The clock a morning alert should follow: the destination's while you are
+ * travelling, home otherwise. Keeps a 7am briefing at 7am where you woke up
+ * rather than firing at 4am local.
+ */
+function clockFor(settings: AppSettings, now: Date, trip: Trip | null) {
+  if (trip && trip.offsetMinutes !== null) {
+    const wall = wallClockAt(now, trip.offsetMinutes);
+    return { time: wall.time, dateKey: wall.dateKey, weekday: wall.weekday, away: true };
+  }
+  const dateKey = localDateKey(now, settings.tz);
+  return {
+    time: localTimeKey(now, settings.tz),
+    dateKey,
+    weekday: localWeekday(dateKey),
+    away: false,
+  };
+}
+
 const globalForScheduler = globalThis as unknown as { __donexSchedulerStarted?: boolean };
 let ticking = false;
 
@@ -74,12 +118,13 @@ async function tick(): Promise<void> {
   try {
     const settings = settingsRepo.getApp();
     const now = new Date();
+    const trip = await currentTrip(settings, now);
     await runReminders(settings);
-    await runMorningBriefing(settings, now);
+    await runMorningBriefing(settings, now, trip);
     await runWeeklyReview(settings, now);
     await runGmailScan(settings);
     await runScheduledTriage(settings, now);
-    await runJointDigests(settings, now);
+    await runJointDigests(settings, now, trip);
     await runWeeklyBackup(settings, now);
     await runBackupModelRefresh(settings, now);
   } catch (err) {
@@ -164,14 +209,20 @@ async function runReminders(settings: AppSettings): Promise<void> {
 
 // ── 2. Morning briefing ────────────────────────────────────────────────────
 
-async function runMorningBriefing(settings: AppSettings, now: Date): Promise<void> {
+async function runMorningBriefing(
+  settings: AppSettings,
+  now: Date,
+  trip: Trip | null,
+): Promise<void> {
   try {
     if (!settings.notifications.briefingEnabled) return;
 
-    const tz = settings.tz;
-    if (localTimeKey(now, tz) !== normalizeTime(settings.notifications.briefingTime)) return;
+    const clock = clockFor(settings, now, trip);
+    if (clock.time !== normalizeTime(settings.notifications.briefingTime)) return;
 
-    const dateLocal = localDateKey(now, tz);
+    // The day key follows the same clock, so a trip can't send two briefings
+    // in one local day or skip one crossing a date line.
+    const dateLocal = clock.dateKey;
     if (settingsRepo.getKV(KV_LAST_BRIEFING_DAY) === dateLocal) return;
     settingsRepo.setKV(KV_LAST_BRIEFING_DAY, dateLocal); // claim the slot first
 
@@ -205,12 +256,15 @@ async function runMorningBriefing(settings: AppSettings, now: Date): Promise<voi
  * and the unclaimed ones — the other person's jobs are theirs to be reminded
  * of. Sundays are skipped for both.
  */
-async function runJointDigests(settings: AppSettings, now: Date): Promise<void> {
+async function runJointDigests(
+  settings: AppSettings,
+  now: Date,
+  trip: Trip | null,
+): Promise<void> {
   const joint = settings.joint;
-  const tz = settings.tz;
-  const today = localDateKey(now, tz);
-  const nowTime = localTimeKey(now, tz);
-  const weekday = localWeekday(today);
+  // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
+  const mine = clockFor(settings, now, trip);
+  const home = clockFor(settings, now, null);
 
   const people: { role: SessionRole; schedule: DigestSchedule }[] = [
     {
@@ -233,26 +287,27 @@ async function runJointDigests(settings: AppSettings, now: Date): Promise<void> 
 
   for (const { role, schedule } of people) {
     try {
+      const clock = role === "owner" ? mine : home;
       const key = kvLastDigestDay(role);
       if (
         !shouldSendDigest({
           schedule,
-          nowTime,
-          weekday,
-          today,
+          nowTime: clock.time,
+          weekday: clock.weekday,
+          today: clock.dateKey,
           lastSent: settingsRepo.getKV(key),
         })
       ) {
         continue;
       }
-      settingsRepo.setKV(key, today); // claim the slot before the slow part
+      settingsRepo.setKV(key, clock.dateKey); // claim the slot before the slow part
 
       const digest = await generateJointDigest(role);
       // An empty digest means an empty list — no reason to buzz anyone.
       if (!digest) continue;
 
       await sendPushToAll(
-        { title: "Ours — this morning", body: digest, url: "/joint", tag: `joint-digest-${today}` },
+        { title: "Ours — this morning", body: digest, url: "/joint", tag: `joint-digest-${clock.dateKey}` },
         [role],
       );
     } catch (err) {
