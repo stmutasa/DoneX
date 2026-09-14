@@ -486,6 +486,10 @@ export type SettingsPatch = {
     ownerDigestTime?: string;
     partnerDigestEnabled?: boolean;
     partnerDigestTime?: string;
+    ownerWeekAheadEnabled?: boolean;
+    ownerWeekAheadTime?: string;
+    partnerWeekAheadEnabled?: boolean;
+    partnerWeekAheadTime?: string;
   };
 };
 
@@ -494,6 +498,13 @@ export interface CalendarTestResult {
   message: string;
   count: number;
   source: "ics" | "google-shared" | "google-own" | "none";
+}
+
+export interface WeekAheadState {
+  role: "owner" | "partner";
+  enabled: boolean;
+  time: string;
+  last: { text: string; weekOf: string; at: string } | null;
 }
 
 export const jointApi = {
@@ -508,6 +519,18 @@ export const jointApi = {
     request<{ role: "owner" | "partner"; enabled: boolean; time: string }>(
       "/api/joint/digest",
       { method: "PATCH", body: JSON.stringify(patch) },
+    ),
+  /** Your own Sunday week-ahead schedule; the server decides whose. */
+  setWeekAhead: (patch: { enabled?: boolean; time?: string }) =>
+    request<WeekAheadState>("/api/joint/weekahead", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  /** Build and push your own week-ahead right now, to check it works. */
+  testWeekAhead: () =>
+    request<{ ok: true; sent: number; text: string; message: string }>(
+      "/api/joint/weekahead",
+      { method: "POST", timeoutMs: 60_000 },
     ),
   /** Try a person's configured calendar right now and report what happened. */
   testCalendar: (side: "owner" | "partner") =>

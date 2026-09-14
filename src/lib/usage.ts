@@ -55,6 +55,7 @@ const FEATURE_LABELS: Record<string, string> = {
   breakdown: "Paste → tasks",
   chat: "Assistant chat",
   jointDigest: "Shared list digest",
+  weekAhead: "Week ahead",
   test: "Connection tests",
   other: "Other",
 };

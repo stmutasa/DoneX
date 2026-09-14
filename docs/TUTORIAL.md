@@ -184,6 +184,20 @@ row at the bottom of the Ours list, where you can also turn it off or hit
 see and set both. A digest is skipped silently when there's nothing on your
 half of the list.
 
+**The week ahead.** Sunday evening at **6:00 PM**, a second notification looks
+forward instead of at tomorrow: what's tagged for you on the shared list, what
+neither of you has claimed, anything already late, and everything on both
+calendars for Monday through Sunday. It also tells you *how many* things the
+other person is carrying — a number, never their titles — so you know roughly
+where they stand before the week starts.
+
+Like the digest it's per person: you each have your own time and your own off
+switch, in the **Week ahead** row at the bottom of the Ours list (or Settings →
+Shared list, where you can see both). **Send me one now** builds a real one on
+the spot. The last one you were sent is kept in that same sheet, so a swiped
+notification isn't lost. A week with nothing on your half of the list and
+nothing on either calendar doesn't buzz anyone.
+
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
 with hers — you're blue, she's pink, and either of you can be any of eight
 colors (Settings → **Shared list** → the color swatches) — plus any dated

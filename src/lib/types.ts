@@ -320,6 +320,11 @@ export interface JointSettings {
   ownerDigestTime: string; // "07:00" local
   partnerDigestEnabled: boolean;
   partnerDigestTime: string; // "10:00" local
+  /** Sunday-evening look at the week to come — again, one time each */
+  ownerWeekAheadEnabled: boolean;
+  ownerWeekAheadTime: string; // "18:00" local, Sundays
+  partnerWeekAheadEnabled: boolean;
+  partnerWeekAheadTime: string; // "18:00" local, Sundays
 }
 
 export interface AppSettings {

@@ -302,6 +302,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
             <div className="mt-3 space-y-3">
               <DigestControls
                 label="Yours"
+                what="morning digest"
                 enabled={settings.joint.ownerDigestEnabled}
                 time={settings.joint.ownerDigestTime}
                 onEnabled={(v) => void patch({ joint: { ownerDigestEnabled: v } }, "Digest updated")}
@@ -309,10 +310,48 @@ export function JointSection({ settings, mutate }: SectionProps) {
               />
               <DigestControls
                 label={`${partnerLabel}’s`}
+                what="morning digest"
                 enabled={settings.joint.partnerDigestEnabled}
                 time={settings.joint.partnerDigestTime}
                 onEnabled={(v) => void patch({ joint: { partnerDigestEnabled: v } }, "Digest updated")}
                 onTime={(v) => void patch({ joint: { partnerDigestTime: v } }, "Digest time saved")}
+              />
+            </div>
+          </div>
+
+          <Divider />
+
+          <div>
+            <div className="text-[15px] text-ink">Week ahead</div>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
+              Sunday evening, a look at the seven days coming — your tagged tasks, the
+              unclaimed ones, and both calendars. Same rule: a count of what the other
+              one is carrying, never their list.
+            </p>
+            <div className="mt-3 space-y-3">
+              <DigestControls
+                label="Yours"
+                what="week ahead"
+                enabled={settings.joint.ownerWeekAheadEnabled}
+                time={settings.joint.ownerWeekAheadTime}
+                onEnabled={(v) =>
+                  void patch({ joint: { ownerWeekAheadEnabled: v } }, "Week ahead updated")
+                }
+                onTime={(v) =>
+                  void patch({ joint: { ownerWeekAheadTime: v } }, "Week ahead time saved")
+                }
+              />
+              <DigestControls
+                label={`${partnerLabel}’s`}
+                what="week ahead"
+                enabled={settings.joint.partnerWeekAheadEnabled}
+                time={settings.joint.partnerWeekAheadTime}
+                onEnabled={(v) =>
+                  void patch({ joint: { partnerWeekAheadEnabled: v } }, "Week ahead updated")
+                }
+                onTime={(v) =>
+                  void patch({ joint: { partnerWeekAheadTime: v } }, "Week ahead time saved")
+                }
               />
             </div>
           </div>
@@ -369,12 +408,15 @@ function ColorRow({
 /** One person's digest switch and time. */
 function DigestControls({
   label,
+  what,
   enabled,
   time,
   onEnabled,
   onTime,
 }: {
   label: string;
+  /** what is being scheduled, e.g. "morning digest" */
+  what: string;
   enabled: boolean;
   time: string;
   onEnabled: (next: boolean) => void;
@@ -382,7 +424,7 @@ function DigestControls({
 }) {
   return (
     <div className="rounded-2xl border border-stroke bg-sunken p-3">
-      <SwitchRow label={`${label} morning digest`} checked={enabled} onChange={onEnabled} />
+      <SwitchRow label={`${label} ${what}`} checked={enabled} onChange={onEnabled} />
       <div className="mt-2.5 flex items-center justify-between gap-3">
         <span className="text-[13px] text-muted">Sent at</span>
         <input

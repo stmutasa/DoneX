@@ -19,9 +19,16 @@ import {
   fallbackDigest,
   splitForDigest,
 } from "@/lib/jointDigest";
+import {
+  contextLines,
+  fallbackWeekAhead,
+  weekAheadContext,
+  worthSending,
+} from "@/lib/weekAhead";
 import type { AiFeature } from "@/lib/ai/usage";
 import type {
   Briefing,
+  CalendarEvent,
   TaskDraft,
   InboxItem,
   InboxSuggestion,
@@ -42,6 +49,7 @@ import {
   breakdownPrompt,
   briefingPrompt,
   jointDigestPrompt,
+  weekAheadPrompt,
   reviewPrompt,
   triagePrompt,
 } from "@/lib/ai/prompts";
@@ -555,6 +563,55 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
     return text ? text.slice(0, 240) : fallback;
   } catch (err) {
     console.error("[digest] generation", err);
+    return fallback;
+  }
+}
+
+/**
+ * The Sunday week-ahead for one person. Same privacy rule as the daily
+ * digest: the other person's tasks never reach the model, only their count.
+ */
+export async function generateWeekAhead(
+  role: SessionRole,
+  events: CalendarEvent[],
+  weekOf: string,
+): Promise<string> {
+  const settings = settingsRepo.getApp();
+  const tz = settings.tz;
+
+  const ctx = weekAheadContext({ tasks: tasksRepo.list({ space: "joint" }), events, role });
+  if (!worthSending(ctx)) return "";
+
+  const names = {
+    owner: settings.joint.ownerName || "You",
+    partner: settings.joint.partnerName || "Your partner",
+  };
+  const personName = role === "owner" ? names.owner : names.partner;
+  const partnerName = role === "owner" ? names.partner : names.owner;
+
+  const fallback = fallbackWeekAhead(ctx, partnerName);
+  if (!aiConfigured()) return fallback;
+
+  try {
+    const lines = contextLines(ctx);
+    const payload = await jsonCall(
+      weekAheadPrompt({
+        personName,
+        partnerName,
+        weekOf,
+        tz,
+        mine: lines.mine,
+        ours: lines.ours,
+        events: lines.events,
+        theirCount: ctx.theirCount,
+      }),
+      500,
+      "weekAhead",
+    );
+    const text = (asString(payload.digest) ?? "").trim();
+    return text ? text.slice(0, 300) : fallback;
+  } catch (err) {
+    console.error("[weekAhead] generation", err);
     return fallback;
   }
 }

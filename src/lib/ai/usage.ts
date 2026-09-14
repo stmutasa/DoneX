@@ -17,6 +17,7 @@ export type AiFeature =
   | "breakdown"
   | "chat"
   | "jointDigest"
+  | "weekAhead"
   | "test"
   | "other";
 

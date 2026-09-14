@@ -226,3 +226,39 @@ Rules:
 - Never mention work that is tagged for ${input.partnerName} — it is not in the lists above and is none of this digest's business.
 - If both lists are empty, say the shared list is clear in a few words.`;
 }
+
+export function weekAheadPrompt(input: {
+  personName: string;
+  partnerName: string;
+  weekOf: string;
+  tz: string;
+  mine: string;
+  ours: string;
+  events: string;
+  theirCount: number;
+}): string {
+  return `Write ${input.personName} a Sunday-evening look at the week ahead for the list and calendar they share with ${input.partnerName}. It arrives as a phone notification.
+
+WEEK BEGINNING: ${input.weekOf} (${input.tz})
+
+TAGGED FOR ${input.personName.toUpperCase()}
+${input.mine || "(none)"}
+
+ON THE SHARED LIST, CLAIMED BY NEITHER OF YOU
+${input.ours || "(none)"}
+
+BOTH CALENDARS THIS WEEK
+${input.events || "(nothing booked)"}
+
+${input.partnerName} is carrying ${input.theirCount} task${input.theirCount === 1 ? "" : "s"} of their own.
+
+Return JSON exactly like: {"digest": string}
+
+Rules:
+- At most 300 characters, 2–3 sentences.
+- Say what the week actually looks like: the busy day, anything late, what to get moving on early.
+- Name specific tasks and events; counts are for the rest.
+- You may say how many ${input.partnerName} is carrying, but you have not been told what they are — never invent or imply their contents.
+- Second person, plain and warm, no greeting, no sign-off, no emoji.
+- If there is nothing much on, say so in a sentence rather than padding.`;
+}

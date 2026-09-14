@@ -30,6 +30,10 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       ownerDigestTime: joint.ownerDigestTime,
       partnerDigestEnabled: joint.partnerDigestEnabled,
       partnerDigestTime: joint.partnerDigestTime,
+      ownerWeekAheadEnabled: joint.ownerWeekAheadEnabled,
+      ownerWeekAheadTime: joint.ownerWeekAheadTime,
+      partnerWeekAheadEnabled: joint.partnerWeekAheadEnabled,
+      partnerWeekAheadTime: joint.partnerWeekAheadTime,
       partnerPinSet: !!joint.partnerPinHash,
       ownerIcsSet: !!joint.ownerIcsUrl,
       partnerIcsSet: !!joint.partnerIcsUrl,
@@ -118,6 +122,10 @@ const patchSchema = z.object({
       ownerDigestTime: timeString.optional(),
       partnerDigestEnabled: z.boolean().optional(),
       partnerDigestTime: timeString.optional(),
+      ownerWeekAheadEnabled: z.boolean().optional(),
+      ownerWeekAheadTime: timeString.optional(),
+      partnerWeekAheadEnabled: z.boolean().optional(),
+      partnerWeekAheadTime: timeString.optional(),
     })
     .optional(),
 });

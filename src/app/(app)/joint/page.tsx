@@ -14,6 +14,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { cn } from "@/lib/utils";
 import { JointCalendar, type CalendarMode } from "@/components/joint/JointCalendar";
 import { DigestRow } from "@/components/joint/DigestRow";
+import { WeekAheadRow } from "@/components/joint/WeekAheadRow";
 import { AwayBanner } from "@/components/joint/AwayBanner";
 
 /**
@@ -201,6 +202,7 @@ export default function JointPage() {
           )}
 
           <DigestRow />
+          <WeekAheadRow />
         </section>
 
         <section className={cn(tab === "calendar" ? "block" : "hidden", "xl:block")}>

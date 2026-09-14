@@ -38,6 +38,8 @@ import { runBackup } from "@/lib/backup";
 import { ownerEvents } from "@/lib/jointFeeds";
 import { activeTrip, detectTrips, wallClockAt, type Trip } from "@/lib/trips";
 import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
+import { shouldSendWeekAhead, type WeekAheadSchedule } from "@/lib/weekAhead";
+import { buildWeekAhead, kvLastWeekAheadWeek } from "@/lib/weekAheadStore";
 import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
 
 const TICK_MS = 60_000;
@@ -125,6 +127,7 @@ async function tick(): Promise<void> {
     await runGmailScan(settings);
     await runScheduledTriage(settings, now);
     await runJointDigests(settings, now, trip);
+    await runWeekAhead(settings, now, trip);
     await runWeeklyBackup(settings, now);
     await runBackupModelRefresh(settings, now);
   } catch (err) {
@@ -312,6 +315,71 @@ async function runJointDigests(
       );
     } catch (err) {
       console.error("[scheduler] joint digest", role, err);
+    }
+  }
+}
+
+// ── 2bb. Sunday evening, the week to come ──────────────────────────────────
+
+/**
+ * One look at the week ahead, Sunday evening, per person and at their own
+ * hour. Same privacy line as the morning digest: your tasks and the
+ * unclaimed ones, plus both calendars — which you already share — and a bare
+ * count of what the other one is carrying.
+ */
+async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null): Promise<void> {
+  const joint = settings.joint;
+  // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
+  const mine = clockFor(settings, now, trip);
+  const home = clockFor(settings, now, null);
+
+  const people: { role: SessionRole; schedule: WeekAheadSchedule }[] = [
+    {
+      role: "owner",
+      schedule: { enabled: joint.ownerWeekAheadEnabled, time: joint.ownerWeekAheadTime },
+    },
+    // Nobody to send to until the shared list has actually been turned on.
+    ...(joint.partnerPinHash
+      ? [
+          {
+            role: "partner" as SessionRole,
+            schedule: {
+              enabled: joint.partnerWeekAheadEnabled,
+              time: joint.partnerWeekAheadTime,
+            },
+          },
+        ]
+      : []),
+  ];
+
+  for (const { role, schedule } of people) {
+    try {
+      const clock = role === "owner" ? mine : home;
+      const weekKey = isoWeekKey(now, settings.tz);
+      const key = kvLastWeekAheadWeek(role);
+      if (
+        !shouldSendWeekAhead({
+          schedule,
+          nowTime: clock.time,
+          weekday: clock.weekday,
+          weekKey,
+          lastSent: settingsRepo.getKV(key),
+        })
+      ) {
+        continue;
+      }
+      settingsRepo.setKV(key, weekKey); // claim the slot before the slow part
+
+      const { text } = await buildWeekAhead(role, clock.dateKey);
+      // A quiet week for this person is not worth a Sunday evening buzz.
+      if (!text) continue;
+
+      await sendPushToAll(
+        { title: "The week ahead", body: text, url: "/joint", tag: `week-ahead-${weekKey}` },
+        [role],
+      );
+    } catch (err) {
+      console.error("[scheduler] week ahead", role, err);
     }
   }
 }
