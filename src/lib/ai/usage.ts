@@ -16,6 +16,7 @@ export type AiFeature =
   | "review"
   | "breakdown"
   | "chat"
+  | "jointDigest"
   | "test"
   | "other";
 

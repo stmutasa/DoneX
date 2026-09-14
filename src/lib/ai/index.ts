@@ -18,6 +18,7 @@ export { runChatTurn } from "@/lib/ai/chat";
 
 export {
   generateBriefing,
+  generateJointDigest,
   generateTaskBreakdown,
   generateWeeklyReview,
   sweepAutoDismissable,

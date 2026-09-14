@@ -15,6 +15,7 @@ import {
 import {
   aiConfigured,
   generateBriefing,
+  generateJointDigest,
   generateWeeklyReview,
   refreshFallbackModel,
   sweepAutoDismissable,
@@ -32,7 +33,8 @@ import {
   mapLimit,
   nowIso,
 } from "@/lib/utils";
-import type { AppSettings, Briefing, WeeklyReview } from "@/lib/types";
+import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
+import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
 
 const TICK_MS = 60_000;
 const FIRST_TICK_DELAY_MS = 5_000;
@@ -43,6 +45,8 @@ const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
 const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
 const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
 const KV_INBOX_ALERTS = "sched.inboxAlerts";
+/** Per person, so the two digests can run hours apart. */
+const kvLastDigestDay = (role: SessionRole) => `sched.lastJointDigest.${role}`;
 
 /** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
 const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
@@ -70,6 +74,7 @@ async function tick(): Promise<void> {
     await runWeeklyReview(settings, now);
     await runGmailScan(settings);
     await runScheduledTriage(settings, now);
+    await runJointDigests(settings, now);
     await runBackupModelRefresh(settings, now);
   } catch (err) {
     console.error("[scheduler] tick", err);
@@ -184,6 +189,69 @@ async function runMorningBriefing(settings: AppSettings, now: Date): Promise<voi
     );
   } catch (err) {
     console.error("[scheduler] briefing", err);
+  }
+}
+
+// ── 2b. The shared list's morning digest, one per person ───────────────────
+
+/**
+ * Each person gets their own send time and hears only about their own tasks
+ * and the unclaimed ones — the other person's jobs are theirs to be reminded
+ * of. Sundays are skipped for both.
+ */
+async function runJointDigests(settings: AppSettings, now: Date): Promise<void> {
+  const joint = settings.joint;
+  const tz = settings.tz;
+  const today = localDateKey(now, tz);
+  const nowTime = localTimeKey(now, tz);
+  const weekday = localWeekday(today);
+
+  const people: { role: SessionRole; schedule: DigestSchedule }[] = [
+    {
+      role: "owner",
+      schedule: { enabled: joint.ownerDigestEnabled, time: joint.ownerDigestTime },
+    },
+    // Nobody to send to until the shared list has actually been turned on.
+    ...(joint.partnerPinHash
+      ? [
+          {
+            role: "partner" as SessionRole,
+            schedule: {
+              enabled: joint.partnerDigestEnabled,
+              time: joint.partnerDigestTime,
+            },
+          },
+        ]
+      : []),
+  ];
+
+  for (const { role, schedule } of people) {
+    try {
+      const key = kvLastDigestDay(role);
+      if (
+        !shouldSendDigest({
+          schedule,
+          nowTime,
+          weekday,
+          today,
+          lastSent: settingsRepo.getKV(key),
+        })
+      ) {
+        continue;
+      }
+      settingsRepo.setKV(key, today); // claim the slot before the slow part
+
+      const digest = await generateJointDigest(role);
+      // An empty digest means an empty list — no reason to buzz anyone.
+      if (!digest) continue;
+
+      await sendPushToAll(
+        { title: "Ours — this morning", body: digest, url: "/joint", tag: `joint-digest-${today}` },
+        [role],
+      );
+    } catch (err) {
+      console.error("[scheduler] joint digest", role, err);
+    }
   }
 }
 

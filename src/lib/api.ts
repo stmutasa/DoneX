@@ -482,6 +482,10 @@ export type SettingsPatch = {
     ownerColor?: string;
     partnerColor?: string;
     partnerGoogleId?: string;
+    ownerDigestEnabled?: boolean;
+    ownerDigestTime?: string;
+    partnerDigestEnabled?: boolean;
+    partnerDigestTime?: string;
   };
 };
 
@@ -493,6 +497,18 @@ export interface CalendarTestResult {
 }
 
 export const jointApi = {
+  /** Build and push your own digest right now, to check it works. */
+  testDigest: () =>
+    request<{ ok: true; sent: number; digest: string; message: string }>(
+      "/api/joint/digest/test",
+      { method: "POST", timeoutMs: 60_000 },
+    ),
+  /** Your own digest schedule; the server decides whose from the session. */
+  setDigest: (patch: { enabled?: boolean; time?: string }) =>
+    request<{ role: "owner" | "partner"; enabled: boolean; time: string }>(
+      "/api/joint/digest",
+      { method: "PATCH", body: JSON.stringify(patch) },
+    ),
   /** Try a person's configured calendar right now and report what happened. */
   testCalendar: (side: "owner" | "partner") =>
     request<CalendarTestResult>("/api/settings/joint-calendar-test", {

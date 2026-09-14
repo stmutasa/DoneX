@@ -13,6 +13,7 @@ import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { Segmented } from "@/components/ui/Segmented";
 import { cn } from "@/lib/utils";
 import { JointCalendar, type CalendarMode } from "@/components/joint/JointCalendar";
+import { DigestRow } from "@/components/joint/DigestRow";
 
 /**
  * The shared list. Identical for both people: the owner reaches it as one tab
@@ -195,6 +196,8 @@ export default function JointPage() {
               ) : null}
             </>
           )}
+
+          <DigestRow />
         </section>
 
         <section className={cn(tab === "calendar" ? "block" : "hidden", "xl:block")}>

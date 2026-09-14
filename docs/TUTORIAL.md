@@ -172,6 +172,18 @@ too (unless you're tagging yourself, or it's already theirs). Due-time reminders
 phones. You can also tell the assistant *"add milk to our list"* — "our" means the
 shared list.
 
+**The morning digest.** Each morning except Sunday, you each get a short AI
+summary of the shared list as a notification. It covers what's tagged for you
+plus anything neither of you has claimed — never the other person's tasks, so
+you aren't nagged about jobs that aren't yours.
+
+The two of you have separate times: yours at **7:00 AM**, hers at **10:00 AM**
+out of the box. Either of you can move your own — tap the **morning digest**
+row at the bottom of the Ours list, where you can also turn it off or hit
+**Send me one now** to check it arrives. From Settings → Shared list you can
+see and set both. A digest is skipped silently when there's nothing on your
+half of the list.
+
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
 with hers — you're blue, she's pink, and either of you can be any of eight
 colors (Settings → **Shared list** → the color swatches) — plus any dated

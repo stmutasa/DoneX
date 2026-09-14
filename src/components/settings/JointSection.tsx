@@ -4,9 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { authApi, jointApi, type CalendarTestResult } from "@/lib/api";
 import { JOINT_COLOR_IDS, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
+import { normalizeTime } from "@/lib/jointDigest";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Field";
+import { Input, SwitchRow } from "@/components/ui/Field";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { Segmented } from "@/components/ui/Segmented";
@@ -290,6 +291,33 @@ export function JointSection({ settings, mutate }: SectionProps) {
           </div>
 
           <Divider />
+
+          <div>
+            <div className="text-[15px] text-ink">Morning digest</div>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
+              A short AI summary of the shared list each morning except Sunday. Each of you
+              gets your own — what’s tagged for you plus anything unclaimed, never the other
+              person’s tasks. {partnerLabel} can also change her own time from the Ours tab.
+            </p>
+            <div className="mt-3 space-y-3">
+              <DigestControls
+                label="Yours"
+                enabled={settings.joint.ownerDigestEnabled}
+                time={settings.joint.ownerDigestTime}
+                onEnabled={(v) => void patch({ joint: { ownerDigestEnabled: v } }, "Digest updated")}
+                onTime={(v) => void patch({ joint: { ownerDigestTime: v } }, "Digest time saved")}
+              />
+              <DigestControls
+                label={`${partnerLabel}’s`}
+                enabled={settings.joint.partnerDigestEnabled}
+                time={settings.joint.partnerDigestTime}
+                onEnabled={(v) => void patch({ joint: { partnerDigestEnabled: v } }, "Digest updated")}
+                onTime={(v) => void patch({ joint: { partnerDigestTime: v } }, "Digest time saved")}
+              />
+            </div>
+          </div>
+
+          <Divider />
           <Button variant="danger" size="sm" onClick={disable}>
             Turn off shared list
           </Button>
@@ -333,6 +361,37 @@ function ColorRow({
             ) : null}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** One person's digest switch and time. */
+function DigestControls({
+  label,
+  enabled,
+  time,
+  onEnabled,
+  onTime,
+}: {
+  label: string;
+  enabled: boolean;
+  time: string;
+  onEnabled: (next: boolean) => void;
+  onTime: (next: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-stroke bg-sunken p-3">
+      <SwitchRow label={`${label} morning digest`} checked={enabled} onChange={onEnabled} />
+      <div className="mt-2.5 flex items-center justify-between gap-3">
+        <span className="text-[13px] text-muted">Sent at</span>
+        <input
+          type="time"
+          value={normalizeTime(time)}
+          disabled={!enabled}
+          onChange={(e) => onTime(e.target.value)}
+          className="min-h-[40px] rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none focus:border-stroke-strong disabled:opacity-50"
+        />
       </div>
     </div>
   );

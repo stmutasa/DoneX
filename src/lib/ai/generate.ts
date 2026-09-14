@@ -14,6 +14,11 @@ import {
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
 import { composeInboxNotes } from "@/lib/inboxNotes";
+import {
+  digestLines as digestLinesFor,
+  fallbackDigest,
+  splitForDigest,
+} from "@/lib/jointDigest";
 import type { AiFeature } from "@/lib/ai/usage";
 import type {
   Briefing,
@@ -21,12 +26,13 @@ import type {
   InboxItem,
   InboxSuggestion,
   Priority,
+  SessionRole,
   Task,
   TriageFeedback,
   WeeklyReview,
 } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
-import { callWithFailover } from "@/lib/ai/adapters";
+import { aiConfigured, callWithFailover } from "@/lib/ai/adapters";
 import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
 import { asArray, asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
@@ -35,6 +41,7 @@ import {
   JSON_SYSTEM,
   breakdownPrompt,
   briefingPrompt,
+  jointDigestPrompt,
   reviewPrompt,
   triagePrompt,
 } from "@/lib/ai/prompts";
@@ -505,6 +512,53 @@ function appendUpdateNote(existing: string, addition: string, todayKey: string):
  * without an action being taken — a dismiss verdict just becomes an "ignore"
  * suggestion they can act on.
  */
+/**
+ * The morning digest of the shared list for one person. Only what they should
+ * hear about reaches the model — the other person's tasks never leave the
+ * filter in jointDigest.ts.
+ */
+export async function generateJointDigest(role: SessionRole): Promise<string> {
+  const settings = settingsRepo.getApp();
+  const tz = settings.tz;
+  const now = new Date();
+  const todayKey = localDateKey(now, tz);
+
+  const joint = tasksRepo.list({ space: "joint" });
+  const { mine, ours } = splitForDigest(joint, role);
+  if (mine.length === 0 && ours.length === 0) return "";
+
+  const names = {
+    owner: settings.joint.ownerName || "You",
+    partner: settings.joint.partnerName || "Your partner",
+  };
+  const personName = role === "owner" ? names.owner : names.partner;
+  const partnerName = role === "owner" ? names.partner : names.owner;
+
+  const fallback = fallbackDigest({ mine, ours, partnerName });
+  if (!aiConfigured()) return fallback;
+
+  try {
+    const payload = await jsonCall(
+      jointDigestPrompt({
+        personName,
+        partnerName,
+        todayKey,
+        weekday: format(new TZDate(now, tz), "EEEE"),
+        tz,
+        mine: digestLinesFor(mine, tz).join("\n"),
+        ours: digestLinesFor(ours, tz).join("\n"),
+      }),
+      400,
+      "jointDigest",
+    );
+    const text = (asString(payload.digest) ?? "").trim();
+    return text ? text.slice(0, 240) : fallback;
+  } catch (err) {
+    console.error("[digest] generation", err);
+    return fallback;
+  }
+}
+
 export async function triageInboxItem(id: string): Promise<InboxItem> {
   const item = inboxRepo.get(id);
   if (!item) throw new Error("Inbox item not found");

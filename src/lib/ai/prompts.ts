@@ -196,3 +196,33 @@ Rules:
 - task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
 - task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;
 }
+
+export function jointDigestPrompt(input: {
+  personName: string;
+  partnerName: string;
+  todayKey: string;
+  weekday: string;
+  tz: string;
+  mine: string;
+  ours: string;
+}): string {
+  return `Write ${input.personName} a one-paragraph morning digest of the to-do list they share with ${input.partnerName}. It will arrive as a phone notification.
+
+TODAY: ${input.todayKey} (${input.weekday}), timezone ${input.tz}
+
+TAGGED FOR ${input.personName.toUpperCase()}
+${input.mine || "(none)"}
+
+ON THE SHARED LIST, NOT TAGGED FOR EITHER OF YOU
+${input.ours || "(none)"}
+
+Return JSON exactly like: {"digest": string}
+
+Rules:
+- At most 240 characters, 1–2 sentences. It has to read well on a lock screen.
+- Lead with anything overdue or due today; name those tasks specifically.
+- Mention counts for the rest rather than listing everything.
+- Second person, plain and warm, no greeting, no sign-off, no emoji.
+- Never mention work that is tagged for ${input.partnerName} — it is not in the lists above and is none of this digest's business.
+- If both lists are empty, say the shared list is clear in a few words.`;
+}

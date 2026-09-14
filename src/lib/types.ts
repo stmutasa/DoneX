@@ -315,6 +315,11 @@ export interface JointSettings {
   /** each person's color on shared surfaces — a JointColorId (see jointColors.ts) */
   ownerColor: string;
   partnerColor: string;
+  /** morning digest of the shared list — each person has their own time */
+  ownerDigestEnabled: boolean;
+  ownerDigestTime: string; // "07:00" local
+  partnerDigestEnabled: boolean;
+  partnerDigestTime: string; // "10:00" local
 }
 
 export interface AppSettings {

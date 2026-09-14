@@ -54,6 +54,7 @@ const FEATURE_LABELS: Record<string, string> = {
   review: "Weekly review",
   breakdown: "Paste → tasks",
   chat: "Assistant chat",
+  jointDigest: "Shared list digest",
   test: "Connection tests",
   other: "Other",
 };

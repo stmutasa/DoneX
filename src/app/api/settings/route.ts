@@ -26,6 +26,10 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       ownerColor: joint.ownerColor,
       partnerColor: joint.partnerColor,
       partnerGoogleId: joint.partnerGoogleId,
+      ownerDigestEnabled: joint.ownerDigestEnabled,
+      ownerDigestTime: joint.ownerDigestTime,
+      partnerDigestEnabled: joint.partnerDigestEnabled,
+      partnerDigestTime: joint.partnerDigestTime,
       partnerPinSet: !!joint.partnerPinHash,
       ownerIcsSet: !!joint.ownerIcsUrl,
       partnerIcsSet: !!joint.partnerIcsUrl,
@@ -110,6 +114,10 @@ const patchSchema = z.object({
       ownerColor: z.enum(JOINT_COLOR_IDS).optional(),
       partnerColor: z.enum(JOINT_COLOR_IDS).optional(),
       partnerGoogleId: z.string().max(200).optional(),
+      ownerDigestEnabled: z.boolean().optional(),
+      ownerDigestTime: timeString.optional(),
+      partnerDigestEnabled: z.boolean().optional(),
+      partnerDigestTime: timeString.optional(),
     })
     .optional(),
 });
