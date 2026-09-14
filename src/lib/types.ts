@@ -325,6 +325,9 @@ export interface JointSettings {
   ownerWeekAheadTime: string; // "18:00" local, Sundays
   partnerWeekAheadEnabled: boolean;
   partnerWeekAheadTime: string; // "18:00" local, Sundays
+  /** one gentle reminder when work tagged for the other person goes past due */
+  nudgeEnabled: boolean;
+  nudgeTime: string; // "18:00" local, checked once a day
 }
 
 export interface AppSettings {

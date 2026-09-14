@@ -490,6 +490,8 @@ export type SettingsPatch = {
     ownerWeekAheadTime?: string;
     partnerWeekAheadEnabled?: boolean;
     partnerWeekAheadTime?: string;
+    nudgeEnabled?: boolean;
+    nudgeTime?: string;
   };
 };
 

@@ -198,6 +198,21 @@ the spot. The last one you were sent is kept in that same sheet, so a swiped
 notification isn't lost. A week with nothing on your half of the list and
 nothing on either calendar doesn't buzz anyone.
 
+**Nudges on work you've handed over.** Tag a shared task for the other person,
+give it a due date, and if that date passes DoneX tells *them* once — a single
+notification at **6:00 PM**, covering everything of theirs that's late, worded
+gently rather than as a telling-off. It says it **once per deadline**: moving
+the due date and missing the new one earns another word, but another day going
+by doesn't.
+
+You, the one who asked, don't get buzzed at all. Instead your own morning
+digest closes with what's **still open** — "still waiting on Annette for 2" —
+which is the whole reason her side can stay quiet. It works the same way in
+reverse when she asks you. One switch and one time for both of you, in
+Settings → **Shared list** → Overdue nudges. Tagging a task for yourself never
+nudges anyone, and a deadline more than a month gone is left alone — by then
+it isn't a deadline.
+
 **The joint calendar:** the Calendar view on Ours merges your Google Calendar
 with hers — you're blue, she's pink, and either of you can be any of eight
 colors (Settings → **Shared list** → the color swatches) — plus any dated

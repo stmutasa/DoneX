@@ -34,6 +34,8 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       ownerWeekAheadTime: joint.ownerWeekAheadTime,
       partnerWeekAheadEnabled: joint.partnerWeekAheadEnabled,
       partnerWeekAheadTime: joint.partnerWeekAheadTime,
+      nudgeEnabled: joint.nudgeEnabled,
+      nudgeTime: joint.nudgeTime,
       partnerPinSet: !!joint.partnerPinHash,
       ownerIcsSet: !!joint.ownerIcsUrl,
       partnerIcsSet: !!joint.partnerIcsUrl,
@@ -126,6 +128,8 @@ const patchSchema = z.object({
       ownerWeekAheadTime: timeString.optional(),
       partnerWeekAheadEnabled: z.boolean().optional(),
       partnerWeekAheadTime: timeString.optional(),
+      nudgeEnabled: z.boolean().optional(),
+      nudgeTime: timeString.optional(),
     })
     .optional(),
 });

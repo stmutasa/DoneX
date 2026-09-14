@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   space TEXT NOT NULL DEFAULT 'personal',
   created_by TEXT NOT NULL DEFAULT 'owner',
   assigned_to TEXT,
+  nudged_due_at TEXT,
   all_day INTEGER DEFAULT 0,
   project_id TEXT,
   tags TEXT DEFAULT '[]',
@@ -167,6 +168,11 @@ function migrate(db: Database.Database): void {
   }
   if (!taskCols.has("assigned_to")) {
     db.exec("ALTER TABLE tasks ADD COLUMN assigned_to TEXT");
+  }
+  if (!taskCols.has("nudged_due_at")) {
+    // Which deadline this task was last nudged about, so moving the date is
+    // what earns a second word rather than another day passing.
+    db.exec("ALTER TABLE tasks ADD COLUMN nudged_due_at TEXT");
   }
   const sessionCols = new Set(
     (db.pragma("table_info(sessions)") as { name: string }[]).map((c) => c.name)

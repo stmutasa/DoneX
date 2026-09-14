@@ -14,6 +14,7 @@ import {
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
 import { composeInboxNotes } from "@/lib/inboxNotes";
+import { waitingLines, waitingOn } from "@/lib/nudges";
 import {
   digestLines as digestLinesFor,
   fallbackDigest,
@@ -533,7 +534,10 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
 
   const joint = tasksRepo.list({ space: "joint" });
   const { mine, ours } = splitForDigest(joint, role);
-  if (mine.length === 0 && ours.length === 0) return "";
+  // Their own asks of the other person, gone past due — theirs to know about,
+  // and the reason the other person only ever hears one nudge.
+  const waiting = waitingOn(joint, role, now);
+  if (mine.length === 0 && ours.length === 0 && waiting.length === 0) return "";
 
   const names = {
     owner: settings.joint.ownerName || "You",
@@ -542,7 +546,7 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
   const personName = role === "owner" ? names.owner : names.partner;
   const partnerName = role === "owner" ? names.partner : names.owner;
 
-  const fallback = fallbackDigest({ mine, ours, partnerName });
+  const fallback = fallbackDigest({ mine, ours, partnerName, waiting: waiting.length });
   if (!aiConfigured()) return fallback;
 
   try {
@@ -555,6 +559,7 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
         tz,
         mine: digestLinesFor(mine, tz).join("\n"),
         ours: digestLinesFor(ours, tz).join("\n"),
+        waiting: waitingLines(waiting, partnerName),
       }),
       400,
       "jointDigest",

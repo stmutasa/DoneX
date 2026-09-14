@@ -357,6 +357,36 @@ export function JointSection({ settings, mutate }: SectionProps) {
           </div>
 
           <Divider />
+
+          <div>
+            <div className="text-[15px] text-ink">Overdue nudges</div>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-muted">
+              When one of you tags a shared task for the other and the deadline passes, the
+              person it was tagged for gets one gentle reminder — once per deadline, not
+              once a day, and all of it in a single notification. Whoever did the asking
+              isn’t buzzed at all; they see it as “still waiting on” in their own morning
+              digest. This one setting covers both of you.
+            </p>
+            <div className="mt-3 rounded-2xl border border-stroke bg-sunken p-3">
+              <SwitchRow
+                label="Send overdue nudges"
+                checked={settings.joint.nudgeEnabled}
+                onChange={(v) => void patch({ joint: { nudgeEnabled: v } }, "Nudges updated")}
+              />
+              <div className="mt-2.5 flex items-center justify-between gap-3">
+                <span className="text-[13px] text-muted">Checked at</span>
+                <input
+                  type="time"
+                  value={normalizeTime(settings.joint.nudgeTime)}
+                  disabled={!settings.joint.nudgeEnabled}
+                  onChange={(e) => void patch({ joint: { nudgeTime: e.target.value } }, "Nudge time saved")}
+                  className="min-h-[40px] rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none focus:border-stroke-strong disabled:opacity-50"
+                />
+              </div>
+            </div>
+          </div>
+
+          <Divider />
           <Button variant="danger" size="sm" onClick={disable}>
             Turn off shared list
           </Button>

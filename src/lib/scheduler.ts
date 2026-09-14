@@ -39,6 +39,7 @@ import { ownerEvents } from "@/lib/jointFeeds";
 import { activeTrip, detectTrips, wallClockAt, type Trip } from "@/lib/trips";
 import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
 import { shouldSendWeekAhead, type WeekAheadSchedule } from "@/lib/weekAhead";
+import { nudgeText, nudgesFor } from "@/lib/nudges";
 import { buildWeekAhead, kvLastWeekAheadWeek } from "@/lib/weekAheadStore";
 import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
 
@@ -52,6 +53,8 @@ const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
 const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
 const KV_INBOX_ALERTS = "sched.inboxAlerts";
 const KV_LAST_BACKUP_WEEK = "sched.lastBackupWeek";
+/** Per person, so a nudge is a once-a-day check rather than every tick. */
+const kvLastNudgeDay = (role: SessionRole) => `sched.lastNudge.${role}`;
 /** Sunday evening, after the week-ahead hour and clear of the digests. */
 const BACKUP_DAY = 0;
 const BACKUP_TIME = "21:00";
@@ -128,6 +131,7 @@ async function tick(): Promise<void> {
     await runScheduledTriage(settings, now);
     await runJointDigests(settings, now, trip);
     await runWeekAhead(settings, now, trip);
+    await runNudges(settings, now, trip);
     await runWeeklyBackup(settings, now);
     await runBackupModelRefresh(settings, now);
   } catch (err) {
@@ -381,6 +385,63 @@ async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null)
     } catch (err) {
       console.error("[scheduler] week ahead", role, err);
     }
+  }
+}
+
+// ── 2d. A word about work that has gone past due ───────────────────────────
+
+/**
+ * Once a day, whoever was asked to do something that is now late hears about
+ * it — once per deadline, all of it in a single notification, and never the
+ * person who did the asking. They see it as "still waiting on" in their own
+ * morning digest instead, which is what lets this stay a single word rather
+ * than a daily one.
+ */
+async function runNudges(settings: AppSettings, now: Date, trip: Trip | null): Promise<void> {
+  try {
+    const joint = settings.joint;
+    if (!joint.nudgeEnabled || !joint.partnerPinHash) return;
+
+    const wanted = normalizeTime(joint.nudgeTime);
+    // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
+    const clocks: Record<SessionRole, ReturnType<typeof clockFor>> = {
+      owner: clockFor(settings, now, trip),
+      partner: clockFor(settings, now, null),
+    };
+    if (clocks.owner.time !== wanted && clocks.partner.time !== wanted) return;
+
+    const tasks = tasksRepo.list({ space: "joint" });
+    const state = tasksRepo.nudgeState();
+    const names = {
+      owner: joint.ownerName || "Your partner",
+      partner: joint.partnerName || "Your partner",
+    };
+
+    for (const role of ["owner", "partner"] as SessionRole[]) {
+      const clock = clocks[role];
+      if (clock.time !== wanted) continue;
+
+      const key = kvLastNudgeDay(role);
+      if (settingsRepo.getKV(key) === clock.dateKey) continue;
+      settingsRepo.setKV(key, clock.dateKey); // claim the slot first
+
+      const items = nudgesFor({
+        tasks,
+        role,
+        now,
+        nudgedDueAt: (id) => state.get(id) ?? null,
+      });
+      if (items.length === 0) continue;
+
+      const asker = role === "owner" ? names.partner : names.owner;
+      const { title, body } = nudgeText(items, asker);
+      await sendPushToAll({ title, body, url: "/joint", tag: `nudge-${clock.dateKey}` }, [role]);
+
+      // Only after it has actually gone out, so a failed send tries again.
+      for (const item of items) tasksRepo.markNudged(item.id, item.dueAt);
+    }
+  } catch (err) {
+    console.error("[scheduler] nudges", err);
   }
 }
 

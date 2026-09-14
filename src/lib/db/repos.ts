@@ -79,6 +79,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ownerWeekAheadTime: "18:00",
     partnerWeekAheadEnabled: true,
     partnerWeekAheadTime: "18:00",
+    nudgeEnabled: true,
+    nudgeTime: "18:00",
   },
   lastLocation: null,
   ingestToken: "",
@@ -463,6 +465,22 @@ export const tasksRepo = {
 
   markNotified(id: string): void {
     getDb().prepare("UPDATE tasks SET notified_at=? WHERE id=?").run(nowIso(), id);
+  },
+
+  /** Which deadline each open joint task was last nudged about, by task id. */
+  nudgeState(): Map<string, string> {
+    const rows = getDb()
+      .prepare(
+        `SELECT id, nudged_due_at FROM tasks
+         WHERE status='open' AND space='joint' AND nudged_due_at IS NOT NULL`
+      )
+      .all() as { id: string; nudged_due_at: string }[];
+    return new Map(rows.map((r) => [r.id, r.nudged_due_at]));
+  },
+
+  /** Remember that this deadline has already been raised once. */
+  markNudged(id: string, dueAt: string): void {
+    getDb().prepare("UPDATE tasks SET nudged_due_at=? WHERE id=?").run(dueAt, id);
   },
 
   /** Open, top-level tasks that carry a location. */

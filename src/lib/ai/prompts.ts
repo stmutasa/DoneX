@@ -205,6 +205,7 @@ export function jointDigestPrompt(input: {
   tz: string;
   mine: string;
   ours: string;
+  waiting: string;
 }): string {
   return `Write ${input.personName} a one-paragraph morning digest of the to-do list they share with ${input.partnerName}. It will arrive as a phone notification.
 
@@ -216,6 +217,9 @@ ${input.mine || "(none)"}
 ON THE SHARED LIST, NOT TAGGED FOR EITHER OF YOU
 ${input.ours || "(none)"}
 
+ASKED OF ${input.partnerName.toUpperCase()} BY ${input.personName.toUpperCase()}, NOW PAST DUE
+${input.waiting || "(nothing outstanding)"}
+
 Return JSON exactly like: {"digest": string}
 
 Rules:
@@ -223,8 +227,9 @@ Rules:
 - Lead with anything overdue or due today; name those tasks specifically.
 - Mention counts for the rest rather than listing everything.
 - Second person, plain and warm, no greeting, no sign-off, no emoji.
-- Never mention work that is tagged for ${input.partnerName} — it is not in the lists above and is none of this digest's business.
-- If both lists are empty, say the shared list is clear in a few words.`;
+- The last section is work ${input.personName} themselves asked of ${input.partnerName}, so it is theirs to know about. If there is anything there, close with a short note that it is still open — never as a complaint, and never suggest chasing ${input.partnerName}, who has already been told once.
+- Apart from that section, never mention work that is tagged for ${input.partnerName} — it is not in the lists above and is none of this digest's business.
+- If every list is empty, say the shared list is clear in a few words.`;
 }
 
 export function weekAheadPrompt(input: {

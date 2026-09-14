@@ -98,8 +98,10 @@ export function fallbackDigest(args: {
   mine: Task[];
   ours: Task[];
   partnerName: string;
+  /** their own asks of the other person, now past due */
+  waiting?: number;
 }): string {
-  const { mine, ours } = args;
+  const { mine, ours, partnerName, waiting = 0 } = args;
   const overdue = [...mine, ...ours].filter((t) => isOverdue(t.dueAt, t.allDay)).length;
 
   const parts: string[] = [];
@@ -109,5 +111,6 @@ export function fallbackDigest(args: {
 
   const head = parts.length ? parts.join(" · ") : "Nothing on the shared list";
   const titles = [...mine, ...ours].slice(0, 3).map((t) => t.title);
-  return titles.length ? `${head}: ${titles.join(", ")}` : head;
+  const body = titles.length ? `${head}: ${titles.join(", ")}` : head;
+  return waiting > 0 ? `${body}. Still waiting on ${partnerName} for ${waiting}.` : body;
 }
