@@ -25,6 +25,7 @@ import {
   IconWand,
 } from "@/components/ui/icons";
 import { AboutSection } from "./AboutSection";
+import { BackupsSection } from "./BackupsSection";
 import { UsageSection } from "./UsageSection";
 import { JointSection } from "./JointSection";
 import { AiSection } from "./AiSection";
@@ -186,6 +187,13 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
         icon: IconDownload,
         subtitle: () => "Export & import everything",
         render: () => <DataSection />,
+      },
+      {
+        slug: "backups",
+        title: "Backups",
+        icon: IconDownload,
+        subtitle: () => "Weekly snapshots you can restore or download",
+        render: () => <BackupsSection />,
       },
       {
         slug: "about",

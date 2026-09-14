@@ -33,6 +33,7 @@ import {
   mapLimit,
   nowIso,
 } from "@/lib/utils";
+import { runBackup } from "@/lib/backup";
 import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
 import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
 
@@ -45,6 +46,10 @@ const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
 const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
 const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
 const KV_INBOX_ALERTS = "sched.inboxAlerts";
+const KV_LAST_BACKUP_WEEK = "sched.lastBackupWeek";
+/** Sunday evening, after the week-ahead hour and clear of the digests. */
+const BACKUP_DAY = 0;
+const BACKUP_TIME = "21:00";
 /** Per person, so the two digests can run hours apart. */
 const kvLastDigestDay = (role: SessionRole) => `sched.lastJointDigest.${role}`;
 
@@ -75,6 +80,7 @@ async function tick(): Promise<void> {
     await runGmailScan(settings);
     await runScheduledTriage(settings, now);
     await runJointDigests(settings, now);
+    await runWeeklyBackup(settings, now);
     await runBackupModelRefresh(settings, now);
   } catch (err) {
     console.error("[scheduler] tick", err);
@@ -252,6 +258,39 @@ async function runJointDigests(settings: AppSettings, now: Date): Promise<void> 
     } catch (err) {
       console.error("[scheduler] joint digest", role, err);
     }
+  }
+}
+
+// ── 2c. Weekly snapshot ────────────────────────────────────────────────────
+
+/**
+ * One snapshot a week, kept on the volume — plus a nudge to save a copy
+ * somewhere that isn't this box, which is the only part a volume failure
+ * can't take with it.
+ */
+async function runWeeklyBackup(settings: AppSettings, now: Date): Promise<void> {
+  try {
+    const tz = settings.tz;
+    const dateLocal = localDateKey(now, tz);
+    if (localWeekday(dateLocal) !== BACKUP_DAY) return;
+    if (localTimeKey(now, tz) !== BACKUP_TIME) return;
+
+    const weekKey = isoWeekKey(now, tz);
+    if (settingsRepo.getKV(KV_LAST_BACKUP_WEEK) === weekKey) return;
+    settingsRepo.setKV(KV_LAST_BACKUP_WEEK, weekKey);
+
+    const snap = runBackup("weekly");
+    await sendPushToAll(
+      {
+        title: "Weekly backup ready",
+        body: `${Math.max(1, Math.round(snap.bytes / 1024))} KB saved. Tap to keep a copy off the server.`,
+        url: "/settings/data",
+        tag: "backup-weekly",
+      },
+      ["owner"],
+    );
+  } catch (err) {
+    console.error("[scheduler] weekly backup", err);
   }
 }
 

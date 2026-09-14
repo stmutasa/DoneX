@@ -357,6 +357,32 @@ automatically, so "last 30 days" is always complete.
 
 ---
 
+## Backups
+
+Settings → **Backups**. A full snapshot — tasks, notes, projects, inbox,
+history, settings and your Google connection — is taken **every Sunday
+evening**, kept on the server, and announced with a notification. **Back up
+now** takes one on demand.
+
+Each snapshot can be **downloaded** (one tap saves it to your phone) or
+**restored**: your data is replaced with the contents of that file, and a
+copy of how things looked beforehand is saved first, so a restore is itself
+undoable. A data-only restore leaves your settings and connections alone.
+
+Two things worth understanding:
+
+- Snapshots sit on the **same server** as the app. That covers a bad import
+  or a bulk change you regret — it does not cover losing the server. Tap
+  **Download** when the Sunday reminder arrives and you always have a copy
+  somewhere else.
+- The file contains your **API keys and Google tokens**, so treat a
+  downloaded backup like a password.
+
+Eight weekly snapshots are kept, plus the last few manual ones and the
+safety copies taken before restores. Older ones are removed automatically.
+
+---
+
 ## Settings worth knowing about
 
 Settings is now a **menu**: five short groups (You · Intelligence ·

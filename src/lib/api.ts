@@ -518,6 +518,23 @@ export const jointApi = {
     }),
 };
 
+export const backupsApi = {
+  create: () =>
+    request<{ ok: true; snapshot: { name: string; bytes: number; counts: Record<string, number> } }>(
+      "/api/backups",
+      { method: "POST", body: JSON.stringify({ kind: "manual" }), timeoutMs: 120_000 },
+    ),
+  restore: (name: string, includeSettings: boolean) =>
+    request<{ ok: true; restored: Record<string, number>; safetyCopy: string }>("/api/backups", {
+      method: "PUT",
+      body: JSON.stringify({ name, includeSettings }),
+      timeoutMs: 120_000,
+    }),
+  remove: (name: string) =>
+    request<{ ok: true }>(`/api/backups${query({ name })}`, { method: "DELETE" }),
+  downloadUrl: (name: string) => `/api/backups${query({ download: name })}`,
+};
+
 export const usageApi = {
   clear: () => request<{ ok: true }>("/api/usage", { method: "DELETE" }),
 };
