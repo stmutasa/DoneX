@@ -57,16 +57,19 @@ export function TaskItem({
     ? task.priority
     : effectivePriority(task, Intl.DateTimeFormat().resolvedOptions().timeZone);
   const escalated = priority > task.priority;
-  // An assigned task belongs to whoever it was handed to; otherwise the chip
-  // still says who added it.
+  // A tagged task belongs to whoever it was handed to, and wears their color.
+  // An untagged one is for either of you, so it says that in nobody's color —
+  // naming whoever happened to type it reads as though it were theirs.
+  const shared = task.assignedTo === null;
   const chipRole = task.assignedTo ?? task.createdBy;
   const chipIsPartner = chipRole === "partner";
-  const attributionColor = attribution
-    ? normalizeJointColor(
-        chipIsPartner ? attribution.colors?.partner : attribution.colors?.owner,
-        chipIsPartner ? "pink" : "blue",
-      )
-    : null;
+  const attributionColor =
+    attribution && !shared
+      ? normalizeJointColor(
+          chipIsPartner ? attribution.colors?.partner : attribution.colors?.owner,
+          chipIsPartner ? "pink" : "blue",
+        )
+      : null;
   const chipName = chipIsPartner ? attribution?.partner : attribution?.owner;
 
   const toggle = async () => {
@@ -163,13 +166,20 @@ export function TaskItem({
             </span>
           ))}
 
-          {attribution && attributionColor ? (
+          {attribution ? (
             <span
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-              style={{ background: hueSoftVar(attributionColor), color: hueVar(attributionColor) }}
-              title={task.assignedTo ? `${chipName}'s task` : `Added by ${chipName}`}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                shared && "bg-sunken text-muted",
+              )}
+              style={
+                attributionColor
+                  ? { background: hueSoftVar(attributionColor), color: hueVar(attributionColor) }
+                  : undefined
+              }
+              title={shared ? `Either of you — added by ${chipName}` : `${chipName}'s task`}
             >
-              {task.assignedTo ? `For ${chipName}` : chipName}
+              {shared ? "Either of us" : `For ${chipName}`}
             </span>
           ) : null}
 
