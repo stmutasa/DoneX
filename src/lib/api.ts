@@ -589,6 +589,12 @@ export const settingsApi = {
     }),
   regenerateIngestToken: () =>
     request<{ ingestToken: string }>("/api/settings/ingest-token", { method: "POST" }),
+  /** Mint (or rotate) the read-only task-feed link. */
+  createShareToken: () =>
+    request<{ shareToken: string }>("/api/settings/share-token", { method: "POST" }),
+  /** Turn the read-only link off. */
+  revokeShareToken: () =>
+    request<{ shareToken: string }>("/api/settings/share-token", { method: "DELETE" }),
 };
 
 export const dataApi = {

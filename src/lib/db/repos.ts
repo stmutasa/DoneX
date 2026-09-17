@@ -84,6 +84,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   lastLocation: null,
   ingestToken: "",
+  shareToken: "",
   smsCaptureEnabled: true,
   vapid: null,
   onboardedAt: null,

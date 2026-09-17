@@ -30,6 +30,7 @@ import { UsageSection } from "./UsageSection";
 import { JointSection } from "./JointSection";
 import { AiSection } from "./AiSection";
 import { CaptureSection } from "./CaptureSection";
+import { ShareSection } from "./ShareSection";
 import { GoogleSection } from "./GoogleSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { TriageLessonsSection } from "./TriageLessonsSection";
@@ -148,6 +149,14 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
         icon: IconInbox,
         subtitle: (s) => (s.smsCaptureEnabled ? "Accepting forwarded texts" : "Off"),
         render: (s, m) => <CaptureSection settings={s} mutate={m} />,
+      },
+      {
+        slug: "share",
+        title: "Share link",
+        icon: IconLink,
+        subtitle: (s) =>
+          s.shareToken ? "On — a read-only link to your open tasks" : "Off — no link exists",
+        render: (s, m) => <ShareSection settings={s} mutate={m} />,
       },
     ],
   },

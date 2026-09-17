@@ -340,6 +340,8 @@ export interface AppSettings {
   google: GoogleSettings;
   joint: JointSettings;
   ingestToken: string;
+  /** secret for the read-only task feed ("" = no link exists) */
+  shareToken: string;
   /** master switch for the SMS webhook — off rejects every forwarded text */
   smsCaptureEnabled: boolean;
   vapid: { publicKey: string; privateKey: string } | null;

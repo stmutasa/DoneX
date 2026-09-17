@@ -435,6 +435,26 @@ safety copies taken before restores. Older ones are removed automatically.
 
 ---
 
+## Handing your list to another chat
+
+Settings → **Share link** makes a secret web address that returns your open
+tasks as plain text. Paste it into another chat window — or anything else that
+can fetch a URL — and ask it to read it: *"read this and tell me what I should
+do first today."*
+
+It reads **live** every time, so there is nothing to keep up to date. Ask again
+next week and it sees next week's list. What comes back is grouped the way you
+think about it — overdue, today, the next seven days, later, undated — with due
+dates, priorities, projects, tags and notes. Add `?format=json` on the end if
+something wants structured data rather than prose.
+
+It is **read-only**: nothing can be created, completed or changed through it.
+It carries tasks and nothing else — no settings, no API keys, no notes pages,
+and none of the shared work Annette has taken on (the same line the morning
+digest draws). But anyone holding the address can read your list, so treat it
+like a password. **Replace link** kills the old one instantly and gives you a
+new one; **Turn off** kills it with no replacement.
+
 ## Settings worth knowing about
 
 Settings is now a **menu**: five short groups (You · Intelligence ·
