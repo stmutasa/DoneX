@@ -50,6 +50,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       customModel: ai.customModel,
       fallbackProvider: ai.fallbackProvider,
       fallbackModel: ai.fallbackModel,
+      fallbackModelPinned: ai.fallbackModelPinned,
       openaiKey: { set: !!ai.openaiKey, last4: last4(ai.openaiKey) },
       anthropicKey: { set: !!ai.anthropicKey, last4: last4(ai.anthropicKey) },
       customKey: { set: !!ai.customKey, last4: last4(ai.customKey) },
@@ -74,7 +75,8 @@ const aiPatchSchema = z.object({
   customBaseUrl: z.string().optional(),
   customKey: z.string().optional(),
   customModel: z.string().optional(),
-  // fallbackModel is resolved server-side to the provider's newest — not set here.
+  // fallbackModel is the resolved one — set fallbackModelPinned to choose it.
+  fallbackModelPinned: z.string().max(200).optional(),
   fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
 });
 

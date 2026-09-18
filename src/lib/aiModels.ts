@@ -46,11 +46,24 @@ export function resolveAiPatch(current: AISettings, patch: AiPatch): AiPatch {
     Object.assign(next, rememberModel(current.provider, patch.model));
   }
 
+  // The backup's model belongs to the backup's provider, so changing that
+  // provider without naming a new model drops back to "newest available"
+  // rather than asking the new one for a model it has never heard of.
+  if (
+    patch.fallbackProvider !== undefined &&
+    patch.fallbackProvider !== current.fallbackProvider &&
+    patch.fallbackModelPinned === undefined
+  ) {
+    next.fallbackModelPinned = "";
+    next.fallbackModel = "";
+  }
+
   const provider = next.provider ?? current.provider;
   const fallback = next.fallbackProvider ?? current.fallbackProvider;
   if (fallback && fallback === provider) {
     next.fallbackProvider = "";
     next.fallbackModel = "";
+    next.fallbackModelPinned = "";
   }
 
   return next;

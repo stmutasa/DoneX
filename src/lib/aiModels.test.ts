@@ -14,6 +14,7 @@ const ai = (over: Partial<AISettings> = {}): AISettings => ({
   customModel: "",
   fallbackProvider: "",
   fallbackModel: "",
+  fallbackModelPinned: "",
   ...over,
 });
 
@@ -106,6 +107,43 @@ describe("a backup that would stand in for itself", () => {
     expect(backupCollides(withBackup, { provider: "anthropic" })).toBe(true);
     expect(backupCollides(withBackup, { provider: "custom" })).toBe(false);
     expect(backupCollides(ai(), { provider: "anthropic" })).toBe(false);
+  });
+});
+
+describe("the backup's own model", () => {
+  const pinned = ai({
+    fallbackProvider: "anthropic",
+    fallbackModel: "claude-mid",
+    fallbackModelPinned: "claude-mid",
+  });
+
+  it("is kept when nothing about the backup changes", () => {
+    const s = after(pinned, { model: "gpt-5-nano" });
+    expect(s.fallbackModelPinned).toBe("claude-mid");
+    expect(s.fallbackModel).toBe("claude-mid");
+  });
+
+  it("is dropped when the backup moves to another provider", () => {
+    const s = after(pinned, { fallbackProvider: "custom" });
+    expect(s.fallbackProvider).toBe("custom");
+    expect(s.fallbackModelPinned).toBe("");
+    expect(s.fallbackModel).toBe("");
+  });
+
+  it("is kept when a new one is named in the same breath", () => {
+    const s = after(pinned, { fallbackProvider: "custom", fallbackModelPinned: "local-llama" });
+    expect(s.fallbackProvider).toBe("custom");
+    expect(s.fallbackModelPinned).toBe("local-llama");
+  });
+
+  it("goes when the backup itself goes", () => {
+    const s = after(pinned, { provider: "anthropic" });
+    expect(s.fallbackProvider).toBe("");
+    expect(s.fallbackModelPinned).toBe("");
+  });
+
+  it("can be cleared back to newest-available on its own", () => {
+    expect(after(pinned, { fallbackModelPinned: "" }).fallbackModelPinned).toBe("");
   });
 });
 

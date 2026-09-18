@@ -253,8 +253,10 @@ export interface AISettings {
   customModel: string;
   /** provider to use when the active one errors; "" = no failover */
   fallbackProvider: "" | AIProviderKind;
-  /** model id on the fallback provider, e.g. "claude-fable-5" */
+  /** the model failover actually reaches for — resolved, not chosen */
   fallbackModel: string;
+  /** the model you picked for the backup; "" = follow that provider's newest */
+  fallbackModelPinned: string;
 }
 
 /** Recorded whenever a call had to fall back, so it is never silent. */

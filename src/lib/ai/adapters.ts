@@ -47,6 +47,15 @@ export async function refreshFallbackModel(): Promise<string> {
   const stored = ai.fallbackModel.trim();
   const kind = ai.fallbackProvider;
   if (!kind || kind === ai.provider) return stored;
+
+  // A model you picked yourself is not something to keep moving off. Only an
+  // unpinned backup follows the provider's newest.
+  const pinned = ai.fallbackModelPinned.trim();
+  if (pinned) {
+    if (pinned !== stored) settingsRepo.updateApp({ ai: { fallbackModel: pinned } });
+    return pinned;
+  }
+
   const cfg = resolveConfig(kind);
   if (!configReady(cfg)) return stored;
   try {

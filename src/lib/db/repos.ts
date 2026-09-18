@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     customModel: "",
     fallbackProvider: "",
     fallbackModel: "",
+    fallbackModelPinned: "",
   },
   voice: { voiceURI: "", rate: 1, autoListen: true },
   features: {

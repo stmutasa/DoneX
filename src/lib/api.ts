@@ -512,7 +512,13 @@ export interface WeekAheadState {
 }
 
 export interface SaveModelsResult {
-  saved: { provider: string; model: string; fallbackProvider: string; fallbackModel: string };
+  saved: {
+    provider: string;
+    model: string;
+    fallbackProvider: string;
+    fallbackModel: string;
+    fallbackAuto: boolean;
+  };
   primary: { ok: boolean; message: string } | null;
   backup: { ok: boolean; message: string } | null;
   note: string | null;
@@ -597,7 +603,12 @@ export const settingsApi = {
       body: JSON.stringify({ provider }),
     }),
   /** Save the model choices, try them, and report what is now in force. */
-  saveModels: (body: { model?: string; fallbackProvider?: string; test?: boolean }) =>
+  saveModels: (body: {
+    model?: string;
+    fallbackProvider?: string;
+    fallbackModelPinned?: string;
+    test?: boolean;
+  }) =>
     request<SaveModelsResult>("/api/settings/ai-models", {
       method: "POST",
       body: JSON.stringify(body),

@@ -64,16 +64,35 @@ export function AiSection({ settings, mutate }: SectionProps) {
   // Draft choices, re-seeded whenever the saved settings actually change.
   const [draftModel, setDraftModel] = useState(ai.model);
   const [draftFallback, setDraftFallback] = useState<string>(ai.fallbackProvider);
+  const [draftFallbackModel, setDraftFallbackModel] = useState(ai.fallbackModelPinned);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<SaveModelsResult | null>(null);
   useEffect(() => {
     setDraftModel(ai.model);
     setDraftFallback(ai.fallbackProvider);
+    setDraftFallbackModel(ai.fallbackModelPinned);
     // The custom provider's own id field mirrors the same setting, so it has
     // to follow a save too rather than sitting there showing the old value.
     setCustomModel(ai.customModel);
     setBaseUrl(ai.customBaseUrl);
-  }, [ai.model, ai.fallbackProvider, ai.provider, ai.customModel, ai.customBaseUrl]);
+  }, [
+    ai.model,
+    ai.fallbackProvider,
+    ai.fallbackModelPinned,
+    ai.provider,
+    ai.customModel,
+    ai.customBaseUrl,
+  ]);
+
+  // The backup provider's own catalogue, so its model can be picked by name.
+  const { data: backupModelData, isLoading: backupModelsLoading } = useSWR<{ models: ModelInfo[] }>(
+    draftFallback ? keys.models(draftFallback as AIProviderKind) : null,
+    fetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  const backupModels = backupModelData?.models ?? [];
+  const backupPinMissing =
+    !!draftFallbackModel && !backupModels.some((m) => m.id === draftFallbackModel);
 
   const {
     data: modelData,
@@ -98,7 +117,10 @@ export function AiSection({ settings, mutate }: SectionProps) {
 
   // Nothing here writes until you press Save, so a half-made choice can't
   // quietly become the thing your work runs on.
-  const dirty = draftModel !== ai.model || draftFallback !== ai.fallbackProvider;
+  const dirty =
+    draftModel !== ai.model ||
+    draftFallback !== ai.fallbackProvider ||
+    draftFallbackModel !== ai.fallbackModelPinned;
 
   const saveModels = async () => {
     setSaving(true);
@@ -107,6 +129,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
       const res = await settingsApi.saveModels({
         model: draftModel,
         fallbackProvider: draftFallback,
+        fallbackModelPinned: draftFallbackModel,
       });
       setSaved(res);
       await mutate();
@@ -295,10 +318,18 @@ export function AiSection({ settings, mutate }: SectionProps) {
         <FieldLabel>Backup model</FieldLabel>
         <p className="mb-2 text-[13px] leading-relaxed text-muted">
           If {PROVIDER_LABEL[provider]} fails — expired key, rate limit, outage — DoneX
-          retries the same request on this provider’s newest model instead of giving up.
+          retries the same request elsewhere instead of giving up. Pick the provider, and
+          the model on it, or leave the model on auto to follow whatever is newest there.
         </p>
         <div className="flex gap-2">
-          <Select value={draftFallback} onChange={(e) => setDraftFallback(e.target.value)}>
+          <Select
+            value={draftFallback}
+            onChange={(e) => {
+              setDraftFallback(e.target.value);
+              // That model id belonged to the provider you just left.
+              setDraftFallbackModel("");
+            }}
+          >
             <option value="">No backup</option>
             {(["openai", "anthropic", "custom"] as AIProviderKind[])
               // A standby on the active provider can't stand in for it, so it
@@ -314,25 +345,42 @@ export function AiSection({ settings, mutate }: SectionProps) {
           </Select>
         </div>
 
-        {ai.fallbackProvider ? (
-          <p className="mt-2 text-[12px] leading-snug text-faint">
-            {!fallbackKeySet ? (
-              <span className="text-warn">
-                Add an {PROVIDER_LABEL[ai.fallbackProvider]} API key above (switch the
-                provider, paste the key, switch back) — without one the backup can’t run.
-              </span>
-            ) : ai.fallbackModel ? (
-              <>
-                Using <span className="text-ink">{ai.fallbackModel}</span> — the newest{" "}
-                {PROVIDER_LABEL[ai.fallbackProvider]} model. Re-checked daily, so it moves
-                to a newer one on its own.
-              </>
-            ) : (
-              <span className="text-warn">
-                Couldn’t reach {PROVIDER_LABEL[ai.fallbackProvider]} to see its models —
-                it will keep trying, and picks the newest when it gets through.
-              </span>
-            )}
+        {draftFallback ? (
+          <div className="mt-2">
+            <Select
+              value={draftFallbackModel}
+              onChange={(e) => setDraftFallbackModel(e.target.value)}
+              disabled={backupModelsLoading}
+            >
+              <option value="">
+                Auto — newest {PROVIDER_LABEL[draftFallback as AIProviderKind]} model
+              </option>
+              {backupPinMissing ? (
+                <option value={draftFallbackModel}>
+                  {draftFallbackModel}
+                  {!backupModelsLoading && backupModels.length > 0
+                    ? " — not in this provider's list"
+                    : ""}
+                </option>
+              ) : null}
+              {backupModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1.5 text-[12px] leading-snug text-faint">
+              {draftFallbackModel
+                ? "Pinned — failover uses exactly this, and won't move you off it."
+                : "Follows whatever is newest there, re-checked daily."}
+            </p>
+          </div>
+        ) : null}
+
+        {ai.fallbackProvider && !fallbackKeySet ? (
+          <p className="mt-2 text-[12px] leading-snug text-warn">
+            Add an {PROVIDER_LABEL[ai.fallbackProvider]} API key above (switch the provider,
+            paste the key, switch back) — without one the backup can’t run.
           </p>
         ) : null}
 
@@ -361,7 +409,9 @@ export function AiSection({ settings, mutate }: SectionProps) {
           </div>
           <div className="mt-0.5 text-[13px] leading-relaxed text-muted">
             {ai.fallbackProvider
-              ? `Backup: ${PROVIDER_LABEL[ai.fallbackProvider]}${ai.fallbackModel ? ` · ${ai.fallbackModel}` : ""}`
+              ? `Backup: ${PROVIDER_LABEL[ai.fallbackProvider]}${
+                  ai.fallbackModel ? ` · ${ai.fallbackModel}` : ""
+                }${ai.fallbackModelPinned ? " (pinned)" : " (newest)"}`
               : "No backup"}
           </div>
         </div>
@@ -381,7 +431,9 @@ export function AiSection({ settings, mutate }: SectionProps) {
               Saved — {PROVIDER_LABEL[provider]} ·{" "}
               {saved.saved.model || "newest available (auto)"}
               {saved.saved.fallbackProvider
-                ? `, backing up to ${PROVIDER_LABEL[saved.saved.fallbackProvider as AIProviderKind]}`
+                ? `, backing up to ${PROVIDER_LABEL[saved.saved.fallbackProvider as AIProviderKind]}${
+                    saved.saved.fallbackModel ? ` · ${saved.saved.fallbackModel}` : ""
+                  }${saved.saved.fallbackAuto ? " (newest)" : " (pinned)"}`
                 : ", no backup"}
               .
             </p>

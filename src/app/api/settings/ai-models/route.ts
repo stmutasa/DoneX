@@ -18,6 +18,8 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({
   model: z.string().max(200).optional(),
   fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
+  /** "" follows the backup provider's newest; anything else pins that model */
+  fallbackModelPinned: z.string().max(200).optional(),
   /** skip the live calls and just save */
   test: z.boolean().optional(),
 });
@@ -28,6 +30,8 @@ export interface SaveModelsResult {
     model: string;
     fallbackProvider: string;
     fallbackModel: string;
+    /** true when the backup follows the provider's newest rather than a pick */
+    fallbackAuto: boolean;
   };
   /** null when the caller asked not to test */
   primary: { ok: boolean; message: string } | null;
@@ -44,12 +48,15 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid model selection" }, { status: 400 });
   }
-  const { model, fallbackProvider, test = true } = parsed.data;
+  const { model, fallbackProvider, fallbackModelPinned, test = true } = parsed.data;
 
   const before = settingsRepo.getApp().ai;
   const wanted = {
     ...(model !== undefined ? { model: model.trim() } : {}),
     ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+    ...(fallbackModelPinned !== undefined
+      ? { fallbackModelPinned: fallbackModelPinned.trim() }
+      : {}),
   };
   const dropped = backupCollides(before, wanted);
 
@@ -70,6 +77,7 @@ export async function POST(req: NextRequest) {
       model: ai.model,
       fallbackProvider: ai.fallbackProvider,
       fallbackModel: ai.fallbackModel,
+      fallbackAuto: !ai.fallbackModelPinned,
     },
     primary: null,
     backup: null,

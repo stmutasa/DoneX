@@ -483,6 +483,12 @@ line each for the main and backup model saying whether they answered. The
 **In use right now** box above the button always spells out what is actually in
 force, so there is never any guessing about whether something stuck.
 
+The backup takes **two** choices: the provider, and then the model on it.
+Leave that second one on **Auto** and it follows whatever is newest there,
+re-checked daily. Pick one and it is pinned — failover uses exactly that and
+won't move you onto a newer, pricier flagship the day one ships. The **In use
+right now** box says which you're on, `(pinned)` or `(newest)`.
+
 Two rules worth knowing, because both used to cause silent surprises:
 
 - **A model belongs to its provider.** Each provider remembers what you chose
@@ -491,6 +497,9 @@ Two rules worth knowing, because both used to cause silent surprises:
 - **A backup can't be the provider it backs up.** If you make your backup
   provider the active one, the backup is switched off and the save says so —
   because a standby on the provider that just failed can't stand in for it.
+- **A pinned backup model belongs to its provider.** Move the backup to a
+  different company and the pin drops back to Auto, rather than asking the new
+  one for a model it has never heard of.
 
 If the provider stops listing a model you picked, DoneX keeps asking for it and
 warns you on this screen rather than silently moving you. That matters: calls to
