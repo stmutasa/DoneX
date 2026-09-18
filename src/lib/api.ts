@@ -511,6 +511,13 @@ export interface WeekAheadState {
   last: { text: string; weekOf: string; at: string } | null;
 }
 
+export interface SaveModelsResult {
+  saved: { provider: string; model: string; fallbackProvider: string; fallbackModel: string };
+  primary: { ok: boolean; message: string } | null;
+  backup: { ok: boolean; message: string } | null;
+  note: string | null;
+}
+
 export const jointApi = {
   /** Build and push your own digest right now, to check it works. */
   testDigest: () =>
@@ -588,6 +595,13 @@ export const settingsApi = {
     request<{ ok: boolean; message: string }>("/api/settings/test", {
       method: "POST",
       body: JSON.stringify({ provider }),
+    }),
+  /** Save the model choices, try them, and report what is now in force. */
+  saveModels: (body: { model?: string; fallbackProvider?: string; test?: boolean }) =>
+    request<SaveModelsResult>("/api/settings/ai-models", {
+      method: "POST",
+      body: JSON.stringify(body),
+      timeoutMs: 90_000,
     }),
   regenerateIngestToken: () =>
     request<{ ingestToken: string }>("/api/settings/ingest-token", { method: "POST" }),

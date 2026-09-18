@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { ApiError, fetcher, keys, settingsApi } from "@/lib/api";
+import { ApiError, fetcher, keys, settingsApi, type SaveModelsResult } from "@/lib/api";
 import type { AIProviderKind, ModelInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/format";
@@ -10,7 +10,29 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { FieldLabel, Input, Select } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
 import { IconCheck, IconRefresh, IconX } from "@/components/ui/icons";
+import { useToast } from "@/components/ui/Toast";
 import { Divider, SettingsCard, maskPlaceholder, useSettingsPatch, type SectionProps } from "./common";
+
+/** One line of "we tried it and this happened". */
+function TestLine({ label, result }: { label: string; result: { ok: boolean; message: string } }) {
+  return (
+    <p
+      className={cn(
+        "flex items-start gap-1.5 text-[12.5px] leading-snug",
+        result.ok ? "text-ok" : "text-danger",
+      )}
+    >
+      {result.ok ? (
+        <IconCheck className="mt-[2px] h-3.5 w-3.5 shrink-0" strokeWidth={2.6} />
+      ) : (
+        <IconX className="mt-[2px] h-3.5 w-3.5 shrink-0" strokeWidth={2.6} />
+      )}
+      <span>
+        <span className="font-medium">{label}:</span> {result.message}
+      </span>
+    </p>
+  );
+}
 
 const PROVIDER_LABEL: Record<AIProviderKind, string> = {
   openai: "OpenAI",
@@ -20,6 +42,7 @@ const PROVIDER_LABEL: Record<AIProviderKind, string> = {
 
 export function AiSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
+  const toast = useToast();
   const ai = settings.ai;
   const provider = ai.provider;
   const fallbackKeySet =
@@ -35,9 +58,22 @@ export function AiSection({ settings, mutate }: SectionProps) {
   const [savingKey, setSavingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState(ai.customBaseUrl);
   const [customModel, setCustomModel] = useState(ai.customModel);
-  const [modelDraft, setModelDraft] = useState(ai.model);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Draft choices, re-seeded whenever the saved settings actually change.
+  const [draftModel, setDraftModel] = useState(ai.model);
+  const [draftFallback, setDraftFallback] = useState<string>(ai.fallbackProvider);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<SaveModelsResult | null>(null);
+  useEffect(() => {
+    setDraftModel(ai.model);
+    setDraftFallback(ai.fallbackProvider);
+    // The custom provider's own id field mirrors the same setting, so it has
+    // to follow a save too rather than sitting there showing the old value.
+    setCustomModel(ai.customModel);
+    setBaseUrl(ai.customBaseUrl);
+  }, [ai.model, ai.fallbackProvider, ai.provider, ai.customModel, ai.customBaseUrl]);
 
   const {
     data: modelData,
@@ -57,8 +93,30 @@ export function AiSection({ settings, mutate }: SectionProps) {
   // provider no longer lists (or one that simply hasn't loaded yet) looked
   // exactly like the setting had been thrown away. Keep your pick in the list
   // whatever the provider says, and say so when the provider doesn't know it.
-  const chosenMissing = !!ai.model && !models.some((m) => m.id === ai.model);
+  const chosenMissing = !!draftModel && !models.some((m) => m.id === draftModel);
   const strayIsUnknown = chosenMissing && !modelsLoading && models.length > 0;
+
+  // Nothing here writes until you press Save, so a half-made choice can't
+  // quietly become the thing your work runs on.
+  const dirty = draftModel !== ai.model || draftFallback !== ai.fallbackProvider;
+
+  const saveModels = async () => {
+    setSaving(true);
+    setSaved(null);
+    try {
+      const res = await settingsApi.saveModels({
+        model: draftModel,
+        fallbackProvider: draftFallback,
+      });
+      setSaved(res);
+      await mutate();
+      toast.success(res.primary?.ok === false ? "Saved — but it didn't answer" : "Saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save that");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const secretMark =
     provider === "openai" ? ai.openaiKey : provider === "anthropic" ? ai.anthropicKey : ai.customKey;
@@ -171,9 +229,8 @@ export function AiSection({ settings, mutate }: SectionProps) {
           <>
             <Input
               placeholder="gpt-4o-mini"
-              value={modelDraft}
-              onChange={(e) => setModelDraft(e.target.value)}
-              onBlur={() => modelDraft !== ai.model && patch({ ai: { model: modelDraft } })}
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
             />
             <p className="mt-1.5 text-[12px] text-faint">
               Couldn’t list models — type the id yourself, or leave blank to auto-pick.
@@ -182,14 +239,14 @@ export function AiSection({ settings, mutate }: SectionProps) {
         ) : (
           <>
             <Select
-              value={ai.model}
-              onChange={(e) => void patch({ ai: { model: e.target.value } })}
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
               disabled={modelsLoading}
             >
               <option value="">Auto — newest available</option>
               {chosenMissing ? (
-                <option value={ai.model}>
-                  {ai.model}
+                <option value={draftModel}>
+                  {draftModel}
                   {strayIsUnknown ? " — not in this provider's list" : ""}
                 </option>
               ) : null}
@@ -202,7 +259,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
             {strayIsUnknown ? (
               <p className="mt-1.5 text-[12px] leading-snug text-warn">
                 {PROVIDER_LABEL[provider]} didn’t list{" "}
-                <span className="font-medium">{ai.model}</span>. It is still what DoneX
+                <span className="font-medium">{draftModel}</span>. It is still what DoneX
                 asks for — pick another if it has been retired, since calls to a model the
                 provider won’t serve fall through to your backup model.
               </p>
@@ -241,21 +298,17 @@ export function AiSection({ settings, mutate }: SectionProps) {
           retries the same request on this provider’s newest model instead of giving up.
         </p>
         <div className="flex gap-2">
-          <Select
-            value={ai.fallbackProvider}
-            onChange={(e) =>
-              void patch(
-                { ai: { fallbackProvider: e.target.value as typeof ai.fallbackProvider } },
-                e.target.value ? "Backup provider set" : "Backup turned off",
-              )
-            }
-          >
+          <Select value={draftFallback} onChange={(e) => setDraftFallback(e.target.value)}>
             <option value="">No backup</option>
             {(["openai", "anthropic", "custom"] as AIProviderKind[])
-              .filter((k) => k !== provider)
+              // A standby on the active provider can't stand in for it, so it
+              // is not offered — but if one is somehow set, it is still shown
+              // rather than silently reading back as "No backup".
+              .filter((k) => k !== provider || k === draftFallback)
               .map((k) => (
                 <option key={k} value={k}>
                   {PROVIDER_LABEL[k]}
+                  {k === provider ? " — same as the active one" : ""}
                 </option>
               ))}
           </Select>
@@ -289,6 +342,53 @@ export function AiSection({ settings, mutate }: SectionProps) {
             covered for {PROVIDER_LABEL[settings.aiFallback.from]}, which said:{" "}
             “{settings.aiFallback.reason}”
           </p>
+        ) : null}
+      </div>
+
+      <Divider />
+
+      {/* One explicit write for both choices, so "saved" is a thing that
+          happened at a moment you chose rather than something to take on
+          trust. What is actually in force is spelled out either way. */}
+      <div>
+        <div className="rounded-2xl border border-stroke bg-sunken px-3.5 py-3">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-faint">
+            In use right now
+          </div>
+          <div className="mt-1 text-[13.5px] leading-relaxed text-ink">
+            {PROVIDER_LABEL[ai.provider]} ·{" "}
+            <span className="font-medium">{ai.model || "newest available (auto)"}</span>
+          </div>
+          <div className="mt-0.5 text-[13px] leading-relaxed text-muted">
+            {ai.fallbackProvider
+              ? `Backup: ${PROVIDER_LABEL[ai.fallbackProvider]}${ai.fallbackModel ? ` · ${ai.fallbackModel}` : ""}`
+              : "No backup"}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button variant="primary" loading={saving} disabled={!dirty} onClick={() => void saveModels()}>
+            {dirty ? "Save and test" : "Saved"}
+          </Button>
+          {dirty ? (
+            <span className="text-[13px] text-warn">Not saved yet</span>
+          ) : null}
+        </div>
+
+        {saved ? (
+          <div className="mt-3 space-y-1.5 rounded-2xl border border-stroke px-3.5 py-3">
+            <p className="text-[13.5px] font-medium text-ink">
+              Saved — {PROVIDER_LABEL[provider]} ·{" "}
+              {saved.saved.model || "newest available (auto)"}
+              {saved.saved.fallbackProvider
+                ? `, backing up to ${PROVIDER_LABEL[saved.saved.fallbackProvider as AIProviderKind]}`
+                : ", no backup"}
+              .
+            </p>
+            {saved.note ? <p className="text-[12.5px] text-warn">{saved.note}</p> : null}
+            {saved.primary ? <TestLine label="Main" result={saved.primary} /> : null}
+            {saved.backup ? <TestLine label="Backup" result={saved.backup} /> : null}
+          </div>
         ) : null}
       </div>
     </SettingsCard>

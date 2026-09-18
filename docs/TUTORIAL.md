@@ -470,6 +470,32 @@ Two things that sound related but aren't, and keep working regardless: your
 **morning briefing** and **weekly review** are not the Assistant, and a
 **location on a task** is not Nearby.
 
+## Choosing the model (and its backup)
+
+Settings → **AI model**. Pick the provider, then the model, then the backup
+provider — and nothing is written until you press **Save and test**. Until you
+do, the screen says *Not saved yet*, so a half-made choice can never quietly
+become the thing your work runs on.
+
+Pressing it saves both choices, then actually calls them and tells you what
+happened: *"Saved — Anthropic · claude-…, backing up to OpenAI"* followed by a
+line each for the main and backup model saying whether they answered. The
+**In use right now** box above the button always spells out what is actually in
+force, so there is never any guessing about whether something stuck.
+
+Two rules worth knowing, because both used to cause silent surprises:
+
+- **A model belongs to its provider.** Each provider remembers what you chose
+  on it, so switching to another and back gives you your pick again rather than
+  starting over on the newest (and usually priciest) model.
+- **A backup can't be the provider it backs up.** If you make your backup
+  provider the active one, the backup is switched off and the save says so —
+  because a standby on the provider that just failed can't stand in for it.
+
+If the provider stops listing a model you picked, DoneX keeps asking for it and
+warns you on this screen rather than silently moving you. That matters: calls to
+a model a provider won't serve fall through to the backup.
+
 ## Settings worth knowing about
 
 Settings is now a **menu**: five short groups (You · Intelligence ·
