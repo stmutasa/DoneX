@@ -9,7 +9,7 @@ import type { GoogleStatus, MaskedSettings } from "@/lib/types";
 import { Page } from "@/components/shell/Page";
 import { PageHeader, Skeleton } from "@/components/ui/Misc";
 import { IconChevronRight } from "@/components/ui/icons";
-import { SETTINGS_GROUPS, findSection } from "@/components/settings/registry";
+import { groupsFor, findSection } from "@/components/settings/registry";
 
 /** Settings hub: grouped menu rows with live status, one sub-page per row. */
 export default function SettingsPage() {
@@ -36,7 +36,7 @@ export default function SettingsPage() {
         </div>
       ) : (
         <div className="space-y-5">
-          {SETTINGS_GROUPS.map((group) => (
+          {groupsFor(settings).map((group) => (
             <section key={group.label}>
               <p className="mb-1.5 px-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-faint">
                 {group.label}

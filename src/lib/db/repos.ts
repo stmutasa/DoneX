@@ -35,6 +35,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ai: {
     provider: "openai",
     model: "",
+    openaiModel: "",
+    anthropicModel: "",
     openaiKey: "",
     anthropicKey: "",
     customBaseUrl: "",
@@ -44,6 +46,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fallbackModel: "",
   },
   voice: { voiceURI: "", rate: 1, autoListen: true },
+  features: {
+    assistant: false,
+    nearby: false,
+    walkMode: false,
+  },
   notifications: {
     remindersEnabled: true,
     briefingEnabled: true,

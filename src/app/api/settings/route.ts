@@ -5,7 +5,7 @@ import { requireOwner } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import { JOINT_COLOR_IDS } from "@/lib/jointColors";
 import { classifyCalendarLink } from "@/lib/calendarLinks";
-import type { AppSettings, MaskedSettings } from "@/lib/types";
+import type { AIProviderKind, AISettings, AppSettings, MaskedSettings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +43,8 @@ function maskSettings(settings: AppSettings): MaskedSettings {
     ai: {
       provider: ai.provider,
       model: ai.model,
+      openaiModel: ai.openaiModel,
+      anthropicModel: ai.anthropicModel,
       customBaseUrl: ai.customBaseUrl,
       customModel: ai.customModel,
       fallbackProvider: ai.fallbackProvider,
@@ -103,8 +105,15 @@ const googlePatchSchema = z.object({
   mapsApiKey: z.string().optional(),
 });
 
+const featuresPatchSchema = z.object({
+  assistant: z.boolean().optional(),
+  nearby: z.boolean().optional(),
+  walkMode: z.boolean().optional(),
+});
+
 const patchSchema = z.object({
   tz: z.string().optional(),
+  features: featuresPatchSchema.optional(),
   theme: z.enum(["system", "light", "dark"]).optional(),
   ai: aiPatchSchema.optional(),
   voice: voicePatchSchema.optional(),
@@ -141,6 +150,20 @@ export async function GET() {
   return NextResponse.json(maskSettings(settingsRepo.getApp()));
 }
 
+/** Where a provider's chosen model is parked while another one is active. */
+function rememberModel(provider: AIProviderKind, model: string): Partial<AISettings> {
+  if (provider === "openai") return { openaiModel: model };
+  if (provider === "anthropic") return { anthropicModel: model };
+  return { customModel: model };
+}
+
+/** What that provider was last set to — "" means auto-pick its newest. */
+function recallModel(provider: AIProviderKind, ai: AISettings): string {
+  if (provider === "openai") return ai.openaiModel;
+  if (provider === "anthropic") return ai.anthropicModel;
+  return ai.customModel;
+}
+
 export async function PATCH(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
@@ -160,6 +183,22 @@ export async function PATCH(req: NextRequest) {
       if (ai[key] === "") delete ai[key];
       else if (ai[key] === "__clear__") ai[key] = "";
     }
+
+    const current = settingsRepo.getApp().ai;
+
+    // A model id belongs to the provider it came from. Carrying one across a
+    // provider switch used to leave the new provider holding an id it has
+    // never heard of — every call then failed and fell through to the backup
+    // provider's newest model, quietly and expensively. So park the outgoing
+    // provider's pick and restore whatever was last chosen on the incoming one.
+    if (ai.provider !== undefined && ai.provider !== current.provider) {
+      Object.assign(ai, rememberModel(current.provider, current.model));
+      ai.model = recallModel(ai.provider, current);
+    } else if (ai.model !== undefined) {
+      // Choosing a model also updates that provider's memory of it.
+      Object.assign(ai, rememberModel(current.provider, ai.model));
+    }
+
     patch.ai = ai;
   }
   if (data.joint) {

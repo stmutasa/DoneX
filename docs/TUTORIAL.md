@@ -455,6 +455,21 @@ digest draws). But anyone holding the address can read your list, so treat it
 like a password. **Replace link** kills the old one instantly and gives you a
 new one; **Turn off** kills it with no replacement.
 
+## Switching off what you don't use
+
+Settings → **Features** has a switch each for **Assistant** (the chat page),
+**Nearby** (tasks near where you are) and **Walk mode** (hands-free voice). All
+three ship switched off.
+
+Switching one off hides its way in everywhere — the tab bar, the More sheet,
+the desktop sidebar — and closes the page, so an old bookmark lands back on
+Today rather than somewhere with no way out. Walk mode takes its Voice settings
+with it. Nothing is deleted: turn one back on and it returns exactly as it was.
+
+Two things that sound related but aren't, and keep working regardless: your
+**morning briefing** and **weekly review** are not the Assistant, and a
+**location on a task** is not Nearby.
+
 ## Settings worth knowing about
 
 Settings is now a **menu**: five short groups (You · Intelligence ·

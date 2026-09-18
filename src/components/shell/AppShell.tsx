@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { motion } from "framer-motion";
 import { authApi, fetcher, keys } from "@/lib/api";
-import type { InboxItem, StatsSummary } from "@/lib/types";
+import type { FeatureSettings, InboxItem, StatsSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { CountBadge } from "@/components/ui/Misc";
@@ -23,7 +23,15 @@ import {
   IconSun,
 } from "@/components/ui/icons";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
-import { MORE_ITEMS, NAV_ITEMS, TAB_ITEMS, Wordmark, isActive } from "./nav";
+import {
+  MORE_ITEMS,
+  NAV_ITEMS,
+  TAB_ITEMS,
+  Wordmark,
+  isActive,
+  isDisabledPath,
+  visibleItems,
+} from "./nav";
 import { OfflineBanner } from "./OfflineBanner";
 import { useTheme } from "./ThemeProvider";
 
@@ -33,8 +41,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
 
-  const { data: me } = useSWR<{ role: "owner" | "partner" }>(keys.me(), fetcher);
+  const { data: me } = useSWR<{ role: "owner" | "partner"; features?: FeatureSettings }>(
+    keys.me(),
+    fetcher,
+  );
   const partner = me?.role === "partner";
+  const features = me?.features;
   // Owner-only fetches wait until the role is actually known.
   const owner = me?.role === "owner";
 
@@ -49,6 +61,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (partner && !pathname.startsWith("/joint")) router.replace("/joint");
   }, [partner, pathname, router]);
+
+  // A switched-off page is still a route — a bookmark or an old link would
+  // otherwise land on something the app no longer offers a way back from.
+  useEffect(() => {
+    if (isDisabledPath(pathname, features)) router.replace("/today");
+  }, [features, pathname, router]);
 
   const newCount = inbox?.newCount ?? 0;
   const streak = stats?.streakDays ?? 0;
@@ -98,6 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <OfflineBanner />
       <DesktopSidebar
         pathname={pathname}
+        features={features}
         newCount={newCount}
         streak={streak}
         onQuickAdd={() => setQuickOpen(true)}
@@ -106,7 +125,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="lg:pl-[248px]">{children}</main>
 
-      <MobileTabBar pathname={pathname} onMore={() => setMoreOpen(true)} inboxBadge={newCount} />
+      <MobileTabBar
+        pathname={pathname}
+        features={features}
+        onMore={() => setMoreOpen(true)}
+        inboxBadge={newCount}
+      />
 
       {!hideFab ? (
         <button
@@ -119,7 +143,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </button>
       ) : null}
 
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} pathname={pathname} newCount={newCount} />
+      <MoreSheet
+        open={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        pathname={pathname}
+        features={features}
+        newCount={newCount}
+      />
       <QuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} />
     </div>
   );
@@ -127,12 +157,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function DesktopSidebar({
   pathname,
+  features,
   newCount,
   streak,
   onQuickAdd,
   onSignOut,
 }: {
   pathname: string;
+  features?: FeatureSettings;
   newCount: number;
   streak: number;
   onQuickAdd: () => void;
@@ -157,7 +189,7 @@ function DesktopSidebar({
       </Button>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ href, label, Icon }) => {
+        {visibleItems(NAV_ITEMS, features).map(({ href, label, Icon }) => {
           const active = isActive(pathname, href);
           return (
             <Link
@@ -183,15 +215,17 @@ function DesktopSidebar({
         })}
       </nav>
 
-      <Link
-        href="/voice"
-        className="mt-3 flex min-h-[44px] items-center gap-3 rounded-2xl border border-stroke px-3 text-[14px] text-muted transition-colors hover:text-ink"
-      >
-        <span className="grid h-6 w-6 place-items-center rounded-full bg-sunrise text-on-accent">
-          <IconChat className="h-3.5 w-3.5" />
-        </span>
-        Walk mode
-      </Link>
+      {features?.walkMode ? (
+        <Link
+          href="/voice"
+          className="mt-3 flex min-h-[44px] items-center gap-3 rounded-2xl border border-stroke px-3 text-[14px] text-muted transition-colors hover:text-ink"
+        >
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-sunrise text-on-accent">
+            <IconChat className="h-3.5 w-3.5" />
+          </span>
+          Walk mode
+        </Link>
+      ) : null}
 
       {/* Theme and sign-out live in the phone's More sheet; on a desktop the
           sidebar is where you'd go looking for them. */}
@@ -213,14 +247,16 @@ function DesktopSidebar({
 
 function MobileTabBar({
   pathname,
+  features,
   onMore,
   inboxBadge,
 }: {
   pathname: string;
+  features?: FeatureSettings;
   onMore: () => void;
   inboxBadge: number;
 }) {
-  const moreActive = MORE_ITEMS.some((i) => isActive(pathname, i.href));
+  const moreActive = visibleItems(MORE_ITEMS, features).some((i) => isActive(pathname, i.href));
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl lg:hidden">
@@ -301,18 +337,20 @@ function MoreSheet({
   open,
   onClose,
   pathname,
+  features,
   newCount,
 }: {
   open: boolean;
   onClose: () => void;
   pathname: string;
+  features?: FeatureSettings;
   newCount: number;
 }) {
   const { theme, setTheme } = useTheme();
   return (
     <Sheet open={open} onClose={onClose} title="More">
       <div className="space-y-1 pb-2">
-        {MORE_ITEMS.map(({ href, label, Icon }) => (
+        {visibleItems(MORE_ITEMS, features).map(({ href, label, Icon }) => (
           <Link
             key={href}
             href={href}
@@ -327,16 +365,18 @@ function MoreSheet({
             {href === "/inbox" ? <CountBadge count={newCount} /> : null}
           </Link>
         ))}
-        <Link
-          href="/voice"
-          onClick={onClose}
-          className="flex min-h-[52px] items-center gap-3 rounded-2xl px-3 text-[15px] text-ink transition-colors hover:bg-sunken"
-        >
-          <span className="grid h-5 w-5 place-items-center rounded-full bg-sunrise text-on-accent">
-            <IconChat className="h-3 w-3" />
-          </span>
-          <span className="flex-1">Walk mode</span>
-        </Link>
+        {features?.walkMode ? (
+          <Link
+            href="/voice"
+            onClick={onClose}
+            className="flex min-h-[52px] items-center gap-3 rounded-2xl px-3 text-[15px] text-ink transition-colors hover:bg-sunken"
+          >
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-sunrise text-on-accent">
+              <IconChat className="h-3 w-3" />
+            </span>
+            <span className="flex-1">Walk mode</span>
+          </Link>
+        ) : null}
       </div>
 
       <div className="mt-3 border-t border-stroke pt-4">

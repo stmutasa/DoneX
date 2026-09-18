@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
 import { fetcher, keys, locationApi, settingsApi } from "@/lib/api";
-import type { MaskedSettings } from "@/lib/types";
+import type { FeatureSettings, MaskedSettings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useVoiceConversation } from "@/hooks/useVoiceConversation";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -32,6 +32,14 @@ export default function VoicePage() {
     keys.settings(),
     fetcher,
   );
+
+  // This page sits outside the app shell, so it has to see itself out when
+  // Walk mode is switched off — the shell's guard never runs here.
+  const { data: me } = useSWR<{ features?: FeatureSettings }>(keys.me(), fetcher);
+  const walkModeOff = me?.features ? !me.features.walkMode : false;
+  useEffect(() => {
+    if (walkModeOff) router.replace("/today");
+  }, [walkModeOff, router]);
 
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [active, setActive] = useState(false);

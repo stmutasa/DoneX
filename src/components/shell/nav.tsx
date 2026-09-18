@@ -1,4 +1,5 @@
 import type { ComponentType, SVGProps } from "react";
+import type { FeatureSettings } from "@/lib/types";
 import {
   IconCalendar,
   IconChart,
@@ -42,6 +43,32 @@ export const TAB_ITEMS: NavItem[] = ["/today", "/upcoming", "/joint", "/inbox"].
 export const MORE_ITEMS: NavItem[] = NAV_ITEMS.filter(
   (i) => !TAB_ITEMS.some((t) => t.href === i.href),
 );
+
+/** Pages that exist only while their feature is switched on. */
+const OPTIONAL: Record<string, keyof FeatureSettings> = {
+  "/assistant": "assistant",
+  "/nearby": "nearby",
+};
+
+/**
+ * The nav with switched-off corners removed. Defaults to showing everything,
+ * so the shell renders sensibly in the moment before /me has answered.
+ */
+export function visibleItems(items: NavItem[], features?: FeatureSettings): NavItem[] {
+  if (!features) return items;
+  return items.filter((i) => {
+    const flag = OPTIONAL[i.href];
+    return flag === undefined || features[flag];
+  });
+}
+
+/** Is this path one of the switched-off pages? */
+export function isDisabledPath(pathname: string, features?: FeatureSettings): boolean {
+  if (!features) return false;
+  if (pathname.startsWith("/voice")) return !features.walkMode;
+  const entry = Object.entries(OPTIONAL).find(([href]) => isActive(pathname, href));
+  return entry ? !features[entry[1]] : false;
+}
 
 export function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);

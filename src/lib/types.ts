@@ -241,6 +241,10 @@ export interface AISettings {
   provider: AIProviderKind;
   /** model id for the active provider; empty string = auto-pick newest */
   model: string;
+  /** What you last chose on each provider, so switching away and back keeps
+   *  your pick instead of silently handing the work to the newest model. */
+  openaiModel: string;
+  anthropicModel: string;
   openaiKey: string;
   anthropicKey: string;
   /** OpenAI-compatible endpoint for "custom" (e.g. OpenRouter, local) */
@@ -267,6 +271,20 @@ export interface VoiceSettings {
   voiceURI: string; // "" = system default
   rate: number; // 0.5–2, default 1
   autoListen: boolean; // hands-free loop after assistant speaks
+}
+
+/**
+ * Corners of the app you can switch off. Everything here is a whole surface
+ * with its own page — turning one off hides its way in and closes the page,
+ * and turning it back on restores it exactly as it was. Nothing is deleted.
+ */
+export interface FeatureSettings {
+  /** the chat page */
+  assistant: boolean;
+  /** the what's-near-me page */
+  nearby: boolean;
+  /** the hands-free voice page */
+  walkMode: boolean;
 }
 
 export interface NotificationSettings {
@@ -336,6 +354,7 @@ export interface AppSettings {
   theme: "system" | "light" | "dark";
   ai: AISettings;
   voice: VoiceSettings;
+  features: FeatureSettings;
   notifications: NotificationSettings;
   google: GoogleSettings;
   joint: JointSettings;

@@ -19,6 +19,7 @@ import {
   IconKeyboard,
   IconLink,
   IconList,
+  IconSliders,
   IconSparkles,
   IconSun,
   IconVolume,
@@ -31,6 +32,7 @@ import { JointSection } from "./JointSection";
 import { AiSection } from "./AiSection";
 import { CaptureSection } from "./CaptureSection";
 import { ShareSection } from "./ShareSection";
+import { FeaturesSection } from "./FeaturesSection";
 import { GoogleSection } from "./GoogleSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { TriageLessonsSection } from "./TriageLessonsSection";
@@ -191,6 +193,20 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
     label: "App",
     sections: [
       {
+        slug: "features",
+        title: "Features",
+        icon: IconSliders,
+        subtitle: (s) => {
+          const on = [
+            s.features.assistant && "Assistant",
+            s.features.nearby && "Nearby",
+            s.features.walkMode && "Walk mode",
+          ].filter(Boolean) as string[];
+          return on.length === 0 ? "All three switched off" : `On: ${on.join(", ")}`;
+        },
+        render: (s, m) => <FeaturesSection settings={s} mutate={m} />,
+      },
+      {
         slug: "data",
         title: "Data",
         icon: IconDownload,
@@ -216,6 +232,22 @@ export const SETTINGS_GROUPS: SectionGroup[] = [
 ];
 
 export const SETTINGS_SECTIONS: SectionDef[] = SETTINGS_GROUPS.flatMap((g) => g.sections);
+
+/** Sections belonging to a switched-off feature, so they vanish with it. */
+const SECTION_NEEDS: Record<string, keyof MaskedSettings["features"]> = {
+  voice: "walkMode",
+};
+
+/** The menu as it should look for these settings — minus what is switched off. */
+export function groupsFor(settings: MaskedSettings): SectionGroup[] {
+  return SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    sections: group.sections.filter((s) => {
+      const needs = SECTION_NEEDS[s.slug];
+      return needs === undefined || settings.features[needs];
+    }),
+  })).filter((group) => group.sections.length > 0);
+}
 
 export function findSection(slug: string): SectionDef | null {
   return SETTINGS_SECTIONS.find((s) => s.slug === slug) ?? null;

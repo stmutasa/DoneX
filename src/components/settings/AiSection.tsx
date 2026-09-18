@@ -52,6 +52,14 @@ export function AiSection({ settings, mutate }: SectionProps) {
   const models = modelData?.models ?? [];
   const modelsUnavailable = !!modelError;
 
+  // A <select> whose value matches none of its options shows the first one
+  // instead — which here reads "Auto — newest available", so a saved model the
+  // provider no longer lists (or one that simply hasn't loaded yet) looked
+  // exactly like the setting had been thrown away. Keep your pick in the list
+  // whatever the provider says, and say so when the provider doesn't know it.
+  const chosenMissing = !!ai.model && !models.some((m) => m.id === ai.model);
+  const strayIsUnknown = chosenMissing && !modelsLoading && models.length > 0;
+
   const secretMark =
     provider === "openai" ? ai.openaiKey : provider === "anthropic" ? ai.anthropicKey : ai.customKey;
   const keyField =
@@ -172,18 +180,34 @@ export function AiSection({ settings, mutate }: SectionProps) {
             </p>
           </>
         ) : (
-          <Select
-            value={ai.model}
-            onChange={(e) => void patch({ ai: { model: e.target.value } })}
-            disabled={modelsLoading}
-          >
-            <option value="">Auto — newest available</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </Select>
+          <>
+            <Select
+              value={ai.model}
+              onChange={(e) => void patch({ ai: { model: e.target.value } })}
+              disabled={modelsLoading}
+            >
+              <option value="">Auto — newest available</option>
+              {chosenMissing ? (
+                <option value={ai.model}>
+                  {ai.model}
+                  {strayIsUnknown ? " — not in this provider's list" : ""}
+                </option>
+              ) : null}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </Select>
+            {strayIsUnknown ? (
+              <p className="mt-1.5 text-[12px] leading-snug text-warn">
+                {PROVIDER_LABEL[provider]} didn’t list{" "}
+                <span className="font-medium">{ai.model}</span>. It is still what DoneX
+                asks for — pick another if it has been retired, since calls to a model the
+                provider won’t serve fall through to your backup model.
+              </p>
+            ) : null}
+          </>
         )}
       </div>
 

@@ -31,6 +31,7 @@ import type {
   ToolActivity,
   TriageFeedback,
   VoiceSettings,
+  FeatureSettings,
   WeeklyReview,
 } from "@/lib/types";
 
@@ -471,6 +472,7 @@ export type SettingsPatch = {
   theme?: MaskedSettings["theme"];
   ai?: Partial<AISettings>;
   voice?: Partial<VoiceSettings>;
+  features?: Partial<FeatureSettings>;
   notifications?: Partial<NotificationSettings>;
   google?: Partial<GoogleSettings>;
   smsCaptureEnabled?: boolean;
