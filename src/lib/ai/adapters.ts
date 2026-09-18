@@ -76,9 +76,14 @@ export async function fallbackConfig(): Promise<ProviderConfig | null> {
   if (!kind || kind === ai.provider) return null;
   const cfg = resolveConfig(kind);
   if (!configReady(cfg)) return null;
-  // Normally already resolved; this covers a key added after the provider was
-  // chosen, so the first failover still finds a model.
-  const model = ai.fallbackModel.trim() || cfg.model || (await refreshFallbackModel());
+  // A model you pinned wins outright, so failover can never drift onto the
+  // resolved-newest value even if that were left stale. The rest covers a key
+  // added after the provider was chosen, so the first failover finds a model.
+  const model =
+    ai.fallbackModelPinned.trim() ||
+    ai.fallbackModel.trim() ||
+    cfg.model ||
+    (await refreshFallbackModel());
   if (!model) return null;
   return { ...cfg, model };
 }
@@ -145,14 +150,23 @@ export async function listModels(provider: AIProviderKind): Promise<ModelInfo[]>
   return adapterFor(cfg.kind).models(cfg);
 }
 
+/**
+ * Probe a provider with a real call.
+ *
+ * `modelOverride` matters for the standby: resolveConfig only carries a model
+ * for the *active* provider, so without it a backup test would quietly probe
+ * that provider's newest model rather than the one failover would actually
+ * reach for — and report a pass for a model you never chose.
+ */
 export async function testProvider(
-  provider: AIProviderKind
+  provider: AIProviderKind,
+  modelOverride?: string,
 ): Promise<{ ok: boolean; message: string }> {
   try {
     const cfg = resolveConfig(provider);
     if (!configReady(cfg)) return { ok: false, message: NOT_CONFIGURED };
 
-    let model = cfg.model;
+    let model = modelOverride?.trim() || cfg.model;
     if (!model) {
       const models = await adapterFor(cfg.kind).models(cfg);
       model = models[0]?.id ?? "";

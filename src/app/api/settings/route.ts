@@ -211,7 +211,12 @@ export async function PATCH(req: NextRequest) {
     }
     // Picking a standby provider immediately resolves its newest model, so the
     // response already carries what the UI should display.
-    if (data.ai.fallbackProvider !== undefined || data.ai.anthropicKey || data.ai.openaiKey) {
+    if (
+      data.ai.fallbackProvider !== undefined ||
+      data.ai.fallbackModelPinned !== undefined ||
+      data.ai.anthropicKey ||
+      data.ai.openaiKey
+    ) {
       try {
         await refreshFallbackModel();
       } catch {

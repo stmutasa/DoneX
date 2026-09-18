@@ -89,7 +89,11 @@ export async function POST(req: NextRequest) {
   if (test) {
     const [primary, backup] = await Promise.all([
       testProvider(ai.provider),
-      ai.fallbackProvider ? testProvider(ai.fallbackProvider) : Promise.resolve(null),
+      // Probe the model failover will really use, pinned or resolved — not
+      // whatever that provider happens to call newest today.
+      ai.fallbackProvider
+        ? testProvider(ai.fallbackProvider, ai.fallbackModel)
+        : Promise.resolve(null),
     ]);
     result.primary = primary;
     result.backup = backup;
