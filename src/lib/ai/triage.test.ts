@@ -150,7 +150,8 @@ describe("parseTriageDecision", () => {
     const parsed = parseTriageDecision({ decision: "??", reason: "" }, "Pay the water bill");
     expect(parsed.decision).toBe("task");
     expect(parsed.task?.title).toBe("Pay the water bill");
-    expect(parsed.task?.priority).toBe(0);
+    // Even a task rescued from a malformed answer gets a real priority.
+    expect(parsed.task?.priority).toBe(1);
   });
 
   it("clamps out-of-range priorities", () => {
@@ -195,5 +196,35 @@ describe("mapLimit", () => {
       active -= 1;
     });
     expect(peak).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("parseTriageDecision — deadline and priority", () => {
+  const task = (over: Record<string, unknown>) =>
+    parseTriageDecision({ decision: "task", reason: "r", task: { title: "Do it", ...over } }, "x").task!;
+
+  it("reads where the date came from and why", () => {
+    const t = task({ dueAtLocal: "2026-10-08", deadlineBasis: "inferred", deadlineWhy: "someone is waiting" });
+    expect(t.deadlineBasis).toBe("inferred");
+    expect(t.deadlineWhy).toBe("someone is waiting");
+  });
+
+  it("believes a stated date only when told so", () => {
+    expect(task({ dueAtLocal: "2026-10-08", deadlineBasis: "stated" }).deadlineBasis).toBe("stated");
+    expect(task({ dueAtLocal: "2026-10-08" }).deadlineBasis).toBe("inferred");
+  });
+
+  it("never lets a task through at priority 'none'", () => {
+    expect(task({ priority: 0 }).priority).toBe(1);
+    expect(task({}).priority).toBe(1);
+    expect(task({ priority: 3 }).priority).toBe(3);
+  });
+
+  it("leaves an update's priority alone, since 'no change' is a real answer there", () => {
+    const parsed = parseTriageDecision(
+      { decision: "update", reason: "r", update: { taskTitle: "T", priority: null } },
+      "x",
+    );
+    expect(parsed.update?.priority).toBeNull();
   });
 });

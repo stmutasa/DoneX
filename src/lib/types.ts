@@ -144,6 +144,10 @@ export interface InboxSuggestion {
   /** triage resolved this item itself instead of waiting on the user */
   autoDismissed?: boolean;
   task?: TaskDraft;
+  /** the task's deadline was worked out, not named by the sender */
+  dueSuggested?: boolean;
+  /** why that deadline, when it was worked out */
+  dueWhy?: string;
   note?: { title: string; content: string };
 }
 

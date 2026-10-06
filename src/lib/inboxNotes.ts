@@ -20,6 +20,8 @@ export interface InboxNoteSource {
   fromLabel: string;
   source: string;
   receivedAt: string;
+  /** why a deadline was chosen, when the message didn't name one — null when it did */
+  suggestedDeadline?: string | null;
 }
 
 function collapse(text: string): string {
@@ -59,5 +61,10 @@ export function composeInboxNotes(input: InboxNoteSource): string {
   );
   const provenance = parts.join(" · ");
 
-  return body ? `${body}\n\n${provenance}` : provenance;
+  // Said once, in words, so a worked-out date is never mistaken later for one
+  // the sender actually gave.
+  const why = collapse(input.suggestedDeadline ?? "");
+  const deadline = why ? `Suggested deadline — no date was given: ${why}.` : "";
+
+  return [body, deadline, provenance].filter(Boolean).join("\n\n");
 }

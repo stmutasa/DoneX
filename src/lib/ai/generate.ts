@@ -14,6 +14,7 @@ import {
 import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
 import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
 import { composeInboxNotes } from "@/lib/inboxNotes";
+import { readBasis, settleDeadline, settlePriority, type DeadlineBasis } from "@/lib/triageDeadline";
 import { waitingLines, waitingOn } from "@/lib/nudges";
 import {
   digestLines as digestLinesFor,
@@ -390,6 +391,10 @@ export interface ParsedTriage {
     summary: string;
     dueAtLocal: string | null;
     dueKind: "on" | "by";
+    /** whether the item named the date, or the model worked one out */
+    deadlineBasis: DeadlineBasis;
+    /** the model's reason for an inferred date */
+    deadlineWhy: string;
     priority: Priority;
     projectName: string | null;
     tags: string[];
@@ -441,7 +446,11 @@ export function parseTriageDecision(
       summary: (asString(rec.summary ?? rec.notes) ?? "").trim().slice(0, 400),
       dueAtLocal: asString(rec.dueAtLocal ?? rec.dueAt) ?? null,
       dueKind: asString(rec.dueKind)?.toLowerCase() === "by" ? "by" : "on",
-      priority: clamp(Math.round(priorityNum), 0, 3) as Priority,
+      deadlineBasis: readBasis(rec.deadlineBasis),
+      deadlineWhy: (asString(rec.deadlineWhy) ?? "").trim().slice(0, 100),
+      // A task always carries a real priority — "none" isn't an answer for
+      // something that has to be done.
+      priority: settlePriority(rec.priority ?? priorityNum),
       projectName: (asString(rec.projectName) ?? "").trim() || null,
       tags,
     };
@@ -653,7 +662,16 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   const suggestion: InboxSuggestion = { action: "ignore", reason: parsed.reason };
 
   if (parsed.decision === "task" && parsed.task) {
-    const due = parseLocalDue(parsed.task.dueAtLocal, tz);
+    // Every task leaves here with a deadline: the one the item gave, or one
+    // worked out from what it asks — and if even that failed, a week.
+    const deadline = settleDeadline({
+      dueAtLocal: parsed.task.dueAtLocal,
+      basis: parsed.task.deadlineBasis,
+      why: parsed.task.deadlineWhy,
+      dueKind: parsed.task.dueKind,
+      todayKey,
+    });
+    const due = parseLocalDue(deadline.dueAtLocal, tz);
     const project = parsed.task.projectName
       ? projects.find((p) => p.name.toLowerCase() === parsed.task!.projectName!.toLowerCase())
       : undefined;
@@ -666,14 +684,19 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
         fromLabel: item.fromLabel,
         source: item.source,
         receivedAt: item.receivedAt,
+        suggestedDeadline: deadline.inferred ? deadline.why : null,
       }),
       dueAt: due.dueAt,
-      dueKind: due.dueAt ? parsed.task.dueKind : "on",
+      dueKind: due.dueAt ? deadline.dueKind : "on",
       allDay: due.allDay,
       priority: parsed.task.priority,
       projectId: project?.id ?? null,
       tags: parsed.task.tags,
     };
+    if (deadline.inferred) {
+      suggestion.dueSuggested = true;
+      suggestion.dueWhy = deadline.why;
+    }
   } else if (parsed.decision === "note" && parsed.note) {
     suggestion.action = "note";
     suggestion.note = { ...parsed.note, content: parsed.note.content || item.content };

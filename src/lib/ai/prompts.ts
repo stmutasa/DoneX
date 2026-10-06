@@ -175,7 +175,7 @@ Return JSON exactly like:
 {"decision": "task"|"note"|"update"|"duplicate"|"dismiss", "reason": string,
  "duplicateOf": string,
  "update": {"taskTitle": string, "dueAtLocal": string|null, "priority": 0|1|2|3|null, "note": string},
- "task": {"title": string, "summary": string, "dueAtLocal": string|null, "dueKind": "on"|"by", "priority": 0|1|2|3, "projectName": string|null, "tags": string[]},
+ "task": {"title": string, "summary": string, "dueAtLocal": string, "dueKind": "on"|"by", "deadlineBasis": "stated"|"inferred", "deadlineWhy": string, "priority": 1|2|3, "projectName": string|null, "tags": string[]},
  "note": {"title": string, "content": string}}
 
 Decisions:
@@ -190,9 +190,23 @@ Rules:
 - "reason": at most 90 characters, plain words.
 - task.title: imperative, at most 80 characters, no trailing punctuation.
 - task.summary: 1–2 sentences, at most 300 characters, saying what the sender actually wants and the details the title had to drop — amounts, dates, reference or order numbers, the place, who is waiting on what. Write it to the user about the sender ("Ana needs the signed form before the 14th"), never as a re-greeting, and never repeat the title alone. Say "no further detail" only when the item genuinely carries none.
-- Any dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the text names a concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
-- task.dueKind: "by" when the date is a deadline (pay by, submit by, RSVP by, expires on) — doable any day up to then. "on" when it happens at that moment (appointments, pickups, events).
-- Priorities: 3 = urgent/deadline-critical, 2 = important, 1 = minor, 0 = neither.
+- update.dueAtLocal: "YYYY-MM-DD HH:mm" (or "YYYY-MM-DD" for a whole day) ONLY when the item names a new concrete date or time — resolve it against ${input.todayKey} in ${input.tz}. Otherwise null.
+- task.dueAtLocal is REQUIRED. Every task gets a deadline, even when the item gives none:
+  • The item names a date or time → use it, resolved against ${input.todayKey} in ${input.tz}, as "YYYY-MM-DD HH:mm" or "YYYY-MM-DD", and set task.deadlineBasis to "stated".
+  • It doesn't → pick the day a sensible, organised person would aim to have it done by, as "YYYY-MM-DD", set task.deadlineBasis to "inferred", and give the reason in task.deadlineWhy (at most 80 characters, plain words, e.g. "Ana is waiting on an answer — two days is polite"). Typical horizons counted from ${input.todayKey}:
+      – someone is waiting on a reply, a yes/no or a quick answer: 1–2 days
+      – a form, document or signature to send back; a call to make; something to book or schedule: 3–5 days
+      – an errand, a purchase, a household job: about a week
+      – a renewal, application or anything with an expiry: about two weeks before it expires
+      – reading, research, "when you get a chance": about two weeks
+    Lean earlier when someone is waiting on the user, later when no one is. Never before ${input.todayKey}, never more than 30 days out, and ${input.todayKey} itself only when the item is plainly same-day.
+  • Leave task.deadlineWhy "" when the date is stated.
+- task.dueKind: "by" when the date is a deadline (pay by, submit by, RSVP by, expires on) and for EVERY inferred date — doable any day up to then. "on" only for a stated moment something happens (an appointment, a pickup, an event).
+- task.priority is REQUIRED and is 1, 2 or 3 — never 0 for a task. Judge it from what happens if it slips, who is waiting, and how soon it is due:
+    3 = due within about 3 days AND slipping costs money, a fee or penalty, a health, legal or safety problem, or leaves someone stuck
+    2 = a real person is waiting on it, or slipping has a real consequence, or it is due within about 2 weeks
+    1 = no one is waiting and little happens if it slips
+- update.priority: 0–3 only when the item changes how urgent that task is; otherwise null.
 - task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
 - task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;
 }

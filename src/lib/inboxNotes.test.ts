@@ -78,3 +78,30 @@ describe("composeInboxNotes", () => {
     expect(notes.trimEnd().endsWith("email")).toBe(true);
   });
 });
+
+describe("composeInboxNotes — a deadline nobody named", () => {
+  const base = {
+    summary: "Ana needs the signed lease addendum back.",
+    content: "Hi, could you sign and send back the addendum?",
+    fromLabel: "Ana <ana@example.com>",
+    source: "gmail",
+    receivedAt: "2026-10-06T14:00:00Z",
+  };
+
+  it("says plainly that the deadline was suggested, and why", () => {
+    const notes = composeInboxNotes({ ...base, suggestedDeadline: "Ana is waiting — two days is polite" });
+    expect(notes).toContain("Suggested deadline — no date was given: Ana is waiting — two days is polite.");
+  });
+
+  it("sits between what was asked and where it came from", () => {
+    const notes = composeInboxNotes({ ...base, suggestedDeadline: "a week is plenty" });
+    const order = ["Ana needs the signed", "Suggested deadline", "From Ana"].map((s) => notes.indexOf(s));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((i) => i >= 0)).toBe(true);
+  });
+
+  it("says nothing of the sort when the sender gave the date", () => {
+    expect(composeInboxNotes({ ...base, suggestedDeadline: null })).not.toContain("Suggested deadline");
+    expect(composeInboxNotes(base)).not.toContain("Suggested deadline");
+  });
+});

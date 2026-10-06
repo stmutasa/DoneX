@@ -303,6 +303,27 @@ to a note, or **Dismiss**. Empty inbox = a small moment of peace.
 
 ---
 
+### Deadlines and priorities on what triage finds
+
+Every task the inbox suggests now comes with a **deadline** and a **priority**,
+even when the message gives neither.
+
+- **If the message names a date**, that's the deadline, exactly as given — even
+  one that has already passed, which then shows as overdue.
+- **If it doesn't**, the AI works out the day a sensible person would aim for:
+  a day or two when someone is waiting on an answer, a few days to send a form
+  back or make a call, about a week for an errand, a couple of weeks before
+  something expires. These are always *finish-by* deadlines, never a fixed
+  appointment, and never in the past or more than a month out.
+- **Priority** is judged from what happens if it slips, who's waiting, and how
+  soon it's due — High, Medium or Low. A triaged task is never left at "no
+  priority".
+
+A worked-out deadline is never passed off as one the sender gave. The inbox
+card marks it **suggested** and says why — *"No date was given — Ana is waiting
+on an answer, two days is polite"* — and the same line goes into the task's
+notes when you add it. Change either in **Edit** before adding if it's wrong.
+
 ## Review (your week, with a pat on the back)
 
 More → **Review**: your streak ring, done-this-week count, a bar chart of your

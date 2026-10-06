@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import type { InboxItem, InboxSource } from "@/lib/types";
-import { dueLabel, relativeTime } from "@/lib/format";
+import { PRIORITY_META } from "@/lib/types";
+import { deadlineChip, dueLabel, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { InboxResolvePayload } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +14,12 @@ const SOURCE_ICON: Record<InboxSource, string> = {
   sms: "💬",
   gmail: "✉️",
   quick: "⚡",
+};
+
+const PRIORITY_TONE: Record<number, string> = {
+  3: "font-medium text-warn",
+  2: "text-accent",
+  1: "text-faint",
 };
 
 export function InboxCard({
@@ -91,14 +98,35 @@ export function InboxCard({
           </div>
           <p className="text-[13.5px] leading-relaxed text-ink">{suggestion.reason}</p>
           {suggestedTask ? (
-            <p className="mt-2 text-[14px] font-medium text-ink">
-              {suggestedTask.title}
-              {suggestedTask.dueAt ? (
-                <span className="ml-2 text-[12.5px] font-normal text-accent">
-                  {dueLabel(suggestedTask.dueAt, suggestedTask.allDay ?? false)}
-                </span>
+            <>
+              <p className="mt-2 text-[14px] font-medium text-ink">{suggestedTask.title}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px]">
+                {suggestedTask.dueAt ? (
+                  <span className="text-accent">
+                    {/* The app's own deadline wording — "By today", "By Fri · 3d
+                        left", and "Overdue" for a stated date already gone. */}
+                    {suggestedTask.dueKind === "by"
+                      ? deadlineChip(suggestedTask.dueAt)
+                      : dueLabel(suggestedTask.dueAt, suggestedTask.allDay ?? false)}
+                    {suggestion.dueSuggested ? (
+                      <span className="text-muted"> · suggested</span>
+                    ) : null}
+                  </span>
+                ) : null}
+                {suggestedTask.priority ? (
+                  <span className={PRIORITY_TONE[suggestedTask.priority] ?? "text-muted"}>
+                    {PRIORITY_META[suggestedTask.priority].label} priority
+                  </span>
+                ) : null}
+              </div>
+              {/* A worked-out date says where it came from, so it is never
+                  mistaken for one the sender actually gave. */}
+              {suggestion.dueSuggested && suggestion.dueWhy ? (
+                <p className="mt-1 text-[12px] leading-snug text-muted">
+                  No date was given — {suggestion.dueWhy}
+                </p>
               ) : null}
-            </p>
+            </>
           ) : null}
         </div>
       ) : null}
