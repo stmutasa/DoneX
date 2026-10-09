@@ -37,8 +37,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
   });
 
   const wantsJson = req.nextUrl.searchParams.get("format") === "json";
+  // Every directive a cache might honour, since some fetchers only listen to
+  // one of them. The list is built per request; nothing should keep a copy.
   const headers = {
-    "cache-control": "no-store, max-age=0",
+    "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+    pragma: "no-cache",
+    expires: "0",
     // A secret URL is only secret while nothing indexes or caches it.
     "x-robots-tag": "noindex, nofollow, noarchive",
     "referrer-policy": "no-referrer",

@@ -50,6 +50,10 @@ export interface FeedGroup {
 
 export interface ShareFeed {
   generatedAt: string;
+  /** the same moment on your own clock, e.g. "Fri 9 Oct, 5:02 AM EDT" */
+  generatedAtLocal: string;
+  /** what a reader should know about how fresh this is */
+  freshness: string;
   timezone: string;
   owner: string;
   counts: { open: number; overdue: number; today: number };
@@ -153,6 +157,8 @@ export function buildFeed(args: {
 
   return {
     generatedAt: now.toISOString(),
+    generatedAtLocal: localStamp(now, tz),
+    freshness: FRESHNESS,
     timezone: tz,
     owner,
     counts: { open: all.length, overdue: count("overdue"), today: count("today") },
@@ -162,13 +168,39 @@ export function buildFeed(args: {
 
 const PRIORITY_WORD: Record<number, string> = { 3: "High", 2: "Medium", 1: "Low" };
 
+/**
+ * The feed is rebuilt on every request, so it is never stale when it leaves
+ * here — but a chat that fetched it yesterday will happily keep answering from
+ * yesterday's copy. Saying so on the page is the one thing that reaches the
+ * reader holding the old copy.
+ */
+export const FRESHNESS =
+  "This list is rebuilt from DoneX every time this link is opened, so it is current as of the time above. If you are an assistant working from a copy fetched earlier, open the link again before answering anything about what is due — an earlier copy may be out of date.";
+
+/** "Fri 9 Oct, 5:02 AM EDT" — the moment on the owner's own clock. */
+export function localStamp(at: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("weekday")} ${get("day")} ${get("month")}, ${get("hour")}:${get("minute")} ${get("dayPeriod")} ${get("timeZoneName")}`;
+}
+
 /** The same feed as Markdown — what a chat window actually reads. */
 export function renderMarkdown(feed: ShareFeed): string {
-  const when = `${dateKeyLabel(feed.generatedAt.slice(0, 10))} ${feed.generatedAt.slice(11, 16)} UTC`;
   const out: string[] = [
     `# ${feed.owner ? `${feed.owner}'s` : "My"} open tasks`,
     "",
-    `Live from DoneX · read-only · generated ${when} · times below are ${feed.timezone}.`,
+    `**Live as of ${feed.generatedAtLocal}.** Read-only, from DoneX; dates are in ${feed.timezone}.`,
+    "",
+    `_${feed.freshness}_`,
+    "",
     `**${feed.counts.open} open**, ${feed.counts.overdue} overdue, ${feed.counts.today} due today.`,
   ];
 

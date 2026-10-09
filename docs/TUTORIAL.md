@@ -464,7 +464,16 @@ can fetch a URL — and ask it to read it: *"read this and tell me what I should
 do first today."*
 
 It reads **live** every time, so there is nothing to keep up to date. Ask again
-next week and it sees next week's list. What comes back is grouped the way you
+next week and it sees next week's list. There is no schedule behind it, no 5 AM
+refresh and no delay: the list is rebuilt from your tasks the moment anything
+opens the link, so a change you make shows up on the very next read. The top line
+says exactly when it was read, in your own time zone.
+
+**If a chat seems behind**, it's answering from a copy it fetched earlier in the
+conversation, not from DoneX. Ask it to open the link again (the page itself
+tells AI readers to do this). If it still won't, add `?v=2` (any number) to the
+end of the link. DoneX ignores it, but the chat sees a new address and has to
+fetch it fresh. What comes back is grouped the way you
 think about it — overdue, today, the next seven days, later, undated — with due
 dates, priorities, projects, tags and notes. Add `?format=json` on the end if
 something wants structured data rather than prose.

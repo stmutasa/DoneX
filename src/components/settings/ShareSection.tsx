@@ -115,6 +115,16 @@ export function ShareSection({ settings, mutate }: SectionProps) {
             . It reads live every time, so there is nothing to keep up to date: ask again
             next week and it sees next week’s list.
           </p>
+          <p className="text-[12.5px] leading-relaxed text-muted">
+            <span className="font-medium text-ink">No schedule, no delay.</span> The list is
+            rebuilt the moment anything opens the link, so every change you make is there on
+            the very next read, and the top line says when it was read, in your own time. If a
+            chat seems behind, it is answering from a copy it fetched earlier: ask it to open the
+            link again. If it still won’t, add{" "}
+            <code className="font-mono text-[12px] text-ink">?v=2</code> (any number) to the
+            end. DoneX ignores it, but the chat treats it as a new address and has to fetch it
+            fresh.
+          </p>
 
           <Accordion title="What it returns, and other ways to use it">
             <Steps

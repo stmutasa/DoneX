@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFeed, dateKeyLabel, renderMarkdown } from "@/lib/shareFeed";
+import { buildFeed, dateKeyLabel, localStamp, renderMarkdown } from "@/lib/shareFeed";
 import type { Task } from "@/lib/types";
 
 const TZ = "America/New_York";
@@ -177,10 +177,24 @@ describe("renderMarkdown", () => {
     expect(md).toContain("  > the big one by the window");
   });
 
-  it("says plainly when the clock and timezone are", () => {
+  it("stamps the moment on your own clock, not UTC", () => {
+    // NOW is 14:00 UTC, which is 10:00 AM in New York.
     const md = renderMarkdown(feedOf([task({})]));
+    expect(md).toContain("**Live as of Thu 17 Sep, 10:00 AM EDT.**");
+    expect(md).not.toContain("UTC");
     expect(md).toContain("America/New_York");
-    expect(md).toMatch(/generated Thu 17 Sep/);
+  });
+
+  it("tells a reader holding an old copy to fetch it again", () => {
+    const md = renderMarkdown(feedOf([task({})]));
+    expect(md).toContain("rebuilt from DoneX every time this link is opened");
+    expect(md).toContain("open the link again before answering");
+  });
+
+  it("puts the same freshness facts in the JSON", () => {
+    const f = feedOf([task({})]);
+    expect(f.generatedAtLocal).toBe("Thu 17 Sep, 10:00 AM EDT");
+    expect(f.freshness).toMatch(/open the link again/);
   });
 
   it("says so when there is nothing left", () => {
@@ -197,5 +211,16 @@ describe("dateKeyLabel", () => {
   it("reads like a date", () => {
     expect(dateKeyLabel("2026-09-14")).toBe("Mon 14 Sep");
     expect(dateKeyLabel("2027-01-01")).toBe("Fri 1 Jan");
+  });
+});
+
+describe("localStamp", () => {
+  it("follows daylight saving", () => {
+    expect(localStamp(new Date("2026-10-09T09:02:00Z"), "America/New_York")).toBe("Fri 9 Oct, 5:02 AM EDT");
+    expect(localStamp(new Date("2026-12-09T10:02:00Z"), "America/New_York")).toBe("Wed 9 Dec, 5:02 AM EST");
+  });
+
+  it("works anywhere you happen to be", () => {
+    expect(localStamp(new Date("2026-10-09T09:02:00Z"), "America/Chicago")).toBe("Fri 9 Oct, 4:02 AM CDT");
   });
 });
