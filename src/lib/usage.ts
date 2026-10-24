@@ -15,11 +15,15 @@ export interface UsageRow {
   feature: string;
   inputTokens: number;
   outputTokens: number;
+  /** of inputTokens, how many were read from the prompt cache */
+  cachedInputTokens?: number;
 }
 
 export interface UsageTotals {
   calls: number;
   input: number;
+  /** of `input`, served from the provider's prompt cache at a discount */
+  cachedInput: number;
   output: number;
   total: number;
 }
@@ -39,7 +43,7 @@ export interface UsageRollup extends UsageTotals {
   daily: { dateLocal: string; total: number }[];
 }
 
-const EMPTY: UsageTotals = { calls: 0, input: 0, output: 0, total: 0 };
+const EMPTY: UsageTotals = { calls: 0, input: 0, cachedInput: 0, output: 0, total: 0 };
 
 /** The company behind a provider id, for the "by company" breakdown. */
 export function companyOf(provider: string): { key: string; label: string } {
@@ -75,6 +79,7 @@ export function formatTokens(n: number): string {
 function add(into: UsageTotals, row: UsageRow): void {
   into.calls += 1;
   into.input += row.inputTokens;
+  into.cachedInput += row.cachedInputTokens ?? 0;
   into.output += row.outputTokens;
   into.total += row.inputTokens + row.outputTokens;
 }

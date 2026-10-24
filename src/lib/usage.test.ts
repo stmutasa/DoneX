@@ -24,13 +24,20 @@ describe("totalsOf", () => {
     expect(totalsOf([row(), row({ inputTokens: 50, outputTokens: 5 })])).toEqual({
       calls: 2,
       input: 150,
+      cachedInput: 0,
       output: 25,
       total: 175,
     });
   });
 
+  it("adds up how much input came from the cache", () => {
+    const t = totalsOf([row({ inputTokens: 1000, cachedInputTokens: 800 }), row({ inputTokens: 1000 })]);
+    expect(t.input).toBe(2000);
+    expect(t.cachedInput).toBe(800);
+  });
+
   it("is all zeroes with nothing recorded", () => {
-    expect(totalsOf([])).toEqual({ calls: 0, input: 0, output: 0, total: 0 });
+    expect(totalsOf([])).toEqual({ calls: 0, input: 0, cachedInput: 0, output: 0, total: 0 });
   });
 });
 
@@ -139,8 +146,11 @@ describe("companyOf", () => {
 });
 
 describe("readUsage", () => {
+  const zero = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0 };
+
   it("reads OpenAI's field names", () => {
     expect(readUsage({ prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 })).toEqual({
+      ...zero,
       inputTokens: 120,
       outputTokens: 30,
     });
@@ -148,13 +158,31 @@ describe("readUsage", () => {
 
   it("reads Anthropic's field names", () => {
     expect(readUsage({ input_tokens: 90, output_tokens: 12 })).toEqual({
+      ...zero,
       inputTokens: 90,
       outputTokens: 12,
     });
   });
 
+  it("reads OpenAI's cached share, which sits inside prompt_tokens", () => {
+    expect(
+      readUsage({ prompt_tokens: 2000, completion_tokens: 40, prompt_tokens_details: { cached_tokens: 1792 } }),
+    ).toEqual({ inputTokens: 2000, outputTokens: 40, cachedInputTokens: 1792, cacheWriteTokens: 0 });
+  });
+
+  it("adds Anthropic's cache reads and writes back into input, since input_tokens excludes them", () => {
+    expect(
+      readUsage({
+        input_tokens: 150,
+        cache_read_input_tokens: 1800,
+        cache_creation_input_tokens: 50,
+        output_tokens: 40,
+      }),
+    ).toEqual({ inputTokens: 2000, outputTokens: 40, cachedInputTokens: 1800, cacheWriteTokens: 50 });
+  });
+
   it("treats a missing or malformed usage block as zero", () => {
-    expect(readUsage(undefined)).toEqual({ inputTokens: 0, outputTokens: 0 });
-    expect(readUsage({ prompt_tokens: "lots" })).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(readUsage(undefined)).toEqual(zero);
+    expect(readUsage({ prompt_tokens: "lots" })).toEqual(zero);
   });
 });

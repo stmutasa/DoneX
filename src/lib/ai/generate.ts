@@ -61,6 +61,8 @@ async function jsonCall(
   prompt: string,
   maxTokens = 1400,
   feature: AiFeature = "other",
+  /** stable text shared across calls, sent ahead of `prompt` so it can be cached */
+  shared?: string[],
 ): Promise<Record<string, unknown>> {
   // Wrapped in failover: a dead key, a rate limit or a model that simply
   // cannot produce JSON all hand off to the standby provider.
@@ -69,6 +71,7 @@ async function jsonCall(
       adapter.complete({
         cfg,
         system: JSON_SYSTEM,
+        shared,
         prompt: text,
         maxTokens,
         feature,
@@ -639,24 +642,23 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   const todayKey = localDateKey(now, tz);
   const projects = projectsRepo.list();
 
-  const payload = await jsonCall(
-    triagePrompt({
-      content: item.content,
-      fromLabel: item.fromLabel,
-      source: item.source,
-      receivedAt: item.receivedAt,
-      todayKey,
-      weekday: format(new TZDate(now, tz), "EEEE"),
-      tz,
-      openTasksDigest: buildTaskDigest(tz, todayKey),
-      projectNames: projects.map((p) => p.name),
-      tags: tasksRepo.allTags().slice(0, 20),
-      sentDigest: await safeSentDigest(),
-      feedbackDigest: buildFeedbackDigest(feedbackRepo.list(30)),
-    }),
-    900,
-    "triage",
-  );
+  const parts = triagePrompt({
+    content: item.content,
+    fromLabel: item.fromLabel,
+    source: item.source,
+    receivedAt: item.receivedAt,
+    todayKey,
+    weekday: format(new TZDate(now, tz), "EEEE"),
+    tz,
+    openTasksDigest: buildTaskDigest(tz, todayKey),
+    projectNames: projects.map((p) => p.name),
+    tags: tasksRepo.allTags().slice(0, 20),
+    sentDigest: await safeSentDigest(),
+    feedbackDigest: buildFeedbackDigest(feedbackRepo.list(30)),
+  });
+  // The rules and the user's context are shared by every item in a run, so
+  // they ride ahead of the item where the provider can serve them from cache.
+  const payload = await jsonCall(parts.item, 900, "triage", [parts.instructions, parts.context]);
 
   const parsed = parseTriageDecision(payload, item.content);
   const suggestion: InboxSuggestion = { action: "ignore", reason: parsed.reason };

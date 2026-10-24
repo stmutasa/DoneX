@@ -549,11 +549,13 @@ export const usageRepo = {
     feature: string;
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
     dateLocal: string;
   }): void {
     getDb()
       .prepare(
-        "INSERT INTO ai_usage(id,at,date_local,provider,model,feature,input_tokens,output_tokens) VALUES(?,?,?,?,?,?,?,?)"
+        "INSERT INTO ai_usage(id,at,date_local,provider,model,feature,input_tokens,output_tokens,cached_input_tokens,cache_write_tokens) VALUES(?,?,?,?,?,?,?,?,?,?)"
       )
       .run(
         newId(),
@@ -563,7 +565,9 @@ export const usageRepo = {
         entry.model.slice(0, 120),
         entry.feature.slice(0, 40),
         Math.max(0, Math.round(entry.inputTokens)),
-        Math.max(0, Math.round(entry.outputTokens))
+        Math.max(0, Math.round(entry.outputTokens)),
+        Math.max(0, Math.round(entry.cachedInputTokens ?? 0)),
+        Math.max(0, Math.round(entry.cacheWriteTokens ?? 0))
       );
   },
 
@@ -571,7 +575,7 @@ export const usageRepo = {
   since(fromKey: string): UsageRow[] {
     const rows = getDb()
       .prepare(
-        "SELECT date_local, provider, model, feature, input_tokens, output_tokens FROM ai_usage WHERE date_local >= ? ORDER BY date_local ASC"
+        "SELECT date_local, provider, model, feature, input_tokens, output_tokens, cached_input_tokens FROM ai_usage WHERE date_local >= ? ORDER BY date_local ASC"
       )
       .all(fromKey) as {
       date_local: string;
@@ -580,6 +584,7 @@ export const usageRepo = {
       feature: string;
       input_tokens: number;
       output_tokens: number;
+      cached_input_tokens: number;
     }[];
     return rows.map((r) => ({
       dateLocal: r.date_local,
@@ -587,6 +592,7 @@ export const usageRepo = {
       model: r.model,
       feature: r.feature,
       inputTokens: r.input_tokens,
+      cachedInputTokens: r.cached_input_tokens ?? 0,
       outputTokens: r.output_tokens,
     }));
   },

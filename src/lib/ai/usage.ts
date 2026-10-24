@@ -31,9 +31,12 @@ export function recordAiUsage(entry: {
   feature?: string;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
 }): void {
-  const input = Number.isFinite(entry.inputTokens) ? entry.inputTokens : 0;
-  const output = Number.isFinite(entry.outputTokens) ? entry.outputTokens : 0;
+  const n = (v: number | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const input = n(entry.inputTokens);
+  const output = n(entry.outputTokens);
   if (input <= 0 && output <= 0) return;
 
   try {
@@ -44,6 +47,8 @@ export function recordAiUsage(entry: {
       feature: entry.feature || "other",
       inputTokens: input,
       outputTokens: output,
+      cachedInputTokens: Math.min(n(entry.cachedInputTokens), input),
+      cacheWriteTokens: n(entry.cacheWriteTokens),
       dateLocal: localDateKey(new Date(), tz),
     });
 
@@ -59,13 +64,45 @@ export function recordAiUsage(entry: {
   }
 }
 
-/** Pull {input, output} out of whatever shape the provider reported. */
-export function readUsage(raw: unknown): { inputTokens: number; outputTokens: number } {
+export interface ReadUsage {
+  /** every input token the call was billed for, cached or not */
+  inputTokens: number;
+  outputTokens: number;
+  /** of those, how many were served from the provider's prompt cache */
+  cachedInputTokens: number;
+  /** how many were written into the cache (Anthropic bills these at a premium) */
+  cacheWriteTokens: number;
+}
+
+/**
+ * Pull token counts out of whatever shape the provider reported, on one scale.
+ *
+ * The two disagree about what "input" means. OpenAI's prompt_tokens is the
+ * whole prompt, with the cached part broken out inside it. Anthropic's
+ * input_tokens is only the part that was neither read from nor written to
+ * the cache — so once caching works, it alone would make the token tracker
+ * undercount wildly. Here input always means the whole prompt.
+ */
+export function readUsage(raw: unknown): ReadUsage {
   const rec = (raw ?? {}) as Record<string, unknown>;
   const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+  if (rec.prompt_tokens !== undefined || rec.completion_tokens !== undefined) {
+    const details = (rec.prompt_tokens_details ?? {}) as Record<string, unknown>;
+    return {
+      inputTokens: num(rec.prompt_tokens),
+      outputTokens: num(rec.completion_tokens),
+      cachedInputTokens: num(details.cached_tokens),
+      cacheWriteTokens: 0,
+    };
+  }
+
+  const read = num(rec.cache_read_input_tokens);
+  const written = num(rec.cache_creation_input_tokens);
   return {
-    // OpenAI: prompt/completion_tokens · Anthropic: input/output_tokens
-    inputTokens: num(rec.prompt_tokens) || num(rec.input_tokens),
-    outputTokens: num(rec.completion_tokens) || num(rec.output_tokens),
+    inputTokens: num(rec.input_tokens) + read + written,
+    outputTokens: num(rec.output_tokens),
+    cachedInputTokens: read,
+    cacheWriteTokens: written,
   };
 }

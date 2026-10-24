@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   model TEXT NOT NULL,
   feature TEXT NOT NULL DEFAULT 'other',
   input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_ai_usage_date ON ai_usage(date_local);
 CREATE TABLE IF NOT EXISTS completions (
@@ -173,6 +175,14 @@ function migrate(db: Database.Database): void {
     // Which deadline this task was last nudged about, so moving the date is
     // what earns a second word rather than another day passing.
     db.exec("ALTER TABLE tasks ADD COLUMN nudged_due_at TEXT");
+  }
+  const usageCols = new Set(
+    (db.pragma("table_info(ai_usage)") as { name: string }[]).map((c) => c.name)
+  );
+  if (usageCols.size > 0 && !usageCols.has("cached_input_tokens")) {
+    // How much of each call's prompt came out of the provider's cache.
+    db.exec("ALTER TABLE ai_usage ADD COLUMN cached_input_tokens INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE ai_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0");
   }
   const sessionCols = new Set(
     (db.pragma("table_info(sessions)") as { name: string }[]).map((c) => c.name)

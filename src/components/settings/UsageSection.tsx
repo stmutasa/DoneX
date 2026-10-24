@@ -105,6 +105,23 @@ export function UsageSection() {
             </span>
           </div>
 
+          {/* The proof caching is earning its keep — cached input is billed
+              at a fraction of the normal rate. */}
+          <p className="text-[12.5px] text-muted">
+            {data.rollup.input > 0 && data.rollup.cachedInput > 0 ? (
+              <>
+                <span className="font-medium text-ink">
+                  {Math.round((data.rollup.cachedInput / data.rollup.input) * 100)}%
+                </span>{" "}
+                of input was served from the provider’s cache (
+                {formatTokens(data.rollup.cachedInput)} tokens), billed at a fraction of the
+                normal rate.
+              </>
+            ) : (
+              "No input has come from the prompt cache yet in this window."
+            )}
+          </p>
+
           <Breakdown title="By company" buckets={data.rollup.byCompany} />
           <Breakdown title="By model" buckets={data.rollup.byModel} />
           <Breakdown title="By what used it" buckets={data.rollup.byFeature} />

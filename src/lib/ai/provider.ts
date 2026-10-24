@@ -96,6 +96,14 @@ export interface StreamOutcome {
 export interface CompleteArgs {
   cfg: ProviderConfig;
   system: string;
+  /**
+   * Stable text that many calls share, most stable first. It is sent ahead of
+   * `prompt` — which should carry only what differs per call — so providers
+   * can serve it from their prompt cache instead of billing it at full price
+   * every time. Anthropic is told to cache it explicitly; OpenAI caches any
+   * repeated prefix on its own, which this ordering is what makes possible.
+   */
+  shared?: string[];
   prompt: string;
   maxTokens: number;
   signal: AbortSignal;

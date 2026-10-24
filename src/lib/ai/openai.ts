@@ -28,6 +28,12 @@ function headers(cfg: ProviderConfig): Record<string, string> {
   };
 }
 
+/** The system message with the shared, cacheable text appended in order. */
+export function openAiSystem(system: string, shared: string[] = []): string {
+  const segments = shared.map((x) => x.trim()).filter(Boolean);
+  return segments.length ? [system, ...segments].join("\n\n") : system;
+}
+
 export function toOpenAiMessages(system: string, turns: LlmTurn[]): unknown[] {
   const messages: unknown[] = [{ role: "system", content: system }];
   for (const turn of turns) {
@@ -182,13 +188,17 @@ async function stream({
 async function complete({
   cfg,
   system,
+  shared,
   prompt,
   maxTokens,
   signal,
   feature,
 }: CompleteArgs): Promise<string> {
+  // OpenAI caches any prefix it has seen recently (from about 1,024 tokens),
+  // with no flag to set. All that earns the discount is ordering: the shared
+  // text goes first and byte-identical, the per-call part last.
   const messages = [
-    { role: "system", content: system },
+    { role: "system", content: openAiSystem(system, shared) },
     { role: "user", content: prompt },
   ];
 

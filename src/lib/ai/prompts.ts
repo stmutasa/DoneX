@@ -150,26 +150,13 @@ export function triagePrompt(input: {
   tags: string[];
   sentDigest: string;
   feedbackDigest: string;
-}): string {
-  return `You triage one captured item for a personal task app. Decide what should HAPPEN to it.
+}): TriagePromptParts {
+  // Three parts, ordered from least to most likely to change, because prompt
+  // caching only ever reuses an identical prefix: the rules hold all day, the
+  // user's context holds across a run of items, and only the item is new.
+  const instructions = `You triage one captured item for a personal task app. Decide what should HAPPEN to it. The user's context follows these rules, and the item itself comes last.
 
-SOURCE: ${input.source}${input.fromLabel ? ` from ${input.fromLabel}` : ""}
-RECEIVED: ${input.receivedAt}
 TODAY: ${input.todayKey} (${input.weekday}), timezone ${input.tz}
-
-ITEM
-"""
-${input.content.slice(0, 4000)}
-"""
-
-THE USER'S OPEN TASKS (for duplicate/update detection)
-${input.openTasksDigest || "(none)"}
-
-MAIL THE USER SENT IN THE LAST DAY (what they've already handled or promised)
-${input.sentDigest || "(none)"}
-${input.feedbackDigest ? `\nTHE USER'S PAST CORRECTIONS — these outrank every generic rule below:\n${input.feedbackDigest}\n` : ""}
-THEIR PROJECTS: ${input.projectNames.join(", ") || "(none)"}
-THEIR TAGS: ${input.tags.join(", ") || "(none)"}
 
 Return JSON exactly like:
 {"decision": "task"|"note"|"update"|"duplicate"|"dismiss", "reason": string,
@@ -179,8 +166,8 @@ Return JSON exactly like:
  "note": {"title": string, "content": string}}
 
 Decisions:
-- "update": an OPEN task above is about this topic AND the item brings NEW information — a changed time or date, a new detail, a status change. Set update.taskTitle to that task's EXACT title from the list, include ONLY the fields that changed (null otherwise), and put a short plain-words summary of what's new in update.note (max 200 chars).
-- "duplicate": an OPEN task above already covers this item and there is nothing new. Set "duplicateOf" to its exact title.
+- "update": an OPEN task in THE USER'S OPEN TASKS is about this topic AND the item brings NEW information — a changed time or date, a new detail, a status change. Set update.taskTitle to that task's EXACT title from the list, include ONLY the fields that changed (null otherwise), and put a short plain-words summary of what's new in update.note (max 200 chars).
+- "duplicate": an OPEN task in THE USER'S OPEN TASKS already covers this item and there is nothing new. Set "duplicateOf" to its exact title.
 - "task": the user must do something their list doesn't cover. Fill "task" fully.
 - "note": reference material worth keeping but not actionable.
 - "dismiss": anything that is not work for this user's to-do list. ALWAYS dismiss: marketing, promotions, social notifications, verification codes, automated FYI notices, receipts and order confirmations, shipping and delivery updates, newsletters and digests (even substantive ones), and bills, statements and payment notices — EXCEPT a bill that explicitly demands a manual payment by a date, which is a "task". Mail written by a real person may be dismissed ONLY when it clearly needs no action (thanks/acknowledgement replies, FYI threads, conversations the SENT MAIL shows the user already closed). Tie-breaker when unsure: automated or commercial mail → dismiss; mail from an actual person or about a personal matter → keep as "task" or "note".
@@ -209,6 +196,34 @@ Rules:
 - update.priority: 0–3 only when the item changes how urgent that task is; otherwise null.
 - task.projectName: one of THEIR PROJECTS when it obviously fits, else null. Never invent one.
 - task.tags: at most 3, lowercase; prefer THEIR TAGS, or [] when none fit.`;
+
+  const context = `THE USER'S OPEN TASKS (for duplicate/update detection)
+${input.openTasksDigest || "(none)"}
+
+MAIL THE USER SENT IN THE LAST DAY (what they've already handled or promised)
+${input.sentDigest || "(none)"}
+${input.feedbackDigest ? `\nTHE USER'S PAST CORRECTIONS — these outrank every generic rule above:\n${input.feedbackDigest}\n` : ""}
+THEIR PROJECTS: ${input.projectNames.join(", ") || "(none)"}
+THEIR TAGS: ${input.tags.join(", ") || "(none)"}`;
+
+  const item = `SOURCE: ${input.source}${input.fromLabel ? ` from ${input.fromLabel}` : ""}
+RECEIVED: ${input.receivedAt}
+
+ITEM
+"""
+${input.content.slice(0, 4000)}
+"""`;
+
+  return { instructions, context, item };
+}
+
+export interface TriagePromptParts {
+  /** the rules — identical for every item all day */
+  instructions: string;
+  /** the user's tasks, sent mail, corrections, projects and tags */
+  context: string;
+  /** the one item being triaged */
+  item: string;
 }
 
 export function jointDigestPrompt(input: {

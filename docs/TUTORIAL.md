@@ -407,6 +407,22 @@ automatically, so "last 30 days" is always complete.
 
 ---
 
+
+**Prompt caching.** Inbox triage is where most tokens go: it runs on every
+forwarded text, every Gmail scan, three scheduled times a day, and once per item
+on **Triage all**. Each call now sends the parts that don't change between items
+first (the triage rules, your open tasks, recent sent mail, your past
+corrections, projects and tags) and the item itself last. Providers serve a
+repeated opening from their cache at a fraction of the normal input price:
+OpenAI does it automatically once the repeated part passes about 1,024 tokens,
+and DoneX marks it explicitly for Anthropic. The first item in a run pays full
+price; the ones after it mostly don't.
+
+The Usage screen shows what share of input came out of the cache, so you can
+see it working. Once-a-day jobs (the briefing, digests, week-ahead, weekly
+review) aren't cached on purpose: nothing would reuse them within the cache's
+few-minute lifetime, and on Anthropic, marking them would only add a surcharge.
+
 ## Travelling
 
 Nothing to switch on. Flights, hotels and rental cars land on your calendar

@@ -81,6 +81,10 @@ async function stream({
     model: cfg.model,
     max_tokens: MAX_TOKENS,
     stream: true,
+    // One turn can be several requests (each tool call is a round trip) that
+    // share the whole prefix; the automatic breakpoint follows the end of the
+    // conversation so each round reads back everything before it.
+    cache_control: { type: "ephemeral" },
     system,
     messages: toAnthropicMessages(turns),
   };
@@ -97,6 +101,8 @@ async function stream({
   let text = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheWriteTokens = 0;
   const blocks = new Map<number, BlockAcc>();
 
   for await (const msg of iterateSse(res.body)) {
@@ -114,13 +120,19 @@ async function stream({
       const usage = readUsage(asRecord(payload.message)?.usage);
       inputTokens = usage.inputTokens;
       outputTokens = usage.outputTokens;
+      cachedInputTokens = usage.cachedInputTokens;
+      cacheWriteTokens = usage.cacheWriteTokens;
       continue;
     }
 
     if (type === "message_delta") {
       const usage = readUsage(payload.usage);
       if (usage.outputTokens) outputTokens = usage.outputTokens;
-      if (usage.inputTokens) inputTokens = usage.inputTokens;
+      // The closing delta may repeat the input counts, but not always with
+      // the cache fields — never let a partial repeat shrink what start said.
+      if (usage.inputTokens > inputTokens) inputTokens = usage.inputTokens;
+      if (usage.cachedInputTokens > cachedInputTokens) cachedInputTokens = usage.cachedInputTokens;
+      if (usage.cacheWriteTokens > cacheWriteTokens) cacheWriteTokens = usage.cacheWriteTokens;
       continue;
     }
 
@@ -155,7 +167,15 @@ async function stream({
     }
   }
 
-  recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, inputTokens, outputTokens });
+  recordAiUsage({
+    provider: cfg.kind,
+    model: cfg.model,
+    feature,
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheWriteTokens,
+  });
 
   const toolCalls: LlmToolCall[] = [...blocks.entries()]
     .sort((a, b) => a[0] - b[0])
@@ -169,9 +189,33 @@ async function stream({
   return { text, toolCalls };
 }
 
+/**
+ * The system prompt as cache-marked blocks when there is shared text to
+ * reuse. Each shared segment ends in a breakpoint, so a later segment changing
+ * (the task list, say) still lets the earlier ones (the rules) be read back.
+ * The API allows four breakpoints; anything past the third shared segment is
+ * folded into it.
+ */
+export function anthropicSystem(system: string, shared: string[] = []): unknown {
+  const segments = shared.map((s) => s.trim()).filter(Boolean);
+  if (segments.length === 0) return system;
+  const capped =
+    segments.length > MAX_BREAKPOINTS
+      ? [...segments.slice(0, MAX_BREAKPOINTS - 1), segments.slice(MAX_BREAKPOINTS - 1).join("\n\n")]
+      : segments;
+  return [
+    { type: "text", text: system },
+    ...capped.map((text) => ({ type: "text", text, cache_control: { type: "ephemeral" } })),
+  ];
+}
+
+/** Leaves one of the API's four for the conversation tail in chat. */
+const MAX_BREAKPOINTS = 3;
+
 async function complete({
   cfg,
   system,
+  shared,
   prompt,
   maxTokens,
   signal,
@@ -183,7 +227,7 @@ async function complete({
     body: JSON.stringify({
       model: cfg.model,
       max_tokens: maxTokens,
-      system,
+      system: anthropicSystem(system, shared),
       messages: [{ role: "user", content: prompt }],
     }),
     signal,
