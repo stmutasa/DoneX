@@ -11,7 +11,7 @@ import {
   aiConfigured,
   fallbackConfig,
   isFailoverWorthy,
-  readyConfig,
+  workingConfig,
   recordFallback,
 } from "@/lib/ai/adapters";
 import { buildAssistantContext } from "@/lib/ai/context";
@@ -156,8 +156,11 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
 
         const ctx = await buildAssistantContext();
         const system = chatSystemPrompt(ctx, input.mode) + nearbyDigest(input.location);
-        let cfg = await readyConfig();
+        // The backup takes the conversation when the active provider can't run.
+        const start = await workingConfig();
+        let cfg = start.cfg;
         let adapter = adapterFor(cfg.kind);
+        if (start.standIn) recordFallback(settingsRepo.getApp().ai.provider, cfg, start.standIn);
         const tctx = toolContext(tz, input.location);
 
         let full = "";

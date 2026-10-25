@@ -6,7 +6,7 @@ import { settingsRepo } from "@/lib/db/repos";
 import { JOINT_COLOR_IDS } from "@/lib/jointColors";
 import { classifyCalendarLink } from "@/lib/calendarLinks";
 import { resolveAiPatch } from "@/lib/aiModels";
-import type { AppSettings, MaskedSettings } from "@/lib/types";
+import type { AiKeyEvent, AppSettings, MaskedSettings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +64,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
     },
     pushConfigured: !!vapid,
     aiFallback: lastFallbackEvent(),
+    aiKeyLog: readKeyLog(),
   };
 }
 
@@ -146,6 +147,32 @@ const patchSchema = z.object({
     .optional(),
 });
 
+const KEY_LOG = "ai.keyLog";
+const KEY_PROVIDER = { openaiKey: "openai", anthropicKey: "anthropic", customKey: "custom" } as const;
+
+/**
+ * A key vanishing is otherwise invisible after the fact — the value is simply
+ * empty. Keeping the last few saves and clears means the next "why was my key
+ * gone?" can be answered from the screen rather than guessed at.
+ */
+function logKeyChange(provider: AiKeyEvent["provider"], action: AiKeyEvent["action"]): void {
+  try {
+    const next = [{ at: new Date().toISOString(), provider, action }, ...readKeyLog()].slice(0, 12);
+    settingsRepo.setKV(KEY_LOG, JSON.stringify(next));
+  } catch {
+    // bookkeeping only
+  }
+}
+
+function readKeyLog(): AiKeyEvent[] {
+  try {
+    const raw = JSON.parse(settingsRepo.getKV(KEY_LOG) ?? "[]");
+    return Array.isArray(raw) ? (raw as AiKeyEvent[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET() {
   const gate = await requireOwner();
   if (gate) return gate;
@@ -171,6 +198,7 @@ export async function PATCH(req: NextRequest) {
     for (const key of ["openaiKey", "anthropicKey", "customKey"] as const) {
       if (ai[key] === "") delete ai[key];
       else if (ai[key] === "__clear__") ai[key] = "";
+      if (ai[key] !== undefined) logKeyChange(KEY_PROVIDER[key], ai[key] ? "saved" : "cleared");
     }
 
     patch.ai = resolveAiPatch(settingsRepo.getApp().ai, ai);

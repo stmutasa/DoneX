@@ -263,6 +263,13 @@ export interface AISettings {
   fallbackModelPinned: string;
 }
 
+/** A key being saved or cleared — kept so "where did my key go?" has an answer. */
+export interface AiKeyEvent {
+  at: string;
+  provider: AIProviderKind;
+  action: "saved" | "cleared";
+}
+
 /** Recorded whenever a call had to fall back, so it is never silent. */
 export interface AiFallbackEvent {
   at: string;
@@ -395,6 +402,8 @@ export interface MaskedSettings
   pushConfigured: boolean;
   /** most recent automatic failover, or null if it has never happened */
   aiFallback: AiFallbackEvent | null;
+  /** when each provider's key was last saved or cleared, newest first */
+  aiKeyLog: AiKeyEvent[];
 }
 
 export interface SecretMark {

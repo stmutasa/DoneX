@@ -11,6 +11,7 @@ import { FieldLabel, Input, Select } from "@/components/ui/Field";
 import { Segmented } from "@/components/ui/Segmented";
 import { IconCheck, IconRefresh, IconX } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/Confirm";
 import { Divider, SettingsCard, maskPlaceholder, useSettingsPatch, type SectionProps } from "./common";
 
 /** One line of "we tried it and this happened". */
@@ -43,6 +44,7 @@ const PROVIDER_LABEL: Record<AIProviderKind, string> = {
 export function AiSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
   const toast = useToast();
+  const confirm = useConfirm();
   const ai = settings.ai;
   const provider = ai.provider;
   const fallbackKeySet =
@@ -158,9 +160,21 @@ export function AiSection({ settings, mutate }: SectionProps) {
   };
 
   const clearKey = async () => {
+    // One tap used to erase the key outright, right beside "Save key".
+    const sure = await confirm({
+      title: `Remove your ${PROVIDER_LABEL[provider]} key?`,
+      message: settings.ai.fallbackProvider && settings.ai.fallbackProvider !== provider
+        ? `DoneX will stop using ${PROVIDER_LABEL[provider]} and run everything on your backup until you add a key again.`
+        : `DoneX will stop using ${PROVIDER_LABEL[provider]}, and with no backup set up, its AI features stop until you add a key again.`,
+      confirmLabel: "Remove key",
+      destructive: true,
+    });
+    if (!sure) return;
     const ok = await patch({ ai: { [keyField]: "__clear__" } }, "Key cleared");
     if (ok) setKeyDraft("");
   };
+
+  const keyHistory = (settings.aiKeyLog ?? []).filter((e) => e.provider === provider).slice(0, 3);
 
   const test = async () => {
     setTesting(true);
@@ -219,6 +233,19 @@ export function AiSection({ settings, mutate }: SectionProps) {
             </Button>
           ) : null}
         </div>
+        {keyHistory.length > 0 ? (
+          <p className="mt-1.5 text-[12px] leading-snug text-faint">
+            {keyHistory
+              .map((e) => `${e.action === "saved" ? "Saved" : "Removed"} ${relativeTime(e.at)}`)
+              .join(" · ")}
+          </p>
+        ) : null}
+        {!secretMark.set && settings.ai.fallbackProvider && settings.ai.fallbackProvider !== provider ? (
+          <p className="mt-1.5 text-[12px] leading-snug text-warn">
+            No {PROVIDER_LABEL[provider]} key saved — your {PROVIDER_LABEL[settings.ai.fallbackProvider]} backup
+            is doing all the work until you add one.
+          </p>
+        ) : null}
       </div>
 
       {provider === "custom" ? (

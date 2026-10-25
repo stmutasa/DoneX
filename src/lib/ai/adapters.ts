@@ -28,8 +28,45 @@ export async function readyConfig(): Promise<ProviderConfig> {
   return next;
 }
 
+/**
+ * Whether any provider can take a call — the active one, or the backup
+ * standing in for it. The backup counts: it exists for exactly the moment the
+ * active provider can't run, and that includes the active key going missing.
+ */
 export function aiConfigured(): boolean {
-  return configReady(resolveConfig());
+  return configReady(resolveConfig()) || backupUsable();
+}
+
+function backupUsable(): boolean {
+  const ai = settingsRepo.getApp().ai;
+  const kind = ai.fallbackProvider;
+  return !!kind && kind !== ai.provider && configReady(resolveConfig(kind));
+}
+
+const PROVIDER_NAME: Record<AIProviderKind, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  custom: "Your custom provider",
+};
+
+/**
+ * The provider that can actually take this call: the active one, or — when it
+ * has no key or no model — the backup, along with the plain reason it had to
+ * step in. Throws only when neither can run.
+ */
+export async function workingConfig(): Promise<{ cfg: ProviderConfig; standIn: string | null }> {
+  try {
+    return { cfg: await readyConfig(), standIn: null };
+  } catch (err) {
+    const backup = await fallbackConfig();
+    if (!backup) throw err;
+    const active = PROVIDER_NAME[settingsRepo.getApp().ai.provider];
+    const why =
+      err instanceof Error && err.message === NO_MODEL
+        ? `${active} has no model selected`
+        : `${active} has no API key saved`;
+    return { cfg: backup, standIn: why };
+  }
 }
 
 // ── Failover ───────────────────────────────────────────────────────────────
@@ -88,9 +125,14 @@ export async function fallbackConfig(): Promise<ProviderConfig | null> {
   return { ...cfg, model };
 }
 
-/** Config problems can't be fixed by trying elsewhere; everything else can. */
-export function isFailoverWorthy(message: string): boolean {
-  return message !== NOT_CONFIGURED && message !== NO_MODEL;
+/**
+ * Every failure of the active provider is worth handing to the backup — a
+ * missing or rejected key included, which is the case a backup is most for.
+ * (This once excluded "no key" and "no model" on the theory that another
+ * provider couldn't fix them; it can, and that exclusion left work stranded.)
+ */
+export function isFailoverWorthy(_message: string): boolean {
+  return true;
 }
 
 export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason: string): void {
@@ -105,6 +147,42 @@ export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason:
     settingsRepo.setKV(FALLBACK_KEY, JSON.stringify(event));
   } catch {
     // Telling the user is a bonus; never fail the call over it.
+  }
+  void alertIfNeedsYou(from, to, reason);
+}
+
+/** Failures a retry won't cure: the key or model has to be fixed by hand. */
+export function needsOwner(reason: string): boolean {
+  return /no API key saved|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|HTTP 40[13]\b/i.test(
+    reason,
+  );
+}
+
+const KV_KEY_ALERT_DAY = "ai.lastKeyAlertDay";
+
+/**
+ * A backup quietly carrying the load is good; doing it for weeks because a key
+ * is gone is not. When the cause is one only the owner can fix, say so on
+ * their phone — at most once a day.
+ */
+async function alertIfNeedsYou(from: AIProviderKind, to: ProviderConfig, reason: string): Promise<void> {
+  try {
+    if (!needsOwner(reason)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (settingsRepo.getKV(KV_KEY_ALERT_DAY) === today) return;
+    settingsRepo.setKV(KV_KEY_ALERT_DAY, today);
+    const { sendPushToAll } = await import("@/lib/push");
+    await sendPushToAll(
+      {
+        title: `${PROVIDER_NAME[from]} needs attention`,
+        body: `${reason}. Your backup (${to.model}) is covering until you fix it in Settings → AI model.`,
+        url: "/settings/ai",
+        tag: "ai-key-alert",
+      },
+      ["owner"],
+    );
+  } catch {
+    // never let an alert break the call it is about
   }
 }
 
@@ -125,13 +203,29 @@ export function lastFallbackEvent(): AiFallbackEvent | null {
 export async function callWithFailover<T>(
   run: (cfg: ProviderConfig, adapter: ProviderAdapter) => Promise<T>,
 ): Promise<T> {
-  const primary = await readyConfig();
+  const activeKind = settingsRepo.getApp().ai.provider;
+  const start = await workingConfig();
+
+  // The active provider can't run at all, so the backup does the work.
+  if (start.standIn) {
+    try {
+      const value = await run(start.cfg, adapterFor(start.cfg.kind));
+      recordFallback(activeKind, start.cfg, start.standIn);
+      return value;
+    } catch (backupErr) {
+      throw new Error(
+        `${start.standIn} — and the ${start.cfg.kind} backup (${start.cfg.model}) also failed: ${describeCallError(backupErr)}`,
+      );
+    }
+  }
+
+  const primary = start.cfg;
   try {
     return await run(primary, adapterFor(primary.kind));
   } catch (err) {
     const reason = describeCallError(err);
     const backup = await fallbackConfig();
-    if (!backup || !isFailoverWorthy(reason)) throw err;
+    if (!backup) throw err;
     try {
       const value = await run(backup, adapterFor(backup.kind));
       recordFallback(primary.kind, backup, reason);
