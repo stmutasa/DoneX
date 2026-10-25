@@ -56,6 +56,7 @@ export interface SectionGroup {
 const PROVIDER_LABEL: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
+  gemini: "Gemini",
   custom: "Custom",
 };
 

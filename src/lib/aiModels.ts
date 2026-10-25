@@ -14,6 +14,7 @@ export type AiPatch = Partial<AISettings>;
 export function rememberModel(provider: AIProviderKind, model: string): AiPatch {
   if (provider === "openai") return { openaiModel: model };
   if (provider === "anthropic") return { anthropicModel: model };
+  if (provider === "gemini") return { geminiModel: model };
   return { customModel: model };
 }
 
@@ -21,6 +22,7 @@ export function rememberModel(provider: AIProviderKind, model: string): AiPatch 
 export function recallModel(provider: AIProviderKind, ai: AISettings): string {
   if (provider === "openai") return ai.openaiModel;
   if (provider === "anthropic") return ai.anthropicModel;
+  if (provider === "gemini") return ai.geminiModel ?? "";
   return ai.customModel;
 }
 

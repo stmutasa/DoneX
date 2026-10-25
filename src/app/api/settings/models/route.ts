@@ -3,10 +3,11 @@ import { z } from "zod";
 import { requireOwner } from "@/lib/auth";
 import { listModels } from "@/lib/ai";
 import { settingsRepo } from "@/lib/db/repos";
+import { configReady, resolveConfig } from "@/lib/ai/provider";
 
 export const dynamic = "force-dynamic";
 
-const providerSchema = z.enum(["openai", "anthropic", "custom"]);
+const providerSchema = z.enum(["openai", "anthropic", "gemini", "custom"]);
 
 export async function GET(req: Request): Promise<Response> {
   const gate = await requireOwner();
@@ -20,14 +21,8 @@ export async function GET(req: Request): Promise<Response> {
   }
   const provider = parsed?.success ? parsed.data : settings.ai.provider;
 
-  const key =
-    provider === "openai"
-      ? settings.ai.openaiKey
-      : provider === "anthropic"
-        ? settings.ai.anthropicKey
-        : settings.ai.customKey;
-  const missingBase = provider === "custom" && !settings.ai.customBaseUrl.trim();
-  if (!key.trim() || missingBase) {
+  const ready = configReady(resolveConfig(provider));
+  if (!ready) {
     return NextResponse.json({ error: "AI not configured" }, { status: 409 });
   }
 

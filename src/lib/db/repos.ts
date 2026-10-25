@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     model: "",
     openaiModel: "",
     anthropicModel: "",
+    geminiModel: "",
     openaiKey: "",
     anthropicKey: "",
     customBaseUrl: "",

@@ -46,6 +46,7 @@ function backupUsable(): boolean {
 const PROVIDER_NAME: Record<AIProviderKind, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
+  gemini: "Gemini",
   custom: "Your custom provider",
 };
 
@@ -64,7 +65,7 @@ export async function workingConfig(): Promise<{ cfg: ProviderConfig; standIn: s
     const why =
       err instanceof Error && err.message === NO_MODEL
         ? `${active} has no model selected`
-        : `${active} has no API key saved`;
+        : `${active} has no API key set`;
     return { cfg: backup, standIn: why };
   }
 }
@@ -153,7 +154,7 @@ export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason:
 
 /** Failures a retry won't cure: the key or model has to be fixed by hand. */
 export function needsOwner(reason: string): boolean {
-  return /no API key saved|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|HTTP 40[13]\b/i.test(
+  return /no API key (saved|set)|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|HTTP 40[13]\b/i.test(
     reason,
   );
 }
@@ -175,7 +176,7 @@ async function alertIfNeedsYou(from: AIProviderKind, to: ProviderConfig, reason:
     await sendPushToAll(
       {
         title: `${PROVIDER_NAME[from]} needs attention`,
-        body: `${reason}. Your backup (${to.model}) is covering until you fix it in Settings → AI model.`,
+        body: `${reason}. Your backup (${to.model}) is covering until you fix it — keys are set in Railway → Variables.`,
         url: "/settings/ai",
         tag: "ai-key-alert",
       },

@@ -7,6 +7,7 @@ const ai = (over: Partial<AISettings> = {}): AISettings => ({
   model: "gpt-5-mini",
   openaiModel: "gpt-5-mini",
   anthropicModel: "",
+  geminiModel: "",
   openaiKey: "k",
   anthropicKey: "k",
   customBaseUrl: "",

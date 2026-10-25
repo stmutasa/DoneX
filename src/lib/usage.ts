@@ -49,6 +49,7 @@ const EMPTY: UsageTotals = { calls: 0, input: 0, cachedInput: 0, output: 0, tota
 export function companyOf(provider: string): { key: string; label: string } {
   if (provider === "openai") return { key: "openai", label: "OpenAI" };
   if (provider === "anthropic") return { key: "anthropic", label: "Anthropic" };
+  if (provider === "gemini") return { key: "google", label: "Google" };
   return { key: "custom", label: "Custom endpoint" };
 }
 

@@ -239,7 +239,7 @@ export type ChatStreamEvent =
 
 // ── Settings ───────────────────────────────────────────────────────────────
 
-export type AIProviderKind = "openai" | "anthropic" | "custom";
+export type AIProviderKind = "openai" | "anthropic" | "gemini" | "custom";
 
 export interface AISettings {
   provider: AIProviderKind;
@@ -249,6 +249,7 @@ export interface AISettings {
    *  your pick instead of silently handing the work to the newest model. */
   openaiModel: string;
   anthropicModel: string;
+  geminiModel: string;
   openaiKey: string;
   anthropicKey: string;
   /** OpenAI-compatible endpoint for "custom" (e.g. OpenRouter, local) */
@@ -393,6 +394,7 @@ export interface MaskedSettings
   ai: Omit<AISettings, "openaiKey" | "anthropicKey" | "customKey"> & {
     openaiKey: SecretMark;
     anthropicKey: SecretMark;
+    geminiKey: SecretMark;
     customKey: SecretMark;
   };
   google: Omit<GoogleSettings, "clientSecret" | "mapsApiKey"> & {
@@ -409,6 +411,13 @@ export interface MaskedSettings
 export interface SecretMark {
   set: boolean;
   last4: string;
+  /** where the key in use comes from: Railway's environment, an older copy in
+   *  the app, or nowhere */
+  source?: "env" | "stored" | "none";
+  /** the environment variable that supplies it */
+  envVar?: string;
+  /** a copy saved in the app exists (in use only when the variable isn't set) */
+  storedCopy?: boolean;
 }
 
 // ── Google integration ─────────────────────────────────────────────────────

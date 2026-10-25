@@ -38,8 +38,29 @@ function TestLine({ label, result }: { label: string; result: { ok: boolean; mes
 const PROVIDER_LABEL: Record<AIProviderKind, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
+  gemini: "Gemini",
   custom: "Custom",
 };
+
+const PROVIDERS: AIProviderKind[] = ["openai", "anthropic", "gemini", "custom"];
+
+/** An example id for the free-text box, in the provider's own naming. */
+const MODEL_HINT: Record<AIProviderKind, string> = {
+  openai: "gpt-5-mini",
+  anthropic: "claude-sonnet-5-5",
+  gemini: "gemini-4-argon",
+  custom: "provider/model-id",
+};
+
+function markFor(ai: SectionProps["settings"]["ai"], kind: AIProviderKind) {
+  return kind === "openai"
+    ? ai.openaiKey
+    : kind === "anthropic"
+      ? ai.anthropicKey
+      : kind === "gemini"
+        ? ai.geminiKey
+        : ai.customKey;
+}
 
 export function AiSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
@@ -47,17 +68,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
   const confirm = useConfirm();
   const ai = settings.ai;
   const provider = ai.provider;
-  const fallbackKeySet =
-    ai.fallbackProvider === "openai"
-      ? ai.openaiKey.set
-      : ai.fallbackProvider === "anthropic"
-        ? ai.anthropicKey.set
-        : ai.fallbackProvider === "custom"
-          ? ai.customKey.set
-          : false;
-
-  const [keyDraft, setKeyDraft] = useState("");
-  const [savingKey, setSavingKey] = useState(false);
+  const fallbackKeySet = ai.fallbackProvider ? markFor(ai, ai.fallbackProvider).set : false;
   const [baseUrl, setBaseUrl] = useState(ai.customBaseUrl);
   const [customModel, setCustomModel] = useState(ai.customModel);
   const [testing, setTesting] = useState(false);
@@ -143,35 +154,24 @@ export function AiSection({ settings, mutate }: SectionProps) {
     }
   };
 
-  const secretMark =
-    provider === "openai" ? ai.openaiKey : provider === "anthropic" ? ai.anthropicKey : ai.customKey;
+  const secretMark = markFor(ai, provider);
   const keyField =
     provider === "openai" ? "openaiKey" : provider === "anthropic" ? "anthropicKey" : "customKey";
+  const envVar = secretMark.envVar ?? "";
 
-  const saveKey = async () => {
-    if (!keyDraft.trim()) return;
-    setSavingKey(true);
-    const ok = await patch({ ai: { [keyField]: keyDraft.trim() } }, "Key saved");
-    setSavingKey(false);
-    if (ok) {
-      setKeyDraft("");
-      void refreshModels();
-    }
-  };
-
-  const clearKey = async () => {
-    // One tap used to erase the key outright, right beside "Save key".
+  /** Deletes only the older copy the app itself stored; Railway's is untouched. */
+  const deleteStoredCopy = async () => {
     const sure = await confirm({
-      title: `Remove your ${PROVIDER_LABEL[provider]} key?`,
-      message: settings.ai.fallbackProvider && settings.ai.fallbackProvider !== provider
-        ? `DoneX will stop using ${PROVIDER_LABEL[provider]} and run everything on your backup until you add a key again.`
-        : `DoneX will stop using ${PROVIDER_LABEL[provider]}, and with no backup set up, its AI features stop until you add a key again.`,
-      confirmLabel: "Remove key",
+      title: `Delete the ${PROVIDER_LABEL[provider]} key stored in the app?`,
+      message:
+        secretMark.source === "env"
+          ? `Railway's ${envVar} is the one in use, so nothing changes — this just removes the old copy.`
+          : `This copy is the one in use. Add ${envVar} in Railway first, or ${PROVIDER_LABEL[provider]} will stop working.`,
+      confirmLabel: "Delete copy",
       destructive: true,
     });
     if (!sure) return;
-    const ok = await patch({ ai: { [keyField]: "__clear__" } }, "Key cleared");
-    if (ok) setKeyDraft("");
+    await patch({ ai: { [keyField]: "__clear__" } }, "Stored copy deleted");
   };
 
   const keyHistory = (settings.aiKeyLog ?? []).filter((e) => e.provider === provider).slice(0, 3);
@@ -202,37 +202,61 @@ export function AiSection({ settings, mutate }: SectionProps) {
         ariaLabel="AI provider"
         value={provider}
         onChange={(next) => {
-          setKeyDraft("");
           setResult(null);
           void patch({ ai: { provider: next } });
         }}
-        options={(["openai", "anthropic", "custom"] as AIProviderKind[]).map((p) => ({
+        options={PROVIDERS.map((p) => ({
           value: p,
           label: PROVIDER_LABEL[p],
         }))}
       />
 
-      <div>
-        <Input
-          label={`${PROVIDER_LABEL[provider]} API key`}
-          hint={secretMark.set ? "Saved" : "Required"}
-          type="password"
-          autoComplete="off"
-          value={keyDraft}
-          placeholder={maskPlaceholder(secretMark, "sk-…")}
-          onChange={(e) => setKeyDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && saveKey()}
-        />
-        <div className="mt-2 flex gap-2">
-          <Button size="sm" variant="primary" loading={savingKey} disabled={!keyDraft.trim()} onClick={saveKey}>
-            Save key
-          </Button>
-          {secretMark.set ? (
-            <Button size="sm" variant="ghost" onClick={clearKey}>
-              Clear
-            </Button>
-          ) : null}
+      {/* Keys live in Railway's service variables now — the app only reports
+          whether one is there, never takes one. */}
+      <div className="rounded-2xl border border-stroke bg-sunken px-3.5 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[13px] font-medium text-muted">{PROVIDER_LABEL[provider]} API key</span>
+          <span
+            className={cn(
+              "text-[12px] font-medium",
+              secretMark.source === "env" ? "text-ok" : secretMark.source === "stored" ? "text-warn" : "text-danger",
+            )}
+          >
+            {secretMark.source === "env"
+              ? "Set in Railway"
+              : secretMark.source === "stored"
+                ? "Stored in the app"
+                : "Not set"}
+          </span>
         </div>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+          {secretMark.source === "env" ? (
+            <>
+              Read from <code className="font-mono text-[12px] text-ink">{envVar}</code> (ending{" "}
+              {secretMark.last4}). To change it, edit that variable in Railway.
+            </>
+          ) : secretMark.source === "stored" ? (
+            <>
+              Still using a key saved here by an earlier version. Move it to Railway: in your DoneX
+              service open <span className="text-ink">Variables</span>, add{" "}
+              <code className="font-mono text-[12px] text-ink">{envVar}</code>, and let it redeploy —
+              then delete the copy below.
+            </>
+          ) : (
+            <>
+              In Railway, open your DoneX service → <span className="text-ink">Variables</span> → add{" "}
+              <code className="font-mono text-[12px] text-ink">{envVar}</code> with your key. Railway
+              redeploys on its own, and it shows up here.
+            </>
+          )}
+        </p>
+        {secretMark.storedCopy ? (
+          <div className="mt-2">
+            <Button size="sm" variant="ghost" onClick={() => void deleteStoredCopy()}>
+              Delete the copy stored in the app
+            </Button>
+          </div>
+        ) : null}
         {keyHistory.length > 0 ? (
           <p className="mt-1.5 text-[12px] leading-snug text-faint">
             {keyHistory
@@ -240,10 +264,10 @@ export function AiSection({ settings, mutate }: SectionProps) {
               .join(" · ")}
           </p>
         ) : null}
-        {!secretMark.set && settings.ai.fallbackProvider && settings.ai.fallbackProvider !== provider ? (
+        {!secretMark.set && ai.fallbackProvider && ai.fallbackProvider !== provider ? (
           <p className="mt-1.5 text-[12px] leading-snug text-warn">
-            No {PROVIDER_LABEL[provider]} key saved — your {PROVIDER_LABEL[settings.ai.fallbackProvider]} backup
-            is doing all the work until you add one.
+            No {PROVIDER_LABEL[provider]} key — your {PROVIDER_LABEL[ai.fallbackProvider]} backup is doing
+            all the work until you add one.
           </p>
         ) : null}
       </div>
@@ -278,7 +302,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
         {modelsUnavailable || (!modelsLoading && models.length === 0) ? (
           <>
             <Input
-              placeholder="gpt-4o-mini"
+              placeholder={MODEL_HINT[provider]}
               value={draftModel}
               onChange={(e) => setDraftModel(e.target.value)}
             />
@@ -358,7 +382,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
             }}
           >
             <option value="">No backup</option>
-            {(["openai", "anthropic", "custom"] as AIProviderKind[])
+            {PROVIDERS
               // A standby on the active provider can't stand in for it, so it
               // is not offered — but if one is somehow set, it is still shown
               // rather than silently reading back as "No backup".
@@ -406,8 +430,8 @@ export function AiSection({ settings, mutate }: SectionProps) {
 
         {ai.fallbackProvider && !fallbackKeySet ? (
           <p className="mt-2 text-[12px] leading-snug text-warn">
-            Add an {PROVIDER_LABEL[ai.fallbackProvider]} API key above (switch the provider,
-            paste the key, switch back) — without one the backup can’t run.
+            The backup has no key — add {markFor(ai, ai.fallbackProvider).envVar} in Railway →
+            Variables, or it can’t run.
           </p>
         ) : null}
 

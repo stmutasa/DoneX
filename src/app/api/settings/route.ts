@@ -6,7 +6,8 @@ import { settingsRepo } from "@/lib/db/repos";
 import { JOINT_COLOR_IDS } from "@/lib/jointColors";
 import { classifyCalendarLink } from "@/lib/calendarLinks";
 import { resolveAiPatch } from "@/lib/aiModels";
-import type { AiKeyEvent, AppSettings, MaskedSettings } from "@/lib/types";
+import { KEY_ENV, keyFor } from "@/lib/ai/provider";
+import type { AIProviderKind, AiKeyEvent, AppSettings, MaskedSettings, SecretMark } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,18 @@ type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]>
 
 function last4(secret: string): string {
   return secret ? secret.slice(-4) : "";
+}
+
+/** Whether a provider has a key and where it comes from — never the key itself. */
+function keyMark(kind: AIProviderKind, ai: AppSettings["ai"]): SecretMark {
+  const k = keyFor(kind, ai);
+  return {
+    set: !!k.key,
+    last4: last4(k.key),
+    source: k.source,
+    envVar: KEY_ENV[kind],
+    storedCopy: k.storedCopy,
+  };
 }
 
 function maskSettings(settings: AppSettings): MaskedSettings {
@@ -46,14 +59,16 @@ function maskSettings(settings: AppSettings): MaskedSettings {
       model: ai.model,
       openaiModel: ai.openaiModel,
       anthropicModel: ai.anthropicModel,
+      geminiModel: ai.geminiModel ?? "",
       customBaseUrl: ai.customBaseUrl,
       customModel: ai.customModel,
       fallbackProvider: ai.fallbackProvider,
       fallbackModel: ai.fallbackModel,
       fallbackModelPinned: ai.fallbackModelPinned,
-      openaiKey: { set: !!ai.openaiKey, last4: last4(ai.openaiKey) },
-      anthropicKey: { set: !!ai.anthropicKey, last4: last4(ai.anthropicKey) },
-      customKey: { set: !!ai.customKey, last4: last4(ai.customKey) },
+      openaiKey: keyMark("openai", ai),
+      anthropicKey: keyMark("anthropic", ai),
+      geminiKey: keyMark("gemini", ai),
+      customKey: keyMark("custom", ai),
     },
     google: {
       clientId: google.clientId,
@@ -69,7 +84,7 @@ function maskSettings(settings: AppSettings): MaskedSettings {
 }
 
 const aiPatchSchema = z.object({
-  provider: z.enum(["openai", "anthropic", "custom"]).optional(),
+  provider: z.enum(["openai", "anthropic", "gemini", "custom"]).optional(),
   model: z.string().optional(),
   openaiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
@@ -78,7 +93,7 @@ const aiPatchSchema = z.object({
   customModel: z.string().optional(),
   // fallbackModel is the resolved one — set fallbackModelPinned to choose it.
   fallbackModelPinned: z.string().max(200).optional(),
-  fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
+  fallbackProvider: z.enum(["", "openai", "anthropic", "gemini", "custom"]).optional(),
 });
 
 const voicePatchSchema = z.object({
@@ -195,10 +210,19 @@ export async function PATCH(req: NextRequest) {
   // "__clear__" means "wipe it" (store as real empty string).
   if (data.ai) {
     const ai = { ...data.ai };
+    // Keys are read from Railway's variables now. The only thing the app
+    // still does with a key is delete an older copy it stored itself.
     for (const key of ["openaiKey", "anthropicKey", "customKey"] as const) {
       if (ai[key] === "") delete ai[key];
       else if (ai[key] === "__clear__") ai[key] = "";
-      if (ai[key] !== undefined) logKeyChange(KEY_PROVIDER[key], ai[key] ? "saved" : "cleared");
+      else if (ai[key] !== undefined) {
+        const envVar = KEY_ENV[KEY_PROVIDER[key]];
+        return NextResponse.json(
+          { error: `API keys are set in Railway now — add ${envVar} under your service's Variables.` },
+          { status: 400 },
+        );
+      }
+      if (ai[key] !== undefined) logKeyChange(KEY_PROVIDER[key], "cleared");
     }
 
     patch.ai = resolveAiPatch(settingsRepo.getApp().ai, ai);

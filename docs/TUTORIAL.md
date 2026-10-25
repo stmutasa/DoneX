@@ -516,6 +516,32 @@ Two things that sound related but aren't, and keep working regardless: your
 **morning briefing** and **weekly review** are not the Assistant, and a
 **location on a task** is not Nearby.
 
+## Where your AI keys live
+
+AI provider keys are set in **Railway**, not in the app. In Railway, open your
+DoneX service → **Variables** and add whichever you use:
+
+| Provider | Variable |
+|---|---|
+| OpenAI | `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Gemini | `GEMINI_API_KEY` |
+| Custom (OpenAI-compatible) | `CUSTOM_AI_API_KEY` |
+
+Railway redeploys on its own after you save a variable. Settings → AI model then
+shows each key as **Set in Railway** (with its last four characters), and never
+shows or accepts the key itself. Keys set this way don't pass through your
+browser, aren't included in backups, and can't be wiped by a tap in Settings.
+
+A key saved in the app by an older version keeps working until Railway has one,
+marked **Stored in the app**. Once the variable is set, delete that stored copy
+from the same screen. To change a key, edit the variable in Railway.
+
+**Gemini** is a fourth provider, for the main model or the backup. Its model list
+always has a **Gemini 4 Argon** option. Google has been giving out access to
+Argon gradually, so if your key isn't offered it yet, the option says so and sits
+at the end of the list, where it won't be picked automatically.
+
 ## Choosing the model (and its backup)
 
 Settings → **AI model**. Pick the provider, then the model, then the backup

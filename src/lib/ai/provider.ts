@@ -1,14 +1,16 @@
 import { settingsRepo } from "@/lib/db/repos";
-import type { AIProviderKind, ModelInfo } from "@/lib/types";
+import type { AIProviderKind, AISettings, ModelInfo } from "@/lib/types";
 import { asRecord, asString, safeJsonParse } from "@/lib/ai/json";
 import type { ToolSpec } from "@/lib/ai/tools";
 
 export const OPENAI_BASE = "https://api.openai.com/v1";
 export const ANTHROPIC_BASE = "https://api.anthropic.com/v1";
+/** Gemini's OpenAI-compatible endpoint, so the OpenAI adapter speaks to it as-is. */
+export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const CALL_TIMEOUT_MS = 90_000;
 
-export const NOT_CONFIGURED = "No AI provider configured — add an API key in Settings.";
+export const NOT_CONFIGURED = "No AI provider configured — add its API key in Railway → Variables.";
 export const NO_MODEL = "No model selected — choose one in Settings.";
 
 export interface ProviderConfig {
@@ -22,33 +24,60 @@ export function stripTrailingSlash(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
+/**
+ * The environment variable each provider's key is read from. Keys live in
+ * Railway's service variables, not in the app's database: they never pass
+ * through the browser, never land in a backup, and can't be cleared by a
+ * stray tap in Settings.
+ */
+export const KEY_ENV: Record<AIProviderKind, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  custom: "CUSTOM_AI_API_KEY",
+};
+
+/** A key saved in the app by an older version — honoured only until Railway has one. */
+function storedKey(kind: AIProviderKind, ai: AISettings): string {
+  if (kind === "openai") return ai.openaiKey.trim();
+  if (kind === "anthropic") return ai.anthropicKey.trim();
+  if (kind === "custom") return ai.customKey.trim();
+  return "";
+}
+
+/** Where a provider's key comes from: Railway first, then an older stored copy. */
+export function keyFor(
+  kind: AIProviderKind,
+  ai: AISettings = settingsRepo.getApp().ai,
+): { key: string; source: "env" | "stored" | "none"; storedCopy: boolean } {
+  const env = (process.env[KEY_ENV[kind]] ?? "").trim();
+  const stored = storedKey(kind, ai);
+  if (env) return { key: env, source: "env", storedCopy: !!stored };
+  if (stored) return { key: stored, source: "stored", storedCopy: true };
+  return { key: "", source: "none", storedCopy: false };
+}
+
 /** Resolve wire config for a provider; defaults to the active provider. */
 export function resolveConfig(kind?: AIProviderKind): ProviderConfig {
   const ai = settingsRepo.getApp().ai;
   const target = kind ?? ai.provider;
   const isActive = target === ai.provider;
+  const apiKey = keyFor(target, ai).key;
   if (target === "anthropic") {
-    return {
-      kind: "anthropic",
-      baseUrl: ANTHROPIC_BASE,
-      apiKey: ai.anthropicKey.trim(),
-      model: isActive ? ai.model.trim() : "",
-    };
+    return { kind: "anthropic", baseUrl: ANTHROPIC_BASE, apiKey, model: isActive ? ai.model.trim() : "" };
+  }
+  if (target === "gemini") {
+    return { kind: "gemini", baseUrl: GEMINI_BASE, apiKey, model: isActive ? ai.model.trim() : "" };
   }
   if (target === "custom") {
     return {
       kind: "custom",
       baseUrl: stripTrailingSlash(ai.customBaseUrl),
-      apiKey: ai.customKey.trim(),
+      apiKey,
       model: ai.customModel.trim() || (isActive ? ai.model.trim() : ""),
     };
   }
-  return {
-    kind: "openai",
-    baseUrl: OPENAI_BASE,
-    apiKey: ai.openaiKey.trim(),
-    model: isActive ? ai.model.trim() : "",
-  };
+  return { kind: "openai", baseUrl: OPENAI_BASE, apiKey, model: isActive ? ai.model.trim() : "" };
 }
 
 export function configReady(cfg: ProviderConfig): boolean {

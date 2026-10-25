@@ -276,7 +276,31 @@ async function models(cfg: ProviderConfig): Promise<ModelInfo[]> {
       return id ? { id, created: asNumber(rec?.created) } : null;
     })
     .filter((m): m is RawModel => m !== null);
+  if (cfg.kind === "gemini") return selectGeminiModels(raw);
   return selectOpenAiModels(raw, cfg.kind === "openai");
+}
+
+/** Gemini 4 Argon has its own slot in the list, whether or not Google lists it. */
+export const GEMINI_ARGON_ID = "gemini-4-argon";
+
+/**
+ * Gemini's catalogue through its OpenAI-compatible endpoint: chat models
+ * only, ids without the "models/" prefix the native API uses, newest first.
+ *
+ * Gemini 4 Argon always has a place. Access has been gated by Google, so a key
+ * may not be offered it yet; then it sits at the end, saying so, rather than
+ * first — the head of the list is what "auto" and the backup pick, and that
+ * must be a model the key can actually use.
+ */
+export function selectGeminiModels(raw: RawModel[]): ModelInfo[] {
+  const chat = raw
+    .map((m) => ({ ...m, id: m.id.replace(/^models\//, "") }))
+    .filter((m) => /^gemini/i.test(m.id) && !/embedding|tts|image|imagen|live|audio|aqa/i.test(m.id));
+  const listed = selectOpenAiModels(chat, false).map((m) =>
+    m.id === GEMINI_ARGON_ID ? { id: m.id, label: "Gemini 4 Argon" } : m,
+  );
+  if (listed.some((m) => m.id === GEMINI_ARGON_ID)) return listed;
+  return [...listed, { id: GEMINI_ARGON_ID, label: "Gemini 4 Argon — not offered to this key yet" }];
 }
 
 export const openaiAdapter: ProviderAdapter = { stream, complete, models };

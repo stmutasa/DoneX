@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   model: z.string().max(200).optional(),
-  fallbackProvider: z.enum(["", "openai", "anthropic", "custom"]).optional(),
+  fallbackProvider: z.enum(["", "openai", "anthropic", "gemini", "custom"]).optional(),
   /** "" follows the backup provider's newest; anything else pins that model */
   fallbackModelPinned: z.string().max(200).optional(),
   /** skip the live calls and just save */
