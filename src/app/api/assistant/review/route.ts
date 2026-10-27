@@ -22,6 +22,8 @@ const QuerySchema = z.object({
 
 /** The day a week's review was last rewritten without being asked, so it is tried once a day at most. */
 const kvAutoRefresh = (weekKey: string) => `review.autoRefresh.${weekKey}`;
+/** The day writing a week's first review last failed: no automatic retry until tomorrow. */
+const kvAutoFail = (weekKey: string) => `review.autoFail.${weekKey}`;
 
 /** One generation per week at a time: a reload or a refocus mid-call shares it. */
 const inFlight = new Map<string, Promise<WeeklyReview>>();
@@ -77,12 +79,21 @@ export async function GET(req: Request): Promise<Response> {
   // Regenerate) doesn't set off another one today.
   if (force) settingsRepo.setKV(kvAutoRefresh(weekKey), todayKey);
 
+  // No review yet and writing one already failed today: don't pay to fail
+  // again on every visit and refocus. Regenerate always tries.
+  if (!refresh && !cached && settingsRepo.getKV(kvAutoFail(weekKey)) === todayKey) {
+    return NextResponse.json({ error: "Could not write the review just now" }, { status: 502 });
+  }
+
   try {
     const review = await generateOnce(weekKey, force);
     return NextResponse.json({ review });
   } catch (err) {
     // A rewrite nobody asked for that fails still leaves the saved one to show.
     if (cached && !refresh) return NextResponse.json({ review: cached });
+    // With nothing saved, the next automatic try waits for tomorrow; this is
+    // noted after a failed Regenerate too, for the refetch that follows it.
+    if (!cached) settingsRepo.setKV(kvAutoFail(weekKey), todayKey);
     const message = err instanceof Error ? err.message : "Could not generate the review";
     return NextResponse.json({ error: message }, { status: 502 });
   }

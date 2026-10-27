@@ -5,6 +5,7 @@ import {
   claimLoginAttempt,
   createSession,
   loginClient,
+  notePinCollision,
   verifyPin,
 } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
@@ -48,9 +49,24 @@ export async function POST(req: NextRequest) {
   const owner = !!settings.pinHash && verifyPin(pin, settings.pinHash);
   const partner = !!settings.joint.partnerPinHash && verifyPin(pin, settings.joint.partnerPinHash);
   // One PIN opening both can only predate the checks that now keep them
-  // apart. There's no telling who typed it, so neither door opens.
-  const role: "owner" | "partner" | null = owner && partner ? null : owner ? "owner" : partner ? "partner" : null;
-  if (owner && partner) console.warn("[auth] the owner and partner PINs are the same; sign-in refused");
+  // apart. On one of the owner's known devices it has always meant the
+  // owner, and the partner's own phone carries no such mark; anywhere else
+  // there's no telling who typed it, so neither door opens. Either way the
+  // owner's shell is told to change the PIN.
+  const collide = owner && partner;
+  if (collide) {
+    notePinCollision();
+    console.warn("[auth] the owner and partner PINs are the same");
+  }
+  const role: "owner" | "partner" | null = collide
+    ? client.trusted
+      ? "owner"
+      : null
+    : owner
+      ? "owner"
+      : partner
+        ? "partner"
+        : null;
 
   if (attempt.settle(role)) {
     void sendPushToAll(

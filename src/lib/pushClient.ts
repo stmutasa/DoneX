@@ -2,9 +2,11 @@
  * This device's web-push subscription, from the browser's side.
  *
  * The server keeps one row per endpoint, tagged with the role and session
- * that last posted it, and drops it when that session ends. So the app
- * re-posts the subscription on every load (`syncPush`): the row follows
- * whoever is signed in on the device, and a row the server pruned comes back.
+ * that last posted it, and drops it when that session ends (or when a
+ * signed-out screen asks it to, `forgetPushOnServer`). The browser's own
+ * subscription is never dropped on sign-out. The app re-posts it on every
+ * signed-in load (`syncPush`), so the row follows whoever is signed in on the
+ * device, and a row the server pruned comes back.
  */
 import { useCallback, useEffect, useState } from "react";
 import { pushApi } from "@/lib/api";
@@ -95,17 +97,28 @@ export async function enablePush(): Promise<void> {
   synced = Promise.resolve(true);
 }
 
-/** Unsubscribes this device in the browser, for sign-out. The server has
- *  already dropped its row by then. Never throws. */
-export async function forgetPushOnThisDevice(): Promise<void> {
+/**
+ * Asks the server to stop pushing to this browser, for screens with no
+ * session (just after sign-out, and the PIN pad, which also catches a session
+ * that ended elsewhere: revoked by a PIN change, or expired). The browser
+ * keeps its subscription, so the next sign-in's `syncPush` re-posts it under
+ * whoever signs in, and nobody has to turn notifications on again. Never throws.
+ */
+export async function forgetPushOnServer(): Promise<void> {
   synced = null;
   try {
     if (!pushSupported()) return;
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = await reg?.pushManager.getSubscription();
-    await sub?.unsubscribe();
+    if (!sub) return;
+    await fetch("/api/push/forget", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ endpoint: sub.endpoint }),
+    });
   } catch {
-    /* nothing more to do: the push service drops it once it stops answering */
+    /* offline: a row whose session ended is still pruned at the next sign-out or PIN change */
   }
 }
 

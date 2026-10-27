@@ -394,9 +394,10 @@ permission prompt. On your installed home-screen app, they behave like any
 native app's notifications. Annette turns hers on from the bell in her own
 bar on Ours.
 
-Notifications follow whoever is signed in. Signing out turns them off on that
-device (turn them back on after you sign in again), so a handed-over phone
-stops showing your reminders. If the server is busy or restarting at a
+Notifications follow whoever is signed in. Signing out stops yours on that
+device, so a handed-over phone stops showing your reminders, and whoever signs
+in there next gets their own without turning anything on. If you sign out with
+changes that haven't synced yet, DoneX asks before throwing them away. If the server is busy or restarting at a
 scheduled time, the briefing, digests and reviews still go out up to two hours
 late rather than being skipped; task reminders more than two hours stale are
 dropped quietly instead of arriving in a burst.
@@ -469,7 +470,11 @@ from confirmation emails, and DoneX reads them:
   link doesn't, so there the trip still shows but the times stay on home time.)
 
 A single rental car or a one-night hotel isn't treated as a trip; it takes a
-flight, or a stay spanning a night, before any of this appears.
+flight, or a stay spanning a night, before any of this appears. A flights-only
+visit (staying with family, nothing booked in between) still counts as one
+trip, a connection doesn't name the trip, and on a multi-city trip the clock
+and the "In …" line move with you. The night at the airport hotel before you
+fly stays on home time.
 
 ---
 

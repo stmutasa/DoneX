@@ -578,8 +578,7 @@ describe("review fixes", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
-  it("runs the subtask backfill once, and clears hand-offs it moves to personal", async () => {
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+  it("clears hand-offs the subtask backfill moves to personal", async () => {
     const { alignSubtaskSpaces } = await import("@/lib/db");
     db.prepare(
       "INSERT INTO tasks(id,title,space,created_at,updated_at) VALUES('al-parent','mine','personal','x','x')"
@@ -644,5 +643,96 @@ describe("review fixes", () => {
     repos.conversationsRepo.addMessage(conv.id, "assistant", "not configured");
     vi.useRealTimers();
     expect(repos.conversationsRepo.messages(conv.id).map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});
+
+describe("sweep fixes", () => {
+  it("keeps a joint '#word' whole, even when the word is a date", async () => {
+    const { POST } = await import("@/app/api/tasks/route");
+    const add = async (quick: string, role: "owner" | "partner") => {
+      session.role = role;
+      const res = await POST(req("/api/tasks", { method: "POST", body: { quick, space: "joint" } }));
+      return ((await res.json()) as { task: { title: string; dueAt: string | null; projectId: string | null } }).task;
+    };
+    const tomorrow = await add("call #tomorrow", "partner");
+    expect(tomorrow.title).toBe("call #tomorrow");
+    expect(tomorrow.dueAt).toBeNull();
+    const meeting = await add("#3pm meeting", "partner");
+    expect(meeting.title).toBe("#3pm meeting");
+    expect(meeting.dueAt).toBeNull();
+    expect((await add("Buy charcoal #bbq", "partner")).title).toBe("Buy charcoal #bbq");
+    // The owner adding to the joint list takes the same path, and a real date
+    // outside the "#word" still counts.
+    const owner = await add("#bbq stuff tomorrow", "owner");
+    expect(owner.title).toBe("#bbq stuff");
+    expect(owner.dueAt).not.toBeNull();
+    expect(owner.projectId).toBeNull();
+  });
+
+  it("treats an empty parentId as no parent", async () => {
+    const { POST } = await import("@/app/api/tasks/route");
+    const { PATCH } = await import("@/app/api/tasks/[id]/route");
+    session.role = "partner";
+    const milk = tasksRepo.create({ title: "Milk (empty parent)", space: "joint" });
+    const patched = await PATCH(
+      req(`/api/tasks/${milk.id}`, { method: "PATCH", body: { parentId: "" } }),
+      params(milk.id)
+    );
+    expect(patched.status).toBe(200);
+    expect(tasksRepo.get(milk.id)?.parentId).toBeNull();
+    const posted = await POST(req("/api/tasks", { method: "POST", body: { title: "Eggs (empty parent)", parentId: "" } }));
+    const { task } = (await posted.json()) as { task: { id: string; parentId: string | null } };
+    expect(task.parentId).toBeNull();
+    const titles = tasksRepo.list({ space: "joint", includeDone: true }).map((t) => t.title);
+    expect(titles).toContain("Milk (empty parent)");
+    expect(titles).toContain("Eggs (empty parent)");
+
+    // The repo never stores one either.
+    const direct = tasksRepo.create({ title: "direct", parentId: "" });
+    expect(direct.parentId).toBeNull();
+    expect(tasksRepo.update(direct.id, { parentId: "" })?.parentId).toBeNull();
+    expect(
+      (db.prepare("SELECT parent_id FROM tasks WHERE id=?").get(direct.id) as { parent_id: string | null })
+        .parent_id
+    ).toBeNull();
+  });
+
+  it("shows the owner's own ticks on the joint list in the Logbook, and can put them back", () => {
+    const shared = tasksRepo.create({ title: "Shared chore", space: "joint" });
+    const sub = tasksRepo.create({ title: "Shared sub", parentId: shared.id });
+    const theirs = tasksRepo.create({ title: "Their chore", space: "joint" }, "partner");
+    tasksRepo.setDone(shared.id, true);
+    tasksRepo.setDone(sub.id, true);
+    tasksRepo.setDone(theirs.id, true, { by: "partner" });
+    const entries = completionsRepo.logbook(today(), today()).flatMap((d) => d.entries);
+    const titles = entries.map((e) => e.title);
+    expect(titles).toContain("Shared chore");
+    expect(titles).toContain("Shared sub");
+    expect(titles).not.toContain("Their chore");
+
+    const entry = entries.find((e) => e.taskId === shared.id)!;
+    const res = tasksRepo.unlog(entry.id)!;
+    expect(res.reopened).toBe(true);
+    expect(res.task?.status).toBe("open");
+    expect(res.task?.space).toBe("joint");
+  });
+
+  // Last: it reopens the database, as a redeploy after a rollback would.
+  it("realigns subtasks an older build misfiled after a rollback, on the next open", async () => {
+    const parent = tasksRepo.create({ title: "Rollback parent", space: "joint" });
+    const live = getDb();
+    live
+      .prepare(
+        "INSERT INTO tasks(id,title,space,parent_id,created_at,updated_at) VALUES('rb-child','misfiled','personal',?,'x','x')"
+      )
+      .run(parent.id);
+    live
+      .prepare("INSERT INTO tasks(id,title,parent_id,created_at,updated_at) VALUES('rb-empty','hidden','','x','x')")
+      .run();
+    const g = globalThis as unknown as { __donexDb?: { close(): void } };
+    g.__donexDb?.close();
+    delete g.__donexDb;
+    expect(tasksRepo.get("rb-child")?.space).toBe("joint");
+    expect(tasksRepo.list({}).map((t) => t.id)).toContain("rb-empty");
   });
 });

@@ -255,6 +255,56 @@ describe("restore safety", () => {
     expect(settingsRepo.getKV("sched.lastTriageSlot")).toBe("2026-10-27@06:00");
   });
 
+  it("keeps the owner's devices signed in across a settings restore", async () => {
+    const auth = await import("@/lib/auth");
+    // A snapshot from before there was a device secret.
+    getDb().prepare("DELETE FROM settings WHERE key = 'auth.deviceSecret'").run();
+    const old = backup.writeSnapshot("manual");
+
+    // Then the owner's phone gets its device cookie, which makes the secret.
+    const phone = auth.mintOwnerDeviceCookie();
+    const secret = settingsRepo.getKV("auth.deviceSecret");
+    expect(secret).toBeTruthy();
+    expect(auth.loginClient(phone, null).trusted).toBe(true);
+
+    backup.restoreSnapshot(old.name, true);
+    expect(settingsRepo.getKV("auth.deviceSecret")).toBe(secret);
+    expect(auth.loginClient(phone, null).trusted).toBe(true);
+  });
+
+  it("takes the snapshot's device secret when this box has none", () => {
+    settingsRepo.setKV("auth.deviceSecret", "from-the-old-box");
+    const snap = backup.writeSnapshot("manual");
+    getDb().prepare("DELETE FROM settings WHERE key = 'auth.deviceSecret'").run();
+
+    backup.restoreSnapshot(snap.name, true);
+    expect(settingsRepo.getKV("auth.deviceSecret")).toBe("from-the-old-box");
+  });
+
+  it("keeps this box's push key pair, which its kept subscriptions were made for", async () => {
+    const { ensureVapid } = await import("@/lib/push");
+    const { pushRepo } = await import("@/lib/db/repos");
+    settingsRepo.updateApp({ vapid: null });
+    // An early snapshot, from before notifications were ever turned on.
+    const early = backup.writeSnapshot("weekly");
+    const live = ensureVapid();
+    pushRepo.add({ endpoint: "https://push.example/abc", keys: { p256dh: "p", auth: "a" } }, "owner");
+
+    backup.restoreSnapshot(early.name, true);
+    expect(pushRepo.list().map((r) => r.endpoint)).toContain("https://push.example/abc");
+    expect(settingsRepo.getApp().vapid).toEqual(live);
+  });
+
+  it("takes the snapshot's push key pair when this box has none", () => {
+    const pair = { publicKey: "pub-from-snapshot", privateKey: "priv-from-snapshot" };
+    settingsRepo.updateApp({ vapid: pair });
+    const snap = backup.writeSnapshot("manual");
+    settingsRepo.updateApp({ vapid: null });
+
+    backup.restoreSnapshot(snap.name, true);
+    expect(settingsRepo.getApp().vapid).toEqual(pair);
+  });
+
   it("puts an older snapshot's subtasks back on their parent's list", () => {
     const parent = tasksRepo.create({ title: "plan the party", space: "joint" });
     const child = tasksRepo.create({ title: "order the cake", parentId: parent.id, space: "joint" });

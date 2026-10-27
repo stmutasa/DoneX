@@ -247,6 +247,9 @@ export function outboxSessionRole(): SessionRole | null {
 // Other tabs' writes arrive as storage events; keep this tab's copy current.
 function onStorage(e: StorageEvent): void {
   if (e.key !== null && e.key !== QUEUE_KEY && e.key !== ROLE_KEY) return;
+  // Only clearLocalDataOnSignOut removes these: another tab signed out, so a
+  // replay running here stops too.
+  if (e.key === null || e.newValue === null) clearEpoch += 1;
   if (!memoryOnly) queue = readJson<OutboxOp[]>(QUEUE_KEY, []);
   knownRole = readRole();
   // Another tab saw a different sign-in, or a sign-out: this tab's answer is
@@ -641,6 +644,15 @@ let clearEpoch = 0;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
+/**
+ * Whether a sign-out cleared the queue while this replay waited on the
+ * server: in this tab (the epoch moved), or in another (the op has gone from
+ * storage, and only a clear removes an op the lock holder is sending).
+ */
+function clearedUnder(epoch: number, opId: string): boolean {
+  return epoch !== clearEpoch || !loadQueue().some((o) => o.id === opId);
+}
+
 /** Whose session the cookie is right now, asked of the server and never of a cache. */
 async function liveSessionRole(): Promise<SessionRole | null> {
   try {
@@ -730,10 +742,14 @@ async function replay(renew: () => void): Promise<SyncResult> {
             /* create landed; references just won't remap */
           }
         }
-        if (epoch !== clearEpoch) break; // signed out meanwhile: the queue is gone
+        if (clearedUnder(epoch, next.id)) break;
         if (serverId && op.offlineId) {
           map[op.offlineId] = serverId;
-          writeJson(MAP_KEY, map);
+          // Merge: entries written since this replay read the map stay.
+          writeJson(MAP_KEY, {
+            ...readJson<Record<string, string>>(MAP_KEY, {}),
+            [op.offlineId]: serverId,
+          });
         }
         removeOp(next.id);
         synced += 1;
@@ -741,7 +757,7 @@ async function replay(renew: () => void): Promise<SyncResult> {
         if (res.status === 401) forgetSessionRole();
         break; // keep the op, retry later
       } else {
-        if (epoch !== clearEpoch) break;
+        if (clearedUnder(epoch, next.id)) break;
         // The server has rejected it definitively (deleted elsewhere,
         // validation). Keeping it would poison the queue forever.
         removeOp(next.id);
@@ -784,14 +800,17 @@ async function inTurn(deadline: number): Promise<void> {
     );
     return;
   }
-  while (!(await takeLease())) {
-    if (Date.now() >= deadline) return;
-    await sleep(100);
-  }
-  try {
-    await replay(renewLease);
-  } finally {
-    releaseLease();
+  // Never start once the flush has given up: by then the sign-out has moved on.
+  while (Date.now() < deadline) {
+    if (await takeLease()) {
+      try {
+        if (Date.now() < deadline) await replay(renewLease);
+      } finally {
+        releaseLease();
+      }
+      return;
+    }
+    await sleep(Math.min(100, deadline - Date.now()));
   }
 }
 

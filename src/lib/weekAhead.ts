@@ -108,6 +108,31 @@ export function fallbackWeekAhead(ctx: WeekAheadContext, partnerName: string): s
   return first ? `${head} Starting with “${first.title}”.` : head;
 }
 
+// ── The last one sent ──────────────────────────────────────────────────────
+
+/** The last one each person was sent, so it survives a dismissed banner. */
+export interface LastWeekAhead {
+  text: string;
+  /** the Monday the summary looked ahead from */
+  weekOf: string;
+  at: string;
+}
+
+/** The settings key it is kept under, per person. */
+export const kvLastWeekAhead = (role: SessionRole) => `joint.weekAhead.${role}`;
+
+/** What that key holds, or null when there is nothing usable. */
+export function parseLastWeekAhead(raw: string | null): LastWeekAhead | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LastWeekAhead>;
+    if (typeof parsed.text !== "string" || !parsed.text) return null;
+    return { text: parsed.text, weekOf: parsed.weekOf ?? "", at: parsed.at ?? "" };
+  } catch {
+    return null;
+  }
+}
+
 /** Is there enough here to be worth a Sunday evening notification? */
 export function worthSending(ctx: WeekAheadContext): boolean {
   return ctx.mine.length + ctx.ours.length + ctx.events.length > 0;

@@ -11,33 +11,25 @@ import { generateWeekAhead } from "@/lib/ai";
 import { settingsRepo } from "@/lib/db/repos";
 import { ownerEvents, partnerEvents } from "@/lib/jointFeeds";
 import { isoFromLocal } from "@/lib/utils";
-import { weekWindow } from "@/lib/weekAhead";
+import {
+  kvLastWeekAhead,
+  parseLastWeekAhead,
+  weekWindow,
+  type LastWeekAhead,
+} from "@/lib/weekAhead";
 import type { AppSettings, CalendarEvent, SessionRole } from "@/lib/types";
 
-/** The last one each person was sent, so it survives a dismissed banner. */
-export interface LastWeekAhead {
-  text: string;
-  weekOf: string;
-  at: string;
-}
+export type { LastWeekAhead } from "@/lib/weekAhead";
 
-const kvLast = (role: SessionRole) => `joint.weekAhead.${role}`;
+/** The week key the scheduler claimed, as the build before v1.33.0 wrote it. */
 export const kvLastWeekAheadWeek = (role: SessionRole) => `sched.lastWeekAhead.${role}`;
 
 export function readLastWeekAhead(role: SessionRole): LastWeekAhead | null {
-  const raw = settingsRepo.getKV(kvLast(role));
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<LastWeekAhead>;
-    if (typeof parsed.text !== "string" || !parsed.text) return null;
-    return { text: parsed.text, weekOf: parsed.weekOf ?? "", at: parsed.at ?? "" };
-  } catch {
-    return null;
-  }
+  return parseLastWeekAhead(settingsRepo.getKV(kvLastWeekAhead(role)));
 }
 
 export function writeLastWeekAhead(role: SessionRole, entry: LastWeekAhead): void {
-  settingsRepo.setKV(kvLast(role), JSON.stringify(entry));
+  settingsRepo.setKV(kvLastWeekAhead(role), JSON.stringify(entry));
 }
 
 /**

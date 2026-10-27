@@ -11,7 +11,7 @@ import {
   startOfISOWeek,
 } from "date-fns";
 import type { RecurrenceRule } from "@/lib/types";
-import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE } from "@/lib/quickTokens";
+import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE, maskLinks } from "@/lib/quickTokens";
 import { localDateKey, localTimeKey } from "@/lib/utils";
 
 export function toDate(value: string | Date): Date {
@@ -34,20 +34,65 @@ export function dateKey(value: string | Date = new Date()): string {
 // as a day in that zone and compared with today there. Unset (the server, or
 // before the app knows the zone), everything reads in the device's zone.
 
-let displayTz: string | null = null;
+// In the browser the zone is remembered, so a cold start reads all-day dates
+// right from the first render instead of waiting for /api/auth/me.
+
+const DISPLAY_TZ_KEY = "donex.displayTz";
+
+/** The zone, or null when it is empty or one this runtime doesn't know. */
+function knownZone(tz: string | null | undefined): string | null {
+  if (!tz) return null;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return null;
+  }
+}
+
+function storedZone(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return knownZone(window.localStorage.getItem(DISPLAY_TZ_KEY));
+  } catch {
+    return null;
+  }
+}
+
+let displayTz: string | null = storedZone();
+const zoneListeners = new Set<() => void>();
 
 /** Set the zone all-day dates are read in, or null for the device's own. */
 export function setDisplayTimeZone(tz: string | null): void {
-  let next = tz || null;
-  if (next) {
+  const next = knownZone(tz);
+  if (next === displayTz) return;
+  displayTz = next;
+  if (typeof window !== "undefined") {
     try {
-      new Intl.DateTimeFormat("en-US", { timeZone: next });
+      if (next) window.localStorage.setItem(DISPLAY_TZ_KEY, next);
+      else window.localStorage.removeItem(DISPLAY_TZ_KEY);
     } catch {
-      next = null; // not a zone this runtime knows
+      // storage blocked: the zone still holds for this page load
     }
   }
-  displayTz = next;
+  // Told after the current render, since this may be called from one.
+  queueMicrotask(() => zoneListeners.forEach((listener) => listener()));
 }
+
+// Unset is null (not the device's resolved zone): allDayKey then reads in the device's own zone.
+export function getDisplayTimeZone(): string | null {
+  return displayTz;
+}
+
+export function subscribeDisplayTimeZone(listener: () => void): () => void {
+  zoneListeners.add(listener);
+  return () => {
+    zoneListeners.delete(listener);
+  };
+}
+
+// The React hook over this store lives in src/hooks/useDisplayTimeZone.ts, so
+// this module stays importable from server code (route handlers).
 
 /** Midnight in the display zone: how an all-day date is stored. */
 function isDisplayMidnight(d: Date): boolean {
@@ -319,17 +364,19 @@ const WHEN_PATTERNS: [RegExp, string][] = [
  *  same token grammar (quickTokens.ts), so the chips match what is saved. */
 export function parseQuickPreview(raw: string): QuickPreview {
   const input = raw.normalize("NFC");
+  // Links are hidden while reading, as on the server, so no chip comes from one.
+  const { masked, unmask } = maskLinks(input);
   const tags: string[] = [];
   let project: string | null = null;
   let priority: QuickPreview["priority"] = null;
 
-  let title = input
+  const scanned = masked
     .replace(TAG_RE, (_m, _s, name: string) => {
       tags.push(name);
       return " ";
     })
     .replace(PROJECT_RE, (_m, _s, quoted: string | undefined, word: string | undefined) => {
-      const name = (quoted ?? word ?? "").trim();
+      const name = unmask((quoted ?? word ?? "").trim());
       if (name && project === null) project = name;
       return " ";
     })
@@ -339,10 +386,11 @@ export function parseQuickPreview(raw: string): QuickPreview {
     })
     .replace(/\s+/g, " ")
     .trim();
+  let title = unmask(scanned);
 
   let when: string | null = null;
   for (const [re, label] of WHEN_PATTERNS) {
-    if (re.test(title)) {
+    if (re.test(scanned)) {
       when = label;
       break;
     }

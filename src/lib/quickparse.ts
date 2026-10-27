@@ -8,7 +8,7 @@
 import * as chrono from "chrono-node";
 import { tzOffset } from "@date-fns/tz";
 import type { Priority, RecurrenceRule, TaskDraft } from "@/lib/types";
-import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE } from "@/lib/quickTokens";
+import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE, maskLinks } from "@/lib/quickTokens";
 import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, localTimeKey } from "@/lib/utils";
 
 export interface QuickAddMatch {
@@ -171,7 +171,8 @@ function cleanTitle(text: string): string {
 
 export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddResult {
   // One form for accented text, so "café" typed either way reads the same.
-  let text = input.normalize("NFC");
+  const { masked, unmask } = maskLinks(input.normalize("NFC"));
+  let text = masked;
   const matchedText: QuickAddMatch = { tags: [] };
 
   text = text.replace(TAG_RE, (_m, _lead: string, tag: string) => {
@@ -182,7 +183,7 @@ export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddRe
   text = text.replace(
     PROJECT_RE,
     (_m, _lead: string, quoted: string | undefined, word: string | undefined) => {
-      const name = (quoted ?? word ?? "").trim();
+      const name = unmask((quoted ?? word ?? "").trim());
       if (name && matchedText.project === undefined) matchedText.project = name;
       return " ";
     },
@@ -214,7 +215,10 @@ export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddRe
   // typed (not when the sync happens) keeps the date honest.
   const refInstant = ref && !Number.isNaN(ref.getTime()) ? ref : new Date();
   const offsetMinutes = tzOffset(tz, refInstant);
-  const results = chrono.parse(text, { instant: refInstant, timezone: offsetMinutes }, { forwardDate: true });
+  // chrono's own forwardDate compares against a clock shifted into tz, so in a
+  // process running in UTC a time a few hours gone stayed "today". Dates are
+  // moved forward below instead, on the real instant.
+  const results = chrono.parse(text, { instant: refInstant, timezone: offsetMinutes }, { forwardDate: false });
   if (results.length) {
     const result = results[0];
     const preceding = text.slice(0, result.index);
@@ -228,15 +232,31 @@ export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddRe
     // is an hour out on the far side of a DST change. So rebuild the instant
     // from the wall-clock date and time in tz, unless the text gave a real
     // instant itself: an explicit zone ("3pm PT") or a span ("in 2 hours").
-    const { dateKey, time } = wallClock(result.start);
-    if (result.start.isCertain("hour")) {
-      dueAt = result.start.isCertain("timezoneOffset")
-        ? result.date().toISOString()
-        : isoFromLocal(dateKey, time, tz);
-      allDay = false;
-    } else {
-      dueAt = isoFromLocal(dateKey, "00:00", tz);
-      allDay = true;
+    const s = result.start;
+    const timed = s.isCertain("hour");
+    const exact = timed && s.isCertain("timezoneOffset");
+    const { dateKey, time } = wallClock(s);
+    const at = (key: string, shiftDays = 0) =>
+      exact
+        ? new Date(result.date().getTime() + shiftDays * 86_400_000).toISOString()
+        : isoFromLocal(key, timed ? time : "00:00", tz);
+    dueAt = at(dateKey);
+    allDay = !timed;
+
+    // A date that has already gone, when the text left room for a later one,
+    // means the next one: "3pm" once 3pm has passed is tomorrow, "friday 2pm"
+    // late on a Friday is next week, "march 3" in April is next year. A whole
+    // day only counts as gone once it is over, and a time once its minute is.
+    const refMinute = Math.floor(refInstant.getTime() / 60_000) * 60_000;
+    const gone = timed ? Date.parse(dueAt) < refMinute : dateKey < localDateKey(refInstant, tz);
+    if (gone) {
+      if (!s.isCertain("day") && !s.isCertain("weekday")) {
+        dueAt = at(addDaysToDateKey(dateKey, 1), 1);
+      } else if (s.isCertain("weekday") && !s.isCertain("day")) {
+        dueAt = at(addDaysToDateKey(dateKey, 7), 7);
+      } else if (s.isCertain("month") && !s.isCertain("year") && !exact) {
+        dueAt = at(`${Number(dateKey.slice(0, 4)) + 1}${dateKey.slice(4)}`);
+      }
     }
   }
 
@@ -253,7 +273,7 @@ export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddRe
     }
   }
 
-  const title = cleanTitle(text);
+  const title = unmask(cleanTitle(text));
 
   const draft: TaskDraft = { title };
   if (dueAt) draft.dueAt = dueAt;

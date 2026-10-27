@@ -80,7 +80,7 @@ export function BackupsSection() {
       toast.success(`Restored ${n} rows. Reload to see them.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Restore failed");
-      // A failed restore can still have written its safety copy.
+      // Refresh either way, so the list shows what the server holds now.
       void mutate();
     } finally {
       setBusy(false);

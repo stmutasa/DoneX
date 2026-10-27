@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, StatsSummary, Task } from "@/lib/types";
 import { greeting, isOverdue, longDateLine } from "@/lib/format";
+import { useDisplayTimeZone } from "@/hooks/useDisplayTimeZone";
 import { isUrgent } from "@/lib/deadline";
 import { rotatingSample, rotationSlot } from "@/lib/rotate";
 import { Page } from "@/components/shell/Page";
@@ -20,6 +21,8 @@ import { CalendarStrip } from "@/components/today/CalendarStrip";
 import { TripCard } from "@/components/today/TripCard";
 
 const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+/** The due-time wake-up below never fires more often than this. */
+const MIN_WAKE_MS = 30_000;
 
 export default function TodayPage() {
   const { data, error, isLoading, mutate } = useSWR<{ tasks: Task[] }>(
@@ -41,13 +44,15 @@ export default function TodayPage() {
   const [quickOpen, setQuickOpen] = useState(false);
   const [now, setNow] = useState<Date | null>(null);
   const [slot, setSlot] = useState(() => rotationSlot());
+  const lastWake = useRef(0);
 
   useEffect(() => setNow(new Date()), []);
 
   // Advance the Anytime rotation while the app sits open on the home screen,
   // and keep the clock with it: the greeting, the date line, the briefing
   // order and which project tasks count as urgent all read `now`. Within the
-  // same hour the old Date is kept, so a tick doesn't re-render the list.
+  // same hour the old Date is kept, so a tick doesn't re-render the list; a
+  // timed task falling due moves it separately, below.
   useEffect(() => {
     const tick = () => {
       setSlot(rotationSlot());
@@ -73,13 +78,37 @@ export default function TodayPage() {
   const projects = projectData?.projects ?? [];
   // Project work lives on the Projects tab — except when it's about to bite:
   // overdue, due today, or a deadline landing by tomorrow.
+  // All-day dates are read in the app's zone once it is known; re-group then.
+  const displayTz = useDisplayTimeZone();
   const all = useMemo(
     () =>
       (data?.tasks ?? []).filter(
-        (t) => !t.parentId && (!t.projectId || isUrgent(t, deviceTz, now ?? undefined)),
+        (t) =>
+          !t.parentId && (!t.projectId || isUrgent(t, displayTz ?? deviceTz, now ?? undefined)),
       ),
-    [data, now],
+    [data, now, displayTz],
   );
+
+  // The Overdue/Today split reads the live clock but only recomputes with
+  // `now`, which otherwise moves on the hour. Wake once when the next open
+  // timed task falls due, so it changes groups on time.
+  useEffect(() => {
+    const at = Date.now();
+    let nextDue = Infinity;
+    for (const t of all) {
+      if (t.status === "done" || t.allDay || !t.dueAt) continue;
+      const due = Date.parse(t.dueAt);
+      if (due > at && due < nextDue) nextDue = due;
+    }
+    // Later than a day out, the hourly tick re-arms this before it matters.
+    if (!Number.isFinite(nextDue) || nextDue - at > 86_400_000) return;
+    const delay = Math.max(nextDue - at + 50, lastWake.current + MIN_WAKE_MS - at);
+    const id = window.setTimeout(() => {
+      lastWake.current = Date.now();
+      setNow(new Date());
+    }, delay);
+    return () => window.clearTimeout(id);
+  }, [all]);
 
   const { overdue, today, done } = useMemo(() => {
     const o: Task[] = [];
@@ -91,7 +120,7 @@ export default function TodayPage() {
       else t.push(task);
     }
     return { overdue: o, today: t, done: d };
-  }, [all]);
+  }, [all, displayTz]);
 
   const anytime = useMemo(
     () =>

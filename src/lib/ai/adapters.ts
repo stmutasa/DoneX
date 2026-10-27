@@ -173,7 +173,7 @@ export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason:
 }
 
 const OWNER_FIX =
-  /no API key (saved|set)|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|x-api-key|authentication_error|API key not valid|API key expired|permission_error|does not have permission|permission denied|credit balance|HTTP 40[13]\b/i;
+  /no API key (saved|set)|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|x-api-key|authentication_error|API key not valid|API key expired|permission_error|does not have permission|permission denied|insufficient permissions|Missing scopes|account_deactivated|has been deactivated|credit balance|reached your specified API usage limits|HTTP 40[13]\b/i;
 
 /**
  * OpenAI's words for an account out of credit. Gemini uses the same words for

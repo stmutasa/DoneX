@@ -205,15 +205,19 @@ function migrate(db: Database.Database): void {
     // Older rows can't say, and count as the owner's.
     db.exec("ALTER TABLE completions ADD COLUMN completed_by TEXT NOT NULL DEFAULT 'owner'");
   }
-  // Data fixes that need to run once per database, tracked in user_version.
-  const version = db.pragma("user_version", { simple: true }) as number;
-  if (version < 1) {
-    // Older builds filed the subtasks of a joint task as personal, which left
-    // the partner unable to tick them.
-    db.transaction(() => {
-      alignSubtaskSpaces(db);
-      db.pragma("user_version = 1");
-    })();
+  // Data fixes, each behind a read-only probe so opening takes no write lock
+  // when there is nothing to do. They are checked on every open rather than
+  // marked done once, because a rollback to an older build can bring the old
+  // mistakes back.
+  // Older builds filed the subtasks of a joint task as personal, which left
+  // the partner unable to tick them.
+  const misfiled = db
+    .prepare("SELECT 1 FROM tasks c JOIN tasks p ON p.id = c.parent_id WHERE c.space <> p.space LIMIT 1")
+    .get();
+  if (misfiled) db.transaction(() => alignSubtaskSpaces(db))();
+  // An empty parent id hid a task from every list; it means no parent.
+  if (db.prepare("SELECT 1 FROM tasks WHERE parent_id = '' LIMIT 1").get()) {
+    db.exec("UPDATE tasks SET parent_id = NULL WHERE parent_id = ''");
   }
 }
 

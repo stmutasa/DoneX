@@ -13,7 +13,7 @@ import type {
   TaskLocation,
   TaskPatch,
 } from "@/lib/types";
-import { toDateInput } from "@/lib/format";
+import { allDayKey, toDateInput } from "@/lib/format";
 import { addDaysToDateKey, isoFromLocal, localDateKey } from "@/lib/utils";
 
 export interface FormState {
@@ -36,19 +36,28 @@ export interface FormState {
 
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** "YYYY-MM-DD" for today on this device */
-export function todayKey(now: Date = new Date()): string {
+/**
+ * "YYYY-MM-DD" for today in `tz`, or on this device without one. Date-only
+ * picks are stored as all-day days in the app's zone, so they count from
+ * today there.
+ */
+export function todayKey(tz?: string, now: Date = new Date()): string {
+  if (tz) {
+    try {
+      return localDateKey(now, tz);
+    } catch {
+      /* unknown zone: fall back to the device's day */
+    }
+  }
   return format(now, "yyyy-MM-dd");
 }
 
-/** All-day dates are stored as midnight in the app's time zone, so read the day there. */
-function allDayKey(iso: string, tz: string): string {
-  if (Number.isNaN(new Date(iso).getTime())) return "";
-  try {
-    return localDateKey(iso, tz);
-  } catch {
-    return toDateInput(iso);
-  }
+/**
+ * The day an all-day due names. format.allDayKey is the one reader, so the
+ * editor, the row and the Upcoming groups always agree on it.
+ */
+function allDayDate(iso: string): string {
+  return Number.isNaN(new Date(iso).getTime()) ? "" : allDayKey(iso);
 }
 
 function allDayIso(dateKey: string, tz: string): string | null {
@@ -65,10 +74,10 @@ function timeInput(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : format(d, "HH:mm");
 }
 
+/** All-day dates are read in the display zone (format.setDisplayTimeZone). */
 export function stateFrom(
   task: Task | null | undefined,
   initial: Partial<TaskDraft> | undefined,
-  tz: string,
 ): FormState {
   const src = task ?? initial;
   const dueAt = src?.dueAt ?? null;
@@ -78,7 +87,7 @@ export function stateFrom(
     title: src?.title ?? "",
     notes: src?.notes ?? "",
     // Timed dues are instants and show in device time, like everywhere else.
-    dueDate: dueAt ? (allDay ? allDayKey(dueAt, tz) : toDateInput(dueAt)) : "",
+    dueDate: dueAt ? (allDay ? allDayDate(dueAt) : toDateInput(dueAt)) : "",
     dueTime: dueAt && !allDay ? timeInput(dueAt) : "",
     dueKind: src?.dueKind === "by" ? "by" : "on",
     allDay,
@@ -176,9 +185,13 @@ export function firstOccurrenceKey(rule: RecurrenceRule, today: string): string 
   return today;
 }
 
-/** A visible time for a date that had none: 09:00, or the next hour once 09:00 has passed today. */
+/**
+ * A visible time for a date that had none: 09:00, or the next hour once 09:00
+ * has passed today. A typed time is composed in device time (composeDue), so
+ * whether 09:00 has passed is judged by the device's day and clock too.
+ */
 export function defaultTime(dateKey: string, now: Date = new Date()): string {
   const hour = now.getHours();
-  if (dateKey !== todayKey(now) || hour < 9) return "09:00";
+  if (dateKey !== todayKey(undefined, now) || hour < 9) return "09:00";
   return hour >= 23 ? "23:59" : `${String(hour + 1).padStart(2, "0")}:00`;
 }

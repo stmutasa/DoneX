@@ -85,6 +85,8 @@ export default function AssistantPage() {
 
   const streamingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The server's id for the turn on screen, which is what Stop asks it to end.
+  const turnRef = useRef<string | null>(null);
   // A stopped turn is saved on the server as far as it got, which can be a
   // little further than the screen; catch up after the next reply.
   const behindRef = useRef(false);
@@ -106,8 +108,8 @@ export default function AssistantPage() {
     setReady(true);
   }, []);
 
-  // Leaving the page stops the reply: the server stops paying for rounds, and
-  // late callbacks can't toast over whatever page is showing.
+  // Leaving the page lets go of the reply (the server still finishes and saves
+  // it), so late callbacks can't toast over whatever page is showing.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const persist = useCallback((id: string) => {
@@ -140,6 +142,7 @@ export default function AssistantPage() {
         streamingRef.current = false;
         setStreaming(false);
       }
+      turnRef.current = null;
       behindRef.current = false;
       historyMissedRef.current = false;
       setConversationId(id);
@@ -203,6 +206,17 @@ export default function AssistantPage() {
     await postChatStream(
       { conversationId, message: text, mode: "chat" },
       {
+        // Sent first: the turn's id for Stop, and the conversation it is
+        // saved in, adopted at once so a failed or stopped first message
+        // doesn't leave its conversation orphaned.
+        onMeta: (meta) => {
+          if (!live() || abortRef.current !== controller) return;
+          turnRef.current = meta.turnId;
+          if (meta.conversationId !== conversationId) {
+            setConversationId(meta.conversationId);
+            persist(meta.conversationId);
+          }
+        },
         onToken: (chunk) => {
           if (!live()) return;
           acc += chunk;
@@ -261,6 +275,7 @@ export default function AssistantPage() {
     const owned = abortRef.current === controller;
     if (owned) {
       abortRef.current = null;
+      turnRef.current = null;
       streamingRef.current = false;
       setStreaming(false);
     }
@@ -291,6 +306,18 @@ export default function AssistantPage() {
     void globalMutate(
       matchKey("/api/tasks", "/api/stats", "/api/notes", "/api/inbox", "/api/projects", "/api/chat/conversations"),
     );
+  };
+
+  /** Stop is the one thing that ends a turn early on the server; switching
+   *  chats or leaving only lets go of the stream. */
+  const stopReply = () => {
+    const turnId = turnRef.current;
+    if (turnId) {
+      void chatApi.stop(turnId).catch(() => {
+        /* already finished, or offline: nothing more to do */
+      });
+    }
+    abortRef.current?.abort();
   };
 
   const startNew = async () => {
@@ -390,7 +417,7 @@ export default function AssistantPage() {
           <button
             type="button"
             aria-label={streaming ? "Stop generating" : "Send message"}
-            onClick={() => (streaming ? abortRef.current?.abort() : void send(input))}
+            onClick={() => (streaming ? stopReply() : void send(input))}
             disabled={!streaming && !input.trim()}
             className={cn(
               "grid h-11 w-11 shrink-0 place-items-center rounded-full transition-all active:scale-95",

@@ -31,8 +31,14 @@ export function ProjectSheet({
   const [icon, setIcon] = useState<string>(DEFAULT_PROJECT_ICON);
   const [color, setColor] = useState<string>(DEFAULT_PROJECT_COLOR);
   const [saving, setSaving] = useState(false);
-  // A second Enter can land before the re-render that marks us saving.
+  // A second Enter can land before the re-render that marks us saving, or in
+  // the moment the sheet takes to slide away. So a successful save keeps the
+  // guard up until the sheet opens again; only a failed one lets go of it.
   const savingRef = useRef(false);
+
+  useEffect(() => {
+    if (open) savingRef.current = false;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -57,9 +63,9 @@ export function ProjectSheet({
       onSaved?.(res.project);
       onClose();
     } catch (err) {
+      savingRef.current = false;
       toast.error(err instanceof Error ? err.message : "Could not save project");
     } finally {
-      savingRef.current = false;
       setSaving(false);
     }
   };

@@ -43,8 +43,11 @@ import {
   type DigestSchedule,
 } from "@/lib/jointDigest";
 import {
+  kvLastWeekAhead,
   normalizeWeekTime,
+  parseLastWeekAhead,
   shouldSendWeekAhead,
+  weekWindow,
   type WeekAheadSchedule,
 } from "@/lib/weekAhead";
 import { nudgeText, nudgesFor } from "@/lib/nudges";
@@ -75,6 +78,8 @@ const BACKUP_DAY = 0;
 const BACKUP_TIME = "21:00";
 /** Per person, so the two digests can run hours apart. */
 const kvLastDigestDay = (role: SessionRole) => `sched.lastJointDigest.${role}`;
+/** The week each person's Sunday week-ahead was last claimed for, on the clock that sent it. */
+const kvWeekAheadWeek = (role: SessionRole) => `sched.weekAheadWeek.${role}`;
 
 /** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
 const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
@@ -507,19 +512,32 @@ async function runWeekAhead(settings: AppSettings, now: Date, trip: Whereabouts)
       // The week of the clock that decides the send: Sunday evening on a trip
       // can already be Monday at home, which is next week's key.
       const weekKey = weekKeyOfDay(slot.dateKey);
-      const key = kvLastWeekAheadWeek(role);
+      // The key before v1.33.0 named the home week at the moment of sending,
+      // which a trip west of home pushed a week ahead (B176). It only counts
+      // as "this very Sunday has gone out" when the summary kept from that
+      // send looks ahead from tomorrow.
+      const legacy = settingsRepo.getKV(kvLastWeekAheadWeek(role));
+      const sentThisSunday =
+        legacy === weekKey &&
+        parseLastWeekAhead(settingsRepo.getKV(kvLastWeekAhead(role)))?.weekOf ===
+          weekWindow(slot.dateKey).fromKey;
+      const lastSent =
+        settingsRepo.getKV(kvWeekAheadWeek(role)) ?? (sentThisSunday ? legacy : null);
       if (
         !shouldSendWeekAhead({
           schedule,
           nowTime: clock.time,
           weekday: slot.weekday,
           weekKey,
-          lastSent: settingsRepo.getKV(key),
+          lastSent,
         })
       ) {
         continue;
       }
-      settingsRepo.setKV(key, weekKey); // claim the slot before the slow part
+      // Claim the slot before the slow part; the old key is kept in step for
+      // a build that still reads it.
+      settingsRepo.setKV(kvWeekAheadWeek(role), weekKey);
+      settingsRepo.setKV(kvLastWeekAheadWeek(role), weekKey);
 
       const { text } = await buildWeekAhead(role, slot.dateKey);
       // A quiet week for this person is not worth a Sunday evening buzz.
@@ -658,11 +676,14 @@ async function runWeeklyReview(settings: AppSettings, now: Date): Promise<void> 
     // have finished — never the one that has only just begun.
     const week = reviewedWeek(dateLocal);
     const weekKey = week.weekKey;
-    // The old key named the week the send fell in, which is the same week
-    // only on a Sunday; any other day it would skip one review on upgrade.
+    // The old key named the week the send fell in. It proves this review has
+    // gone out only when that is the week of the send day itself (on a Sunday
+    // the same week as the one reviewed; any other day, the old build's own
+    // send moments before a deploy). Otherwise it is ignored.
+    const legacy = settingsRepo.getKV(KV_LAST_REVIEW_WEEK);
     const last =
       settingsRepo.getKV(KV_LAST_REVIEWED_WEEK) ??
-      (weeklyDay === 0 ? settingsRepo.getKV(KV_LAST_REVIEW_WEEK) : null);
+      (legacy !== null && legacy === weekKeyOfDay(dateLocal) ? weekKey : null);
     if (last === weekKey) return;
     settingsRepo.setKV(KV_LAST_REVIEWED_WEEK, weekKey);
 

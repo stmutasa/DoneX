@@ -118,6 +118,23 @@ describe("googleFetch", () => {
 });
 
 describe("exchangeCode", () => {
+  it("bounds the userinfo call as well as the token call", async () => {
+    const seen: { url: string; signal: AbortSignal | null | undefined }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        seen.push({ url: String(url), signal: init.signal });
+        const body = String(url).includes("userinfo")
+          ? { email: "first@example.com" }
+          : { access_token: "a", refresh_token: "r", expires_in: 3600 };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    await exchangeCode("code", new Request("https://donex.example/api/google/callback"));
+    expect(seen.map((s) => s.url.includes("userinfo"))).toEqual([false, true]);
+    for (const call of seen) expect(call.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("keeps Google's error code ahead of its description", async () => {
     tokenEndpoint({ error: "invalid_client", error_description: "Unauthorized" }, () => {}, 401);
     const request = new Request("https://donex.example/api/google/callback");

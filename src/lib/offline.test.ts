@@ -616,6 +616,51 @@ describe("outbox across sessions and tabs", () => {
       expect(store.getItem("donex.outbox.v1")).toBeNull();
     });
 
+    it("stops another tab's replay when this tab signs out", async () => {
+      stubCaches([]);
+      const other = await openTab();
+      other.noteSessionRole("owner");
+      other.enqueueFailedRequest("POST", "/api/tasks", quick("One"));
+      other.enqueueFailedRequest("POST", "/api/tasks", quick("Two"));
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const writes = serve({ role: "owner", hold: (c) => (JSON.parse(c.body ?? "{}").quick === "One" ? gate : undefined) });
+      const running = other.syncOutbox();
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+
+      // This tab gives up waiting for the other's lease, then signs out.
+      const me = await openTab();
+      me.noteSessionRole("owner");
+      expect(await me.flushOutboxBeforeSignOut(100)).toBe(2);
+      me.forgetSessionRole();
+      await me.clearLocalDataOnSignOut();
+
+      release();
+      await running;
+      expect(writes).toHaveLength(1);
+      expect(store.getItem("donex.outbox.map.v1")).toBeNull();
+      expect(store.getItem("donex.outbox.v1")).toBeNull();
+    });
+
+    it("merges the id map instead of overwriting entries written meanwhile", async () => {
+      const tab = await openTab();
+      tab.noteSessionRole("owner");
+      const created = tab.enqueueFailedRequest("POST", "/api/tasks", quick("One")) as { task: Task };
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const writes = serve({ role: "owner", hold: () => gate });
+      const running = tab.syncOutbox();
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      store.setItem("donex.outbox.map.v1", JSON.stringify({ off_elsewhere: "srv_x" }));
+      release();
+      await running;
+      expect(JSON.parse(store.getItem("donex.outbox.map.v1") ?? "{}")).toEqual({
+        off_elsewhere: "srv_x",
+        [created.task.id]: "srv_1",
+      });
+    });
+
     it("keeps the other role's queued ops, and the id map entries they need", async () => {
       stubCaches([]);
       const owner = await openTab();

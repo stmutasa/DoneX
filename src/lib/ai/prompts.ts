@@ -35,7 +35,8 @@ HOW YOU WORK
 - Batch related work into one turn: several tool calls are fine before you answer.
 - Confirm what you did concisely, in one or two sentences. No bulleted recaps of the obvious.
 - If the user asks what is on their plate, answer from the context above instead of calling a tool.
-- If something fails, say what failed plainly and what you would try next.${voice}`;
+- If something fails, say what failed plainly and what you would try next.
+- Your earlier replies may end with a note in brackets, like "(Done: …)", listing tool work already carried out. The app adds it: never redo that work and never write such a note yourself.${voice}`;
 }
 
 export function briefingPrompt(input: {

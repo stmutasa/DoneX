@@ -61,18 +61,23 @@ export function NoteEditor({
     savedRef.current = note;
   }, [note, open]);
 
-  /** Returns true only when the note actually reached the server. */
-  const persist = useCallback(async (): Promise<boolean> => {
+  /** Returns true only when the note actually reached the server. `nextItems`
+   *  stands in for `items` when it holds an item not yet in state. */
+  const persist = useCallback(async (nextItems: ChecklistItem[] = items): Promise<boolean> => {
     if (!note) return false;
     setSaving(true);
     try {
       const { note: saved } = await notesApi.update(note.id, {
         title,
         content,
-        items,
+        items: nextItems,
         color,
         pinned,
       });
+      if (nextItems !== items) {
+        setItems(nextItems);
+        setItemDraft("");
+      }
       setSavedAt(saved.updatedAt);
       setDirty(false);
       savedRef.current = saved;
@@ -87,10 +92,18 @@ export function NoteEditor({
     }
   }, [note, title, content, items, color, pinned, onChanged, toast]);
 
+  /** The items plus the list item still in the box: it only becomes an item
+   *  on Enter or blur, and Escape or a tap on Save/Archive gets neither. */
+  const withDraftItem = (): { nextItems: ChecklistItem[]; pending: boolean } => {
+    const text = itemDraft.trim();
+    if (note?.kind !== "checklist" || !text) return { nextItems: items, pending: false };
+    return { nextItems: [...items, { id: newItemId(), text, done: false }], pending: true };
+  };
+
   // Save puts the note away. A failed write keeps the editor open so what you
   // typed is still there to retry, rather than vanishing with the sheet.
   const saveAndClose = async () => {
-    if (await persist()) onClose(savedRef.current);
+    if (await persist(withDraftItem().nextItems)) onClose(savedRef.current);
   };
 
   const touch = () => setDirty(true);
@@ -103,7 +116,8 @@ export function NoteEditor({
     if (closingRef.current) return;
     closingRef.current = true;
     try {
-      if (dirty && !(await persist())) {
+      const { nextItems, pending } = withDraftItem();
+      if ((dirty || pending) && !(await persist(nextItems))) {
         const discard = await confirm({
           title: "Close without saving?",
           message: "This note could not be saved. If you close it now, your changes are lost.",
@@ -132,8 +146,9 @@ export function NoteEditor({
     if (!note) return;
     try {
       // Unsaved edits travel with the archive, so archiving never drops them.
+      const { nextItems, pending } = withDraftItem();
       const { note: saved } = await notesApi.update(note.id, {
-        ...(dirty ? { title, content, items, color, pinned } : {}),
+        ...(dirty || pending ? { title, content, items: nextItems, color, pinned } : {}),
         archived: !note.archived,
       });
       setDirty(false);

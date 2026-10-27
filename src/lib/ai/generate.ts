@@ -898,58 +898,68 @@ async function triageOnce(id: string): Promise<InboxItem> {
         patch.priority = parsed.update.priority;
         changes.push(`priority ${PRIORITY_META[parsed.update.priority].short}`);
       }
-      if (parsed.update.note) {
-        patch.notes = appendUpdateNote(target.notes, parsed.update.note, todayKey);
-        if (changes.length === 0) changes.push("added a note");
+
+      if (target.space === "joint") {
+        // The partner reads the shared list too, so news from the owner's own
+        // mail or texts never lands there unseen: nothing is applied and no
+        // summary is copied. The card names the task and the change instead.
+        suggestion.action = "task";
+        suggestion.reason =
+          `News for the shared task “${target.title.slice(0, 40)}”${changes.length ? ` — ${changes.join(", ")}` : ""}`.slice(0, 90);
+      } else {
+        if (parsed.update.note) {
+          patch.notes = appendUpdateNote(target.notes, parsed.update.note, todayKey);
+          if (changes.length === 0) changes.push("added a note");
+        }
+        if (Object.keys(patch).length > 0) tasksRepo.update(target.id, patch);
+
+        suggestion.updatedTaskTitle = target.title;
+        suggestion.reason = `Updated “${target.title}”${changes.length ? ` — ${changes.join(", ")}` : ""}`.slice(0, 90);
+        inboxRepo.setSuggestion(id, suggestion);
+        inboxRepo.resolve(id, "resolved", target.id);
+        return inboxRepo.get(id) ?? { ...item, suggestion };
       }
-      if (Object.keys(patch).length > 0) tasksRepo.update(target.id, patch);
-
-      suggestion.updatedTaskTitle = target.title;
-      suggestion.reason = `Updated “${target.title}”${changes.length ? ` — ${changes.join(", ")}` : ""}`.slice(0, 90);
-      inboxRepo.setSuggestion(id, suggestion);
-      inboxRepo.resolve(id, "resolved", target.id);
-      return inboxRepo.get(id) ?? { ...item, suggestion };
-    }
-
-    // Couldn't match the task the model named. Keep the item in front of the
-    // user as a task to add: an "ignore" verdict would let the sweep dismiss
-    // news about something they are tracking.
-    const named = parsed.update.taskTitle || item.content;
-    // Settled like any other triaged task: the date the item gave, or a
-    // sensible one, and a real priority.
-    const deadline = settleDeadline({
-      dueAtLocal: parsed.update.dueAtLocal,
-      basis: parsed.update.dueAtLocal ? "stated" : "inferred",
-      why: "",
-      dueKind: "on",
-      todayKey,
-    });
-    const due = parseLocalDue(deadline.dueAtLocal, tz);
-    suggestion.action = "task";
-    suggestion.reason = parsed.update.taskTitle
-      ? `Mentions “${parsed.update.taskTitle.slice(0, 50)}” but no open task matches`
-      : "News about a task, but no open task matches";
-    suggestion.task = {
-      title: named.slice(0, 80),
-      notes: composeInboxNotes({
-        summary: parsed.update.note,
-        content: item.content,
-        fromLabel: item.fromLabel,
-        source: item.source,
-        receivedAt: item.receivedAt,
-        suggestedDeadline: deadline.inferred ? deadline.why : null,
-        tz,
-      }),
-      dueAt: due.dueAt,
-      dueKind: due.dueAt ? deadline.dueKind : "on",
-      allDay: due.allDay,
-      priority: settlePriority(parsed.update.priority),
-      projectId: null,
-      tags: [],
-    };
-    if (deadline.inferred) {
-      suggestion.dueSuggested = true;
-      suggestion.dueWhy = deadline.why;
+    } else {
+      // Couldn't match the task the model named. Keep the item in front of the
+      // user as a task to add: an "ignore" verdict would let the sweep dismiss
+      // news about something they are tracking.
+      const named = parsed.update.taskTitle || item.content;
+      // Settled like any other triaged task: the date the item gave, or a
+      // sensible one, and a real priority.
+      const deadline = settleDeadline({
+        dueAtLocal: parsed.update.dueAtLocal,
+        basis: parsed.update.dueAtLocal ? "stated" : "inferred",
+        why: "",
+        dueKind: "on",
+        todayKey,
+      });
+      const due = parseLocalDue(deadline.dueAtLocal, tz);
+      suggestion.action = "task";
+      suggestion.reason = parsed.update.taskTitle
+        ? `Mentions “${parsed.update.taskTitle.slice(0, 50)}” but no open task matches`
+        : "News about a task, but no open task matches";
+      suggestion.task = {
+        title: named.slice(0, 80),
+        notes: composeInboxNotes({
+          summary: parsed.update.note,
+          content: item.content,
+          fromLabel: item.fromLabel,
+          source: item.source,
+          receivedAt: item.receivedAt,
+          suggestedDeadline: deadline.inferred ? deadline.why : null,
+          tz,
+        }),
+        dueAt: due.dueAt,
+        dueKind: due.dueAt ? deadline.dueKind : "on",
+        allDay: due.allDay,
+        priority: settlePriority(parsed.update.priority),
+        projectId: null,
+        tags: [],
+      };
+      if (deadline.inferred) {
+        suggestion.dueSuggested = true;
+        suggestion.dueWhy = deadline.why;
+      }
     }
   } else {
     // dismiss / duplicate

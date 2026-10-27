@@ -8,7 +8,9 @@ import { requireOwner } from "@/lib/auth";
 import { notesRepo, settingsRepo } from "@/lib/db/repos";
 import { ownerTrips } from "@/lib/jointFeeds";
 import { PACKING_NOTICE_DAYS, activeTrip, packingList, upcomingTrip } from "@/lib/trips";
-import { newId } from "@/lib/utils";
+import { format } from "date-fns";
+import { keyToDate } from "@/lib/format";
+import { localDateKey, newId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +37,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No trip on the calendar to pack for" }, { status: 404 });
   }
 
-  const title = `Packing — ${trip.destination}`;
+  // A trip nothing names is told apart by the day it starts.
+  const title = trip.destination
+    ? `Packing — ${trip.destination}`
+    : `Packing — trip on ${format(keyToDate(trip.startDay ?? localDateKey(trip.start, settings.tz)), "MMM d")}`;
   const items = packingList(trip).map((text) => ({ id: newId(), text, done: false }));
 
   // Adding to an existing list beats making a second one with the same name.

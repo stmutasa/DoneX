@@ -143,19 +143,31 @@ function signDevice(payload: string): string {
   return crypto.createHmac("sha256", deviceSecret()).update(payload).digest("hex");
 }
 
-/** A fresh cookie value for one of the owner's devices: `id.owner.signature`. */
-export function mintOwnerDeviceCookie(): string {
-  const id = crypto.randomBytes(16).toString("hex");
-  return `${id}.owner.${signDevice(`${id}.owner`)}`;
+/** A device in use gets its mark re-dated once it is this old. */
+const DEVICE_RENEW_MS = 30 * DAY_MS;
+
+/** A cookie value for one of the owner's devices:
+ *  `id.owner.issuedAt.signature`, with issuedAt in seconds. */
+export function mintOwnerDeviceCookie(
+  id = crypto.randomBytes(16).toString("hex"),
+  issuedAt = Date.now(),
+): string {
+  const payload = `${id}.owner.${Math.floor(issuedAt / 1000)}`;
+  return `${payload}.${signDevice(payload)}`;
 }
 
-/** The id inside a genuine owner-device cookie, else null. */
-function ownerDeviceId(value: string | undefined): string | null {
-  const [id, role, sig, ...rest] = (value ?? "").split(".");
-  if (!id || role !== "owner" || !sig || rest.length) return null;
-  const expected = Buffer.from(signDevice(`${id}.${role}`));
+/** What a genuine owner-device cookie says, else null. The older undated
+ *  form, `id.owner.signature`, still counts, as if issued long ago. */
+function readOwnerDevice(value: string | undefined): { id: string; issuedAt: number } | null {
+  const parts = (value ?? "").split(".");
+  const sig = parts.pop();
+  const [id, role, issued] = parts;
+  if (!id || role !== "owner" || !sig || parts.length > 3) return null;
+  if (issued !== undefined && !/^\d+$/.test(issued)) return null;
+  const expected = Buffer.from(signDevice(parts.join(".")));
   const given = Buffer.from(sig);
-  return expected.length === given.length && crypto.timingSafeEqual(expected, given) ? id : null;
+  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
+  return { id, issuedAt: issued === undefined ? 0 : Number(issued) * 1000 };
 }
 
 /**
@@ -169,8 +181,8 @@ export function loginClient(
   forwardedFor: string | null,
   realIp: string | null = null,
 ): LoginClient {
-  const id = ownerDeviceId(deviceCookie);
-  if (id) return { key: `device:${id}`, trusted: true };
+  const device = readOwnerDevice(deviceCookie);
+  if (device) return { key: `device:${device.id}`, trusted: true };
   const first = (forwardedFor ?? "").split(",")[0]?.trim();
   return { key: `ip:${realIp?.trim() || first || "unknown"}`, trusted: false };
 }
@@ -185,12 +197,43 @@ function cookieOptions() {
   };
 }
 
-/** Marks this browser as one of the owner's; a no-op when it already is.
- *  Only ever for an owner session. */
-export async function rememberOwnerDevice(): Promise<void> {
+/**
+ * Marks this browser as one of the owner's, and re-dates the mark (with a
+ * fresh cookie lifetime) once it is a month old, so a device the owner keeps
+ * using never lapses along with one session. Only ever for an owner session.
+ */
+export async function rememberOwnerDevice(now = Date.now()): Promise<void> {
   const jar = await cookies();
-  if (ownerDeviceId(jar.get(DEVICE_COOKIE)?.value)) return;
-  jar.set(DEVICE_COOKIE, mintOwnerDeviceCookie(), cookieOptions());
+  const known = readOwnerDevice(jar.get(DEVICE_COOKIE)?.value);
+  if (known && now - known.issuedAt < DEVICE_RENEW_MS) return;
+  // Re-dating keeps the id, and with it the device's miss streak.
+  jar.set(DEVICE_COOKIE, mintOwnerDeviceCookie(known?.id, now), cookieOptions());
+}
+
+// ── PIN collisions ─────────────────────────────────────────────────────────
+// Each hash has its own salt, so only a sign-in with the shared PIN can tell
+// that the two PINs are the same. The note it leaves is tied to both hashes,
+// so changing either PIN retires it.
+
+const PIN_COLLISION_KEY = "auth.pinCollision";
+
+function pinPairRef(): string {
+  const settings = settingsRepo.getApp();
+  return crypto
+    .createHash("sha256")
+    .update(`${settings.pinHash}|${settings.joint.partnerPinHash}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/** Records that a PIN just matched both the owner's and the partner's hash. */
+export function notePinCollision(): void {
+  settingsRepo.setKV(PIN_COLLISION_KEY, pinPairRef());
+}
+
+/** Whether the current two PINs are known to be the same. */
+export function pinsCollide(): boolean {
+  return settingsRepo.getKV(PIN_COLLISION_KEY) === pinPairRef();
 }
 
 // ── Session helpers ────────────────────────────────────────────────────────
@@ -200,10 +243,10 @@ export async function createSession(role: "owner" | "partner" = "owner"): Promis
   const token = sessionsRepo.create(h.get("user-agent") ?? "", role);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, cookieOptions());
-  // Only the owner's sign-in makes a known device. The partner's makes this
-  // browser a stranger again, so her guesses at the owner's PIN share the cap.
+  // Only the owner's sign-in makes a known device. The partner's leaves an
+  // existing mark alone: on a shared device her guesses at the owner's PIN
+  // are held to that device's own streak, which her PIN never clears.
   if (role === "owner") await rememberOwnerDevice();
-  else jar.delete(DEVICE_COOKIE);
 }
 
 /** Ends this browser's session, and pushes to the device it signed up. */

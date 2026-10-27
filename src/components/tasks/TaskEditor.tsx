@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { fetcher, keys, projectsApi, tasksApi } from "@/lib/api";
 import type { Priority, Project, RecurrenceRule, SessionRole, Task, TaskDraft } from "@/lib/types";
+import { useDisplayTimeZone } from "@/hooks/useDisplayTimeZone";
 import { addDaysToDateKey, cn } from "@/lib/utils";
 import { useAutoGrow } from "@/hooks/useAutoGrow";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -61,15 +62,12 @@ export function TaskEditor({
     tz?: string;
   }>(open ? keys.me() : null, fetcher);
   // All-day dates are midnight in the app's time zone (settings.tz), not the
-  // device's. /api/auth/me carries it for both roles; until it does, the owner
-  // can read it from settings, and the device zone is the last resort.
-  const { data: settings } = useSWR<{ tz: string }>(
-    open && me?.role === "owner" && !me.tz ? keys.settings() : null,
-    fetcher,
-  );
-  const tz = me?.tz || settings?.tz || deviceTz;
+  // device's. They are read in the display zone (format.allDayKey), so write
+  // in that same zone; me.tz and then the device zone cover it being unset.
+  const displayZone = useDisplayTimeZone();
+  const tz = displayZone || me?.tz || deviceTz;
 
-  const [form, setForm] = useState<FormState>(() => stateFrom(task, initial, tz));
+  const [form, setForm] = useState<FormState>(() => stateFrom(task, initial));
   /** The form as it was opened, so a save sends only what changed. */
   const baseRef = useRef<FormState>(form);
   const [saving, setSaving] = useState(false);
@@ -94,7 +92,7 @@ export function TaskEditor({
 
   useEffect(() => {
     if (!open) return;
-    const next = stateFrom(task, initial, tz);
+    const next = stateFrom(task, initial);
     baseRef.current = next;
     setForm(next);
     setSubtasks(task?.subtasks ?? []);
@@ -108,7 +106,7 @@ export function TaskEditor({
   // dates with it, but only while nothing has been touched yet.
   useEffect(() => {
     if (!open || JSON.stringify(form) !== JSON.stringify(baseRef.current)) return;
-    const next = stateFrom(task, initial, tz);
+    const next = stateFrom(task, initial);
     baseRef.current = next;
     setForm(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,7 +123,7 @@ export function TaskEditor({
       setForm((p) => ({ ...p, dueDate: "", dueTime: "", allDay: false, dateFromRepeat: false }));
       return;
     }
-    setDueDate(addDaysToDateKey(todayKey(), offset));
+    setDueDate(addDaysToDateKey(todayKey(tz), offset));
   };
 
   // Turning All-day off shows the time it will use instead of keeping a
@@ -145,7 +143,7 @@ export function TaskEditor({
         return {
           ...p,
           recurrence,
-          dueDate: firstOccurrenceKey(recurrence, todayKey()),
+          dueDate: firstOccurrenceKey(recurrence, todayKey(tz)),
           dateFromRepeat: true,
         };
       }
@@ -159,7 +157,7 @@ export function TaskEditor({
     // A repeating task needs a date to move on from, even if it was cleared.
     const filled: FormState =
       form.recurrence && !form.dueDate
-        ? { ...form, dueDate: firstOccurrenceKey(form.recurrence, todayKey()) }
+        ? { ...form, dueDate: firstOccurrenceKey(form.recurrence, todayKey(tz)) }
         : form;
     const draft = buildDraft(filled, tz);
     if (!draft.title) {

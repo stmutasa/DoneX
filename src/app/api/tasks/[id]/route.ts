@@ -58,6 +58,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const patch = parsed.data;
   // Partner sessions never write into projects, as on create.
   if (role === "partner") delete patch.projectId;
+  // An empty id means no parent; stored as-is it would hide the task everywhere.
+  if (patch.parentId === "") patch.parentId = null;
   if (patch.parentId) {
     if (patch.parentId === id) {
       return NextResponse.json({ error: "A task can't be its own subtask" }, { status: 400 });

@@ -225,6 +225,9 @@ export interface Conversation {
 
 /** Server-sent events emitted by POST /api/chat */
 export type ChatStreamEvent =
+  /** first event of a turn: what to send POST /api/chat/stop, and the
+   *  conversation the turn is saved in, known before anything can fail */
+  | { type: "meta"; turnId: string; conversationId: string }
   | { type: "token"; text: string }
   | { type: "tool"; label: string; status: "start" | "ok" | "error" }
   | {

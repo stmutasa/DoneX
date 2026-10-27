@@ -95,6 +95,15 @@ export function AiSection({ settings, mutate }: SectionProps) {
     setDraftFallback(ai.fallbackProvider);
     setDraftFallbackModel(ai.fallbackModelPinned);
   }, [ai.fallbackProvider, ai.fallbackModelPinned]);
+  // An unsaved backup on the provider just made active can't stand in for
+  // it, so it gives way to what is saved. Any other unsaved pick is kept.
+  useEffect(() => {
+    if (draftFallback && draftFallback === provider) {
+      setDraftFallback(ai.fallbackProvider);
+      setDraftFallbackModel(ai.fallbackModelPinned);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
   // The custom provider's own fields follow a save too, rather than sitting
   // there showing the old value.
   useEffect(() => {
@@ -152,6 +161,11 @@ export function AiSection({ settings, mutate }: SectionProps) {
         fallbackModelPinned: draftFallbackModel,
       });
       setSaved(res);
+      // What the server kept, which may differ from what was sent (a backup
+      // on the active provider is turned off) even when nothing stored moved.
+      setDraftModel(res.saved.model);
+      setDraftFallback(res.saved.fallbackProvider);
+      setDraftFallbackModel(res.saved.fallbackAuto ? "" : res.saved.fallbackModel);
       await mutate();
       toast.success(res.primary?.ok === false ? "Saved — but it didn't answer" : "Saved");
     } catch (err) {
@@ -292,7 +306,12 @@ export function AiSection({ settings, mutate }: SectionProps) {
             label="Model id"
             placeholder="meta-llama/llama-3.1-70b-instruct"
             value={customModel}
-            onChange={(e) => setCustomModel(e.target.value)}
+            onChange={(e) => {
+              // This box and the model picker are one setting for Custom, so
+              // a Save pressed straight from here sends what was typed.
+              setCustomModel(e.target.value);
+              setDraftModel(e.target.value);
+            }}
             // The server moves ai.model with it while custom is the provider.
             // Sending model too could land it on another provider's pick if a
             // provider switch is saved first.

@@ -5,7 +5,14 @@ import useSWR from "swr";
 import { differenceInCalendarDays } from "date-fns";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, Task } from "@/lib/types";
-import { allDayKey, dateKey, dayHeading, keyToDate, monthHeading } from "@/lib/format";
+import {
+  allDayKey,
+  dateKey,
+  dayHeading,
+  keyToDate,
+  monthHeading,
+} from "@/lib/format";
+import { useDisplayTimeZone } from "@/hooks/useDisplayTimeZone";
 import { Page } from "@/components/shell/Page";
 import { PageHeader, EmptyState, SkeletonRows } from "@/components/ui/Misc";
 import { Button } from "@/components/ui/Button";
@@ -76,7 +83,11 @@ export default function UpcomingPage() {
     () => (anytimeData?.tasks ?? []).filter((t) => !t.parentId && t.status !== "done"),
     [anytimeData],
   );
-  const buckets = useMemo(() => buildBuckets(upcoming), [upcoming]);
+  // All-day tasks are bucketed by their day in the display zone, which can
+  // arrive after the tasks do.
+  const displayZone = useDisplayTimeZone();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const buckets = useMemo(() => buildBuckets(upcoming), [upcoming, displayZone]);
 
   const empty = !isLoading && buckets.length === 0 && anytime.length === 0;
   // A failed load is not an empty schedule.

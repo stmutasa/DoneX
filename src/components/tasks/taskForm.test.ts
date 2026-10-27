@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Task } from "@/lib/types";
+import { allDayKey, setDisplayTimeZone } from "@/lib/format";
 import { isoFromLocal } from "@/lib/utils";
 import {
   buildDraft,
@@ -9,8 +10,13 @@ import {
   firstOccurrenceKey,
   isAllDay,
   stateFrom,
+  todayKey,
   type FormState,
 } from "./taskForm";
+
+// The editor reads all-day dates through format.allDayKey, in the display
+// zone the app shell sets from settings.tz.
+afterEach(() => setDisplayTimeZone(null));
 
 const NY = "America/New_York";
 const TOKYO = "Asia/Tokyo";
@@ -42,7 +48,7 @@ function task(over: Partial<Task> = {}): Task {
 }
 
 function form(over: Partial<FormState> = {}): FormState {
-  return { ...stateFrom(null, undefined, NY), title: "Pay rent", ...over };
+  return { ...stateFrom(null, undefined), title: "Pay rent", ...over };
 }
 
 describe("all-day dates", () => {
@@ -50,9 +56,19 @@ describe("all-day dates", () => {
     // Midnight in Tokyo is the previous afternoon in UTC.
     const dueAt = isoFromLocal("2026-10-26", "00:00", TOKYO);
     expect(dueAt).toBe("2026-10-25T15:00:00.000Z");
-    const s = stateFrom(task({ dueAt, allDay: true }), undefined, TOKYO);
+    setDisplayTimeZone(TOKYO);
+    const s = stateFrom(task({ dueAt, allDay: true }), undefined);
     expect(s.dueDate).toBe("2026-10-26");
     expect(s.dueTime).toBe("");
+  });
+
+  it("names the same day as the list for an older device-midnight value", () => {
+    // How the editor wrote all-day dates before: midnight on this device.
+    const dueAt = new Date("2026-10-28T00:00:00").toISOString();
+    setDisplayTimeZone(NY);
+    const s = stateFrom(task({ dueAt, allDay: true }), undefined);
+    expect(s.dueDate).toBe(allDayKey(dueAt));
+    expect(s.dueDate).toBe("2026-10-28");
   });
 
   it("writes midnight in the app's time zone", () => {
@@ -64,7 +80,8 @@ describe("all-day dates", () => {
   it("round-trips a stored all-day date unchanged", () => {
     for (const tz of [NY, TOKYO, "America/Los_Angeles", "UTC"]) {
       const dueAt = isoFromLocal("2026-10-26", "00:00", tz);
-      const s = stateFrom(task({ dueAt, allDay: true }), undefined, tz);
+      setDisplayTimeZone(tz);
+      const s = stateFrom(task({ dueAt, allDay: true }), undefined);
       expect(buildDraft(s, tz).dueAt).toBe(dueAt);
     }
   });
@@ -101,9 +118,10 @@ describe("a date without a time", () => {
 
 describe("changedFields", () => {
   const stored = task({ dueAt: isoFromLocal("2026-10-26", "00:00", NY), allDay: true });
+  beforeEach(() => setDisplayTimeZone(NY));
 
   it("sends only the title when only the title changed", () => {
-    const base = stateFrom(stored, undefined, NY);
+    const base = stateFrom(stored, undefined);
     const edited = { ...base, title: "Pay the rent" };
     expect(changedFields(buildDraft(base, NY), buildDraft(edited, NY))).toEqual({
       title: "Pay the rent",
@@ -111,12 +129,12 @@ describe("changedFields", () => {
   });
 
   it("sends nothing when nothing changed", () => {
-    const base = stateFrom(stored, undefined, NY);
+    const base = stateFrom(stored, undefined);
     expect(changedFields(buildDraft(base, NY), buildDraft({ ...base }, NY))).toEqual({});
   });
 
   it("sends the due and its all-day flag together", () => {
-    const base = stateFrom(stored, undefined, NY);
+    const base = stateFrom(stored, undefined);
     const edited = { ...base, allDay: false, dueTime: "15:00" };
     const patch = changedFields(buildDraft(base, NY), buildDraft(edited, NY));
     expect(patch).toEqual({
@@ -126,13 +144,13 @@ describe("changedFields", () => {
   });
 
   it("leaves the due out when only the due kind changed", () => {
-    const base = stateFrom(stored, undefined, NY);
+    const base = stateFrom(stored, undefined);
     const edited: FormState = { ...base, dueKind: "by" };
     expect(changedFields(buildDraft(base, NY), buildDraft(edited, NY))).toEqual({ dueKind: "by" });
   });
 
   it("sends a cleared date as null", () => {
-    const base = stateFrom(stored, undefined, NY);
+    const base = stateFrom(stored, undefined);
     const edited = { ...base, dueDate: "", dueTime: "" };
     expect(changedFields(buildDraft(base, NY), buildDraft(edited, NY))).toEqual({
       dueAt: null,
@@ -144,7 +162,6 @@ describe("changedFields", () => {
     const base = stateFrom(
       task({ tags: ["home"], recurrence: { freq: "weekly", interval: 1, byWeekday: [1] } }),
       undefined,
-      NY,
     );
     const same = {
       ...base,
@@ -195,5 +212,20 @@ describe("defaultTime", () => {
     expect(defaultTime("2026-10-27", at(14, 20))).toBe("15:00");
     expect(defaultTime("2026-10-27", at(9))).toBe("10:00");
     expect(defaultTime("2026-10-27", at(23, 30))).toBe("23:59");
+  });
+});
+
+describe("todayKey", () => {
+  // London Oct 27 01:39 is still Oct 26 21:39 in New York.
+  const now = new Date("2026-10-27T01:39:00Z");
+
+  it("counts today in the app's zone, as quick-add does", () => {
+    expect(todayKey(NY, now)).toBe("2026-10-26");
+    expect(todayKey("Europe/London", now)).toBe("2026-10-27");
+    expect(todayKey(TOKYO, new Date("2026-10-26T15:30:00Z"))).toBe("2026-10-27");
+  });
+
+  it("falls back to the device's day without a known zone", () => {
+    expect(todayKey("Not/A_Zone", now)).toBe(todayKey(undefined, now));
   });
 });

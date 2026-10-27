@@ -74,6 +74,17 @@ describe("archived notes and projects", () => {
     expect(projectsRepo.findByName("No such project")).toBeNull();
   });
 
+  it("matches names in any script, not only A-Z", () => {
+    const ecole = projectsRepo.create({ name: "école" });
+    expect(projectsRepo.findByName("École")?.id).toBe(ecole.id);
+    expect(projectsRepo.findByName("e\u0301cole")?.id).toBe(ecole.id); // decomposed accent
+    const shop = notesRepo.create({ title: "Épicerie", kind: "checklist" });
+    expect(notesRepo.findByTitle("épicerie")?.id).toBe(shop.id);
+    expect(notesRepo.findByTitle(" ÉPICERIE ")?.id).toBe(shop.id);
+    notesRepo.update(shop.id, { archived: true });
+    expect(notesRepo.findByTitle("épicerie")).toBeNull();
+  });
+
   it("prefers the live project when an archived one shares its name", () => {
     const old = projectsRepo.create({ name: "Reading" });
     projectsRepo.update(old.id, { archived: true });

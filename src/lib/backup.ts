@@ -239,13 +239,15 @@ export interface RestoreResult {
 
 /**
  * Settings rows that describe this box rather than your data: what the
- * scheduler has already sent and how the last backup went. A restore puts
- * this box's own values back over the snapshot's, key by key, so an older
- * "last sent" can't make a job that is still inside its catch-up window fire
- * a second time. A key this box has never written keeps the snapshot's value,
- * which can only hold back a job that was already sent.
+ * scheduler has already sent, how the last backup went, and the secret that
+ * signs the owner's device cookies. A restore puts this box's own values back
+ * over the snapshot's, key by key, so an older "last sent" can't make a job
+ * that is still inside its catch-up window fire a second time, and an older
+ * snapshot (or one taken before there was a device secret) can't sign every
+ * owner device out. A key this box has never written keeps the snapshot's
+ * value.
  */
-const LOCAL_STATE = "key LIKE 'sched.%' OR key LIKE 'backup.%'";
+const LOCAL_STATE = "key LIKE 'sched.%' OR key LIKE 'backup.%' OR key LIKE 'auth.%'";
 
 /**
  * Put a snapshot back. Everything is replaced table by table inside one
@@ -266,6 +268,11 @@ export function restoreSnapshot(name: string, includeSettings: boolean): Restore
   if (!parsed.data) throw new Error("That file is not a DoneX snapshot");
 
   const safety = writeSnapshot("pre-restore", { prune: false });
+
+  // The push key pair belongs to this box's subscriptions, which a restore
+  // keeps; bringing back an older pair (or none) would leave every push
+  // signed with a key those subscriptions weren't made for.
+  const vapid = includeSettings ? settingsRepo.getApp().vapid : null;
 
   const db = getDb();
   const tables = includeSettings ? [...TABLES] : [...DATA_TABLES];
@@ -295,8 +302,17 @@ export function restoreSnapshot(name: string, includeSettings: boolean): Restore
             `INSERT OR REPLACE INTO ${table}(${names}) VALUES(${cols.map(() => "?").join(",")})`,
           ).run(...cols.map((c) => row[c] as never));
         }
-        const put = db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)");
-        for (const row of local) put.run(row.key, row.value);
+        if (table === "settings") {
+          const put = db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)");
+          for (const row of local) put.run(row.key, row.value);
+          if (vapid) {
+            const app = db.prepare("SELECT value FROM settings WHERE key='app'").get() as
+              | { value: string }
+              | undefined;
+            const restoredApp = app ? (JSON.parse(app.value) as Record<string, unknown>) : {};
+            put.run("app", JSON.stringify({ ...restoredApp, vapid }));
+          }
+        }
         restored[table] = rows.length;
       } catch (err) {
         throw new Error(`Could not restore ${table}: ${(err as Error).message}`);

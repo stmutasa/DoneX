@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { ApiError, authApi } from "@/lib/api";
-import { forgetPushOnThisDevice } from "@/lib/pushClient";
+import { forgetPushOnServer } from "@/lib/pushClient";
 import { Button } from "@/components/ui/Button";
 import { PIN_MIN, PinPad } from "./PinPad";
 
@@ -15,11 +15,11 @@ export function LoginForm() {
 
   // A device at the PIN pad has no session, so it should get no pushes. This
   // also catches one whose session ended without a sign-out here (revoked,
-  // expired, or signed out before pushes followed sessions): once the browser
-  // unsubscribes, the push service rejects the next send and the server
-  // prunes the row.
+  // expired, or signed out before pushes followed sessions). Only the
+  // server's row goes: the browser stays subscribed, so whoever signs in next
+  // gets their own notifications here without turning them on again.
   useEffect(() => {
-    void forgetPushOnThisDevice();
+    void forgetPushOnServer();
   }, []);
 
   const submit = async () => {

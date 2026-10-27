@@ -37,6 +37,20 @@ export const EMPTY_REPLY = "No reply came back. Try again, or put it another way
 /** Saved for a turn stopped before it said anything. */
 export const STOPPED_NOTE = "Stopped.";
 
+// Turns in progress, so an explicit Stop (POST /api/chat/stop) can reach the
+// one it names. On globalThis so every route bundle shares one map.
+const turnGlobal = globalThis as unknown as { __donexChatTurns?: Map<string, AbortController> };
+const liveTurns = (turnGlobal.__donexChatTurns ??= new Map<string, AbortController>());
+
+/** Stop the named turn: a tool already writing finishes, no new round starts,
+ *  and the reply is saved as far as it got. False when it already ended. */
+export function stopChatTurn(turnId: string): boolean {
+  const turn = liveTurns.get(turnId);
+  if (!turn) return false;
+  turn.abort();
+  return true;
+}
+
 /** A backup that failed as well: why it was covering, then what went wrong. */
 function backupFailed(why: string, backup: ProviderConfig, err: unknown): Error {
   return new Error(
@@ -86,16 +100,40 @@ function pushUserText(turns: LlmTurn[], text: string): void {
   turns.push({ role: "user", text: trimmed });
 }
 
+const NOTE_LABELS = 8;
+
+/**
+ * A short line naming the tool work an assistant turn did, so a later turn
+ * ("carry on", "try again") knows what already happened even when the saved
+ * text doesn't say: a stopped turn, or one whose only words came first.
+ * Labels the text already carries are left out, to keep it cheap.
+ */
+export function activityNote(text: string, activity: ToolActivity[] | undefined): string {
+  if (!activity?.length) return "";
+  const pick = (ok: boolean) =>
+    activity
+      .filter((a) => a.ok === ok && !text.includes(a.label))
+      .slice(0, NOTE_LABELS)
+      .map((a) => a.label.slice(0, 80));
+  const done = pick(true);
+  const failed = pick(false);
+  const parts: string[] = [];
+  if (done.length > 0) parts.push(`Done: ${done.join("; ")}`);
+  if (failed.length > 0) parts.push(`Didn't work: ${failed.join("; ")}`);
+  return parts.length > 0 ? `(${parts.join(". ")})` : "";
+}
+
 /** Prior turns, text only, normalised so both providers accept the sequence. */
 export function historyTurns(records: ChatMessageRecord[]): LlmTurn[] {
   const turns: LlmTurn[] = [];
   for (const record of records) {
-    const text = record.text.trim();
-    if (!text) continue;
+    const said = record.text.trim();
     if (record.role === "user") {
-      pushUserText(turns, text);
+      pushUserText(turns, said);
       continue;
     }
+    const text = [said, activityNote(said, record.activity)].filter(Boolean).join("\n");
+    if (!text) continue;
     if (turns.length === 0) continue;
     const last = turns[turns.length - 1];
     if (last && last.role === "assistant") {
@@ -109,14 +147,15 @@ export function historyTurns(records: ChatMessageRecord[]): LlmTurn[] {
 
 export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
   let closed = false;
-  // Stop, a switch to another chat or leaving the page cancels the response.
-  // The turn then stops paying for model rounds: a tool already writing is
-  // let finish, nothing new starts, and the reply is saved as far as it got.
+  // Only an explicit Stop ends a turn early. The client going away (another
+  // chat, another page, a phone in a pocket) must not cut a plan in half:
+  // the turn runs on and is saved for whenever they come back.
+  const turnId = crypto.randomUUID();
   const turnAbort = new AbortController();
+  liveTurns.set(turnId, turnAbort);
   return new ReadableStream<Uint8Array>({
     cancel() {
       closed = true;
-      turnAbort.abort();
     },
     async start(controller) {
       const emit = (event: ChatStreamEvent): void => {
@@ -124,9 +163,8 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
         try {
           controller.enqueue(encodeSse(event));
         } catch {
-          // Nobody is reading any more.
+          // Nobody is reading any more; carry on regardless.
           closed = true;
-          turnAbort.abort();
         }
       };
       const finish = (): void => {
@@ -159,6 +197,9 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
 
         // Persisted before any provider work so the turn survives a failure.
         conversationsRepo.addMessage(conversation.id, "user", message);
+        // Before anything can fail: how to stop this turn, and where it lives,
+        // so a retry joins this conversation instead of starting another.
+        emit({ type: "meta", turnId, conversationId: conversation.id });
 
         if (!aiConfigured()) {
           conversationsRepo.addMessage(conversation.id, "assistant", `Sorry — ${NOT_CONFIGURED}`);
@@ -395,6 +436,7 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
             : { type: "error", message },
         );
       } finally {
+        liveTurns.delete(turnId);
         finish();
       }
     },

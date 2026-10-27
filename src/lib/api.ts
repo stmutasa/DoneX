@@ -236,6 +236,8 @@ export const authApi = {
       partnerColor: string;
       /** settings.tz: all-day dates are midnight here */
       tz?: string;
+      pinCollision?: boolean;
+      features?: FeatureSettings;
     }>(ME_URL),
   logout: () =>
     request<{ ok: true }>("/api/auth/logout", { method: "POST" }).then((res) => {
@@ -385,6 +387,12 @@ export const chatApi = {
   conversations: () => request<{ conversations: Conversation[] }>(keys.conversations()),
   newConversation: () =>
     request<{ conversation: Conversation }>("/api/chat/conversations", { method: "POST" }),
+  /** The Stop button: end a turn early (closing the stream alone never does). */
+  stop: (turnId: string) =>
+    request<{ stopped: boolean }>("/api/chat/stop", {
+      method: "POST",
+      body: JSON.stringify({ turnId }),
+    }),
 };
 
 // ── Chat streaming (SSE) ──────────────────────────────────────────────────
@@ -404,6 +412,8 @@ export interface ChatStreamDone {
 }
 
 export interface ChatStreamCallbacks {
+  /** first, before any reply: the turn's id (for Stop) and its conversation */
+  onMeta?: (meta: { turnId: string; conversationId: string }) => void;
   onToken?: (text: string) => void;
   onTool?: (label: string, status: "start" | "ok" | "error") => void;
   onDone?: (payload: ChatStreamDone) => void;
@@ -469,6 +479,9 @@ export async function postChatStream(
       return;
     }
     switch (event.type) {
+      case "meta":
+        callbacks.onMeta?.({ turnId: event.turnId, conversationId: event.conversationId });
+        break;
       case "token":
         callbacks.onToken?.(event.text);
         break;

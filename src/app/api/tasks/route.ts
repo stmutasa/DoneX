@@ -8,7 +8,7 @@ import type { TaskDraft, TaskListFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/** Stands in for "#" while a quick-add is parsed, so no "#word" becomes a project. */
+/** Brackets the placeholder a "#word" hides behind while a quick-add is parsed. */
 const HASH_MASK = "";
 
 const VIEWS = ["today", "upcoming", "anytime", "all"] as const;
@@ -100,13 +100,24 @@ export async function POST(req: NextRequest) {
     // "#word" is just part of what was typed, so it stays in the title and
     // never creates a project.
     const filesProjects = role === "owner" && (body as Record<string, unknown>).space !== "joint";
-    const { draft: quickDraft, matchedText } = parseQuickAdd(
-      filesProjects ? quick : quick.split("#").join(HASH_MASK),
-      settings.tz,
-      capturedAt
-    );
+    // Each "#word" is hidden whole behind a placeholder with no letters or
+    // digits, so neither the project parser nor the date parser sees it
+    // ("call #tomorrow" stays a title, not a due date).
+    const hidden: string[] = [];
+    const masked = filesProjects
+      ? quick
+      : quick.replace(/#[^\s#]*/g, (token) => {
+          hidden.push(token);
+          return `${HASH_MASK}${String.fromCharCode(0xe100 + hidden.length - 1)}${HASH_MASK}`;
+        });
+    const { draft: quickDraft, matchedText } = parseQuickAdd(masked, settings.tz, capturedAt);
     draft = quickDraft;
-    if (!filesProjects) draft.title = draft.title.split(HASH_MASK).join("#");
+    if (hidden.length) {
+      draft.title = draft.title.replace(
+        new RegExp(`${HASH_MASK}([\\ue100-\\uf8ff])${HASH_MASK}`, "g"),
+        (_m, ch: string) => hidden[ch.charCodeAt(0) - 0xe100] ?? ""
+      );
+    }
     if ((body as Record<string, unknown>).space === "joint") draft.space = "joint";
     const tagged = (body as Record<string, unknown>).assignedTo;
     if (tagged === "owner" || tagged === "partner") draft.assignedTo = tagged;
@@ -127,7 +138,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
   }
 
-  // A subtask needs a real parent, and takes that parent's list.
+  // A subtask needs a real parent, and takes that parent's list. An empty id
+  // means no parent; stored as-is it would hide the task from every list.
+  if (draft.parentId === "") draft.parentId = null;
   if (draft.parentId) {
     const parent = tasksRepo.get(draft.parentId);
     if (!parent) {

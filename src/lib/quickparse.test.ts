@@ -202,6 +202,40 @@ describe("parseQuickAdd tokens", () => {
   });
 });
 
+describe("parseQuickAdd leaves links alone", () => {
+  const cases: [string, string | null][] = [
+    ["read https://www.nytimes.com/2026/10/26/us/story.html", null],
+    ["read https://blog.example.com/posts/2026-11-05-release-notes", null],
+    ["watch https://youtu.be/abc?t=3pm", null],
+    ["check site.com/2026/11/05/post", null],
+    ["email sat@domain.com", null],
+    ["email monica.fri@acme.com", null],
+    ["review https://github.com/org/repo/pull/1234 tomorrow", "2026-10-27 00:00"],
+    ["visit www.example.com/#today #Work friday", "2026-10-30 00:00"],
+  ];
+  for (const [input, due] of cases) {
+    it(`keeps ${JSON.stringify(input)} whole`, () => {
+      const { draft } = parseQuickAdd(input, TZ, MONDAY_10AM);
+      expect(local(draft.dueAt)).toBe(due);
+      const link = input.split(" ").find((w) => /[./@]/.test(w) && w.length > 8)!;
+      expect(draft.title).toContain(link);
+      // The preview reads no date out of the link either. (Its title keeps
+      // date words, so it only matches the saved one when there are none.)
+      const preview = parseQuickPreview(input);
+      expect(preview.title).toContain(link);
+      if (!due) {
+        expect(preview.when).toBeNull();
+        expect(preview.title).toBe(draft.title);
+      }
+    });
+  }
+
+  it("keeps a link inside a quoted project", () => {
+    const { matchedText } = parseQuickAdd('plan #"site.com/launch plan" soon', TZ);
+    expect(matchedText.project).toBe("site.com/launch plan");
+  });
+});
+
 describe("parseQuickAdd recurring tasks get a first due date on the rule", () => {
   it("starts 'every sunday' on the coming Sunday", () => {
     const { draft } = parseQuickAdd("call mom every sunday", TZ, MONDAY_10AM);

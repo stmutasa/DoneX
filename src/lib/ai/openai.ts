@@ -5,6 +5,7 @@ import { iterateSse } from "@/lib/ai/sse";
 import { toOpenAiTools } from "@/lib/ai/tools";
 import {
   OUT_OF_TOKENS,
+  REASONING_HEADROOM,
   cleanProviderMessage,
   providerError,
   type CompleteArgs,
@@ -222,10 +223,24 @@ async function stream({
 }
 
 /**
- * Room for the thinking a reasoning model does before it answers. Only what
- * is generated is billed, so the extra room costs nothing unless it is used.
+ * Families whose default reasoning effort is above "low": OpenAI's o-series
+ * and its first GPT-5 releases (medium), and Gemini's Pro and Flash tiers from
+ * 2.5 on (medium or higher). Asking those for low can only cut what a call
+ * spends. Everything else keeps its own default: OpenAI's later GPT-5 point
+ * releases default to none, Flash-Lite thinks little or not at all, and an
+ * unknown or custom id could be either, so asking it for low might raise the
+ * bill.
  */
-const REASONING_HEADROOM = 4096;
+const OPENAI_EFFORT_ABOVE_LOW = /^(?:o[134](?:-mini)?|gpt-5(?:-mini|-nano)?)(?:-\d{4}-\d{2}-\d{2})?$/;
+const GEMINI_EFFORT_ABOVE_LOW =
+  /^(?:gemini-2\.5-(?:pro|flash)|gemini-3(?:\.\d+)?-(?:pro|flash)|gemini-4(?=[.-]|$))(?![\w.-]*(?:-lite|image|tts|live|audio|embed|robotics|computer-use))/;
+
+export function lowEffortCutsSpend(kind: AIProviderKind, model: string): boolean {
+  const id = model.trim().toLowerCase();
+  if (kind === "openai") return OPENAI_EFFORT_ABOVE_LOW.test(id);
+  if (kind === "gemini") return GEMINI_EFFORT_ABOVE_LOW.test(id);
+  return false;
+}
 
 async function complete({
   cfg,
@@ -246,11 +261,13 @@ async function complete({
 
   // A thinking model counts its hidden reasoning against the same cap as the
   // answer, so a cap sized for the answer alone can run out before a word of
-  // it is written. Gemini thinks on every current model; on OpenAI, the
-  // models that demand max_completion_tokens are the reasoning ones.
+  // it is written. Gemini can think on every current model; on OpenAI, the
+  // models that demand max_completion_tokens are the reasoning ones. They all
+  // get the headroom, which bills nothing unused; only families whose default
+  // effort is higher are asked for low.
   let tokenField: "max_tokens" | "max_completion_tokens" = "max_tokens";
   let thinks = cfg.kind === "gemini";
-  let lowEffort = thinks;
+  let lowEffort = thinks && lowEffortCutsSpend(cfg.kind, cfg.model);
 
   const send = async () =>
     fetch(`${cfg.baseUrl}/chat/completions`, {
@@ -272,7 +289,7 @@ async function complete({
       // Newer OpenAI reasoning models reject max_tokens and demand the new field.
       tokenField = "max_completion_tokens";
       thinks = true;
-      lowEffort = true;
+      lowEffort = lowEffortCutsSpend(cfg.kind, cfg.model);
     } else if (lowEffort && /reasoning|thinking/i.test(raw)) {
       // A model that can't be told how hard to think still gets the room.
       lowEffort = false;
@@ -297,8 +314,8 @@ async function complete({
   return parts;
 }
 
-// The codex and -pro families (gpt-5-codex, gpt-5-pro, o3-pro, …) are served
-// on the Responses API only, so /chat/completions rejects them outright.
+// The codex and -pro families are served on the Responses API only, so
+// /chat/completions rejects them outright.
 const EXCLUDE_MODEL =
   /(embed|whisper|tts|dall-e|audio|realtime|moderation|image|transcribe|search|instruct-beta|davinci|babbage|computer-use|codex|-pro(?:-|$))/i;
 
@@ -347,7 +364,7 @@ async function models(cfg: ProviderConfig): Promise<ModelInfo[]> {
 /** Gemini 4 Argon has its own slot in the list, whether or not Google lists it. */
 export const GEMINI_ARGON_ID = "gemini-4-argon";
 
-/** "gemini-3.8-pro" → [3, 8]; null for an id with no version up front, like "gemini-pro-latest". */
+/** The version right after "gemini-" as numbers ("3.8" → [3, 8]); null for an unversioned alias. */
 function geminiVersion(id: string): number[] | null {
   const m = /^gemini-(\d+(?:\.\d+)*)/i.exec(id);
   return m ? m[1].split(".").map(Number) : null;
@@ -357,7 +374,8 @@ const GEMINI_PREVIEW = /(?:^|-)(?:preview|exp|experimental)(?:-|$)/i;
 
 /**
  * Gemini's list carries no release dates, and string order puts letters after
- * digits ("gemini-pro-latest" over "gemini-3.8-pro") and "10" before "9". So:
+ * digits (an unversioned alias over every numbered release) and "10" before
+ * "9". So:
  * highest version first, a stable release ahead of a preview of the same one,
  * and unversioned aliases last.
  */

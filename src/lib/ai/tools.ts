@@ -32,6 +32,8 @@ export interface ToolContext {
   todayKey: string;
   /** client-reported position for this turn, when available */
   location?: { lat: number; lng: number } | null;
+  /** ids of tasks complete_task ticked in this turn, so a repeat is ticked once */
+  completed?: Set<string>;
 }
 
 export interface ToolOutcome {
@@ -119,8 +121,9 @@ export function parseDueInput(
  * Like parseDueInput, but a value it cannot read comes back as "invalid".
  * Only null, "" and "none" (or "null", "never") clear the date. The whole
  * string must be a date, or a date and time with an optional zone (Z, UTC,
- * GMT, ±HH[:MM] or the user's own zone name); anything after it is junk, not
- * something to drop. Zone-less times are wall-clock time in `tz`.
+ * GMT, ±HH[:MM], or the user's own zone name or abbreviation); anything after
+ * it is junk, not something to drop. Zone-less times are wall-clock time in
+ * `tz`.
  */
 export function readDueInput(
   raw: unknown,
@@ -133,6 +136,14 @@ export function readDueInput(
   if (!value || /^(null|none|never)$/i.test(value)) return { dueAt: null, allDay: false };
   // Naming the user's own zone adds nothing; any other zone name is junk.
   if (value.toLowerCase().endsWith(` ${tz.toLowerCase()}`)) value = value.slice(0, -tz.length).trimEnd();
+  // So does the user's own abbreviation at that time (EDT, EST), checked once
+  // the wall time is known. Any other abbreviation is junk.
+  let abbr: string | undefined;
+  const named = /^(\d{4}-\d{2}-\d{2}[T ].*\S)\s+([a-z]{3,5})$/i.exec(value);
+  if (named && !/^(utc|gmt)$/i.test(named[2])) {
+    value = named[1];
+    abbr = named[2].toUpperCase();
+  }
 
   const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(value);
   if (dateOnly) {
@@ -141,26 +152,33 @@ export function readDueInput(
   }
 
   const m =
-    /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(?:([ap])\.?m\.?)?\s*(Z|UTC|GMT|[+-]\d{2}(?::?\d{2})?)?$/i.exec(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(\.\d+)?)?\s*(?:([ap])\.?m\.?)?\s*(Z|UTC|GMT|[+-]\d{2}(?::?\d{2})?)?$/i.exec(
       value
     );
   if (!m || !isCalendarDate(m[1])) return "invalid";
   let hour = Number(m[2]);
   const minute = Number(m[3]);
   const second = Number(m[4] ?? 0);
-  const meridiem = m[5]?.toLowerCase();
+  const fraction = m[5] ?? "";
+  const meridiem = m[6]?.toLowerCase();
   if (meridiem) {
     if (hour < 1 || hour > 12) return "invalid";
     hour = (hour % 12) + (meridiem === "p" ? 12 : 0);
   }
   if (hour > 23 || minute > 59 || second > 59) return "invalid";
-  const zone = m[6];
-  if (!zone) return { dueAt: utcFromLocal(m[1], `${hour}:${minute}`, tz), allDay: false };
+  const zone = m[7];
+  if (!zone) {
+    const dueAt = utcFromLocal(m[1], `${hour}:${minute}`, tz);
+    if (abbr && zoneAbbreviation(dueAt, tz) !== abbr) return "invalid";
+    return { dueAt, allDay: false };
+  }
+  if (abbr) return "invalid";
 
   const two = (n: number) => String(n).padStart(2, "0");
   const digits = zone.replace(":", "");
   const offset = /^[+-]/.test(zone) ? `${digits.slice(0, 3)}:${digits.slice(3) || "00"}` : "Z";
-  const instant = new Date(`${m[1]}T${two(hour)}:${two(minute)}:${two(second)}${offset}`);
+  // The fraction is kept, so a stored dueAt sent back reads as the same moment.
+  const instant = new Date(`${m[1]}T${two(hour)}:${two(minute)}:${two(second)}${fraction}${offset}`);
   if (Number.isNaN(instant.getTime())) return "invalid";
   return { dueAt: instant.toISOString(), allDay: false };
 }
@@ -169,6 +187,31 @@ export function readDueInput(
 function isCalendarDate(key: string): boolean {
   const [y, m, d] = key.split("-").map(Number);
   return m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+/** The zone's short name at that moment, e.g. "EDT" or "EST" for New York. */
+function zoneAbbreviation(iso: string, tz: string): string | undefined {
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" })
+    .formatToParts(new Date(iso))
+    .find((p) => p.type === "timeZoneName")
+    ?.value.toUpperCase();
+}
+
+/**
+ * The due moment and all-day flag a create or update ends up with. An
+ * all-day task sits at local midnight of its day, and a model's
+ * "2026-11-15T00:00:00Z" names Nov 15, not the evening before it.
+ */
+function resolveDue(
+  args: Record<string, unknown>,
+  due: { dueAt: string | null; allDay: boolean },
+  tz: string
+): { dueAt: string | null; allDay: boolean } {
+  const allDay = readBoolean(args, "allDay") ?? due.allDay;
+  if (!allDay || due.allDay || !due.dueAt) return { dueAt: due.dueAt, allDay };
+  const literal = typeof args.dueAt === "string" ? /^\d{4}-\d{2}-\d{2}/.exec(args.dueAt.trim())?.[0] : undefined;
+  const key = literal && due.dueAt.endsWith("T00:00:00.000Z") ? literal : localDateKey(due.dueAt, tz);
+  return { dueAt: utcFromLocal(key, "00:00", tz), allDay };
 }
 
 const DUE_FORMAT_ERROR =
@@ -220,11 +263,19 @@ function projectName(projectId: string | null): string | null {
   return projectsRepo.get(projectId)?.name ?? null;
 }
 
-function resolveProject(name: string | undefined): string | null {
-  if (!name) return null;
-  const existing = projectsRepo.findByName(name);
-  if (existing) return existing.id;
-  return projectsRepo.create({ name }).id;
+/**
+ * The project a task is filed into, created when missing. Filing a task into
+ * an archived project brings it back, and `note` says so.
+ */
+function resolveProject(name: string | undefined): { id: string | null; note?: string } {
+  if (!name) return { id: null };
+  const existing = projectsRepo.findByName(name, { restore: false });
+  if (existing?.archived) {
+    projectsRepo.update(existing.id, { archived: false });
+    return { id: existing.id, note: `Restored archived project ${quote(existing.name)}` };
+  }
+  if (existing) return { id: existing.id };
+  return { id: projectsRepo.create({ name }).id };
 }
 
 function compactTask(task: Task, tz: string): Record<string, unknown> {
@@ -307,7 +358,7 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
       byMonthDay: {
         type: "integer",
         description:
-          "Monthly only: day of month. Moving dueAt on a repeating task makes the new date's day the repeat day unless this is sent too.",
+          "Monthly only: day of month. Changing dueAt moves only this occurrence; to change the day it repeats on, send this with the new day.",
         minimum: 1,
         maximum: 31,
       },
@@ -330,10 +381,8 @@ export const TOOLS: ToolSpec[] = [
     label(args, ctx) {
       const title = readString(args, "title") ?? "task";
       const due = readDueInput(args.dueAt, ctx.tz);
-      const suffix =
-        due && due !== "invalid" && due.dueAt
-          ? ` · ${describeDue(due.dueAt, readBoolean(args, "allDay") ?? due.allDay, ctx.tz)}`
-          : "";
+      const when = due && due !== "invalid" ? resolveDue(args, due, ctx.tz) : null;
+      const suffix = when?.dueAt ? ` · ${describeDue(when.dueAt, when.allDay, ctx.tz)}` : "";
       return `Added ${quote(title)}${suffix}`;
     },
     async run(args, ctx) {
@@ -347,7 +396,7 @@ export const TOOLS: ToolSpec[] = [
           payload: { error: `${DUE_FORMAT_ERROR} The task was not created.` },
         };
       }
-      const allDay = readBoolean(args, "allDay") ?? due?.allDay ?? false;
+      const when = due ? resolveDue(args, due, ctx.tz) : { dueAt: null, allDay: readBoolean(args, "allDay") ?? false };
       const recurrence = parseRecurrence(args.recurrence) ?? null;
 
       // Best-effort place resolution — a failed lookup never blocks the task.
@@ -367,19 +416,20 @@ export const TOOLS: ToolSpec[] = [
 
       const space = readString(args, "space") === "joint" ? "joint" : "personal";
       const project = readString(args, "projectName");
-      const projectNote = project && space === "joint" ? JOINT_PROJECT_NOTE : undefined;
+      const filed = space === "joint" ? { id: null } : resolveProject(project);
+      const projectNote = project && space === "joint" ? JOINT_PROJECT_NOTE : filed.note;
       const task = tasksRepo.create({
         title,
         notes: readString(args, "notes") ?? "",
         space,
-        dueAt: due?.dueAt ?? null,
+        dueAt: when.dueAt,
         dueKind: readString(args, "dueKind") === "by" ? "by" : "on",
-        allDay,
+        allDay: when.allDay,
         priority: readPriority(args) ?? 0,
-        projectId: space === "joint" ? null : resolveProject(project),
+        projectId: filed.id,
         tags: readTags(args) ?? [],
         recurrence:
-          recurrence && due?.dueAt ? anchorRule(recurrence, new Date(due.dueAt), ctx.tz) : recurrence,
+          recurrence && when.dueAt ? anchorRule(recurrence, new Date(when.dueAt), ctx.tz) : recurrence,
         location,
       });
       const placeSuffix = location ? ` · 📍 ${location.name}` : "";
@@ -393,7 +443,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "update_task",
     description:
-      "Change fields on an existing task. Only include the fields that change. The id must come from the task list or a previous tool result.",
+      "Change fields on an existing task. Only include the fields that change. The id must come from the task list or a previous tool result. On a repeating task a new dueAt moves only this occurrence; to change the day a monthly task repeats on, also send recurrence with the new byMonthDay.",
     parameters: {
       type: "object",
       properties: { id: { type: "string", description: "Existing task id" }, ...TASK_FIELDS },
@@ -436,8 +486,9 @@ export const TOOLS: ToolSpec[] = [
       const notes = asString(args.notes);
       if (notes !== null) patch.notes = notes;
       if (due) {
-        patch.dueAt = due.dueAt;
-        patch.allDay = readBoolean(args, "allDay") ?? due.allDay;
+        const when = resolveDue(args, due, ctx.tz);
+        patch.dueAt = when.dueAt;
+        patch.allDay = when.allDay;
       } else {
         const allDay = readBoolean(args, "allDay");
         if (allDay !== undefined) patch.allDay = allDay;
@@ -451,23 +502,31 @@ export const TOOLS: ToolSpec[] = [
       let projectNote: string | undefined;
       if (project !== undefined) {
         if ((patch.space ?? existing.space) === "joint") projectNote = JOINT_PROJECT_NOTE;
-        else patch.projectId = resolveProject(project);
+        else {
+          const filed = resolveProject(project);
+          patch.projectId = filed.id;
+          projectNote = filed.note;
+        }
       }
       const tags = readTags(args);
       if (tags !== undefined) patch.tags = tags;
       const recurrence = parseRecurrence(args.recurrence);
       if (recurrence !== undefined) patch.recurrence = recurrence;
       if ("recurrence" in patch || "dueAt" in patch) {
-        // Pin the anchor day so a short month never shifts later repeats. A
-        // moved date sets the repeat day too, unless the model sent one.
-        const rule = "recurrence" in patch ? patch.recurrence : existing.recurrence;
+        // Pin the anchor day so a short month never shifts later repeats.
+        let rule = "recurrence" in patch ? patch.recurrence : existing.recurrence;
+        const pinned = existing.recurrence?.byMonthDay;
+        if (rule && recurrence && recurrence.byMonthDay === undefined && pinned && existing.recurrence?.freq === rule.freq) {
+          // A resent rule of the same kind keeps the day it was pinned to.
+          rule = { ...rule, byMonthDay: pinned };
+          patch.recurrence = rule;
+        }
         const dueAt = "dueAt" in patch ? patch.dueAt : existing.dueAt;
-        if (rule && dueAt) {
-          const repin =
-            "dueAt" in patch &&
-            recurrence?.byMonthDay === undefined &&
-            (rule.freq === "monthly" || rule.freq === "yearly");
-          const anchored = anchorRule(repin ? { ...rule, byMonthDay: undefined } : rule, new Date(dueAt), ctx.tz);
+        // A new dueAt moves only this occurrence, so a stored day stays put;
+        // the model sends recurrence.byMonthDay to change it. A rule with no
+        // day yet takes it from the date.
+        if (rule && dueAt && ("recurrence" in patch || !rule.byMonthDay)) {
+          const anchored = anchorRule(rule, new Date(dueAt), ctx.tz);
           if ("recurrence" in patch || JSON.stringify(anchored) !== JSON.stringify(rule)) {
             patch.recurrence = anchored;
           }
@@ -508,6 +567,11 @@ export const TOOLS: ToolSpec[] = [
       properties: {
         id: { type: "string", description: "Existing task id" },
         done: { type: "boolean", description: "Defaults to true" },
+        expectedDueAt: {
+          type: "string",
+          description:
+            "The task's dueAt as you last saw it. A repeating task that has moved past it since is not ticked again.",
+        },
       },
       required: ["id"],
     },
@@ -531,8 +595,16 @@ export const TOOLS: ToolSpec[] = [
           payload: { task: compactTask(before, ctx.tz), alreadyDone: true },
         };
       }
+      const repeating = !!before.recurrence && !before.parentId;
+      const alreadyTicked = (task: Task, note: string): ToolOutcome => ({
+        label: `${quote(task.title)} was already ticked${task.dueAt ? ` · next ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : ""}`,
+        payload: { task: compactTask(task, ctx.tz), alreadyDone: true, note },
+      });
+      if (done && repeating && ctx.completed?.has(id)) {
+        return alreadyTicked(before, "It was already completed earlier in this turn, so it was not ticked again.");
+      }
       if (!done && before.status === "open") {
-        if (before.recurrence && !before.parentId) {
+        if (repeating) {
           // A repeating task never closes, so undoing a tick means taking its
           // latest Logbook entry back out. The next date stays as it is.
           const latest = latestCompletion(before.id);
@@ -548,6 +620,7 @@ export const TOOLS: ToolSpec[] = [
               },
             };
           }
+          ctx.completed?.delete(id);
           const task = undone.task ?? before;
           const next = task.dueAt ? ` · next ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : "";
           return {
@@ -564,8 +637,22 @@ export const TOOLS: ToolSpec[] = [
           payload: { task: compactTask(before, ctx.tz), alreadyOpen: true },
         };
       }
-      const { task, recurred } = tasksRepo.setDone(id, done);
+      const expected = readDueInput(args.expectedDueAt, ctx.tz);
+      const { task, recurred, changed } = tasksRepo.setDone(id, done, {
+        expectedDueAt: expected && expected !== "invalid" ? expected.dueAt : undefined,
+      });
       if (!task) return { ok: false, payload: { error: "No task with that id" } };
+      if (!changed) {
+        if (done && repeating) {
+          return alreadyTicked(task, "Its due date has moved past expectedDueAt, so it was not ticked again.");
+        }
+        return {
+          label: `${quote(task.title)} ${done ? "was already done" : "is already open"}`,
+          payload: { task: compactTask(task, ctx.tz), changed: false },
+        };
+      }
+      if (done) ctx.completed?.add(id);
+      else ctx.completed?.delete(id);
       const nextDue = recurred && task.dueAt ? describeDue(task.dueAt, task.allDay, ctx.tz) : "";
       return {
         label: recurred
@@ -678,7 +765,14 @@ export const TOOLS: ToolSpec[] = [
     run(args) {
       const name = readString(args, "name");
       if (!name) return { ok: false, payload: { error: "name is required" } };
-      const existing = projectsRepo.findByName(name);
+      const existing = projectsRepo.findByName(name, { restore: false });
+      if (existing?.archived) {
+        projectsRepo.update(existing.id, { archived: false });
+        return {
+          label: `Restored archived project ${quote(existing.name)}`,
+          payload: { project: { id: existing.id, name: existing.name }, created: false, restored: true },
+        };
+      }
       if (existing) {
         return {
           label: `Project ${quote(existing.name)} already existed`,
@@ -1017,7 +1111,7 @@ export function toolContext(
   tz: string,
   location?: { lat: number; lng: number } | null,
 ): ToolContext {
-  return { tz, todayKey: localDateKey(new Date(), tz), location: location ?? null };
+  return { tz, todayKey: localDateKey(new Date(), tz), location: location ?? null, completed: new Set() };
 }
 
 /** Falls back to the most recent client-reported position (< 2h old). */

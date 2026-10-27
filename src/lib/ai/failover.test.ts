@@ -74,6 +74,48 @@ describe("needsOwner", () => {
     expect(needsOwner("API key expired. Please renew the API key.")).toBe(true);
   });
 
+  it("flags a restricted key, a deactivated account and a reached spend limit", () => {
+    const restricted = cleanProviderMessage(
+      403,
+      JSON.stringify({
+        error: {
+          message:
+            "You have insufficient permissions for this operation. Missing scopes: model.request. Check that you have the correct role in your organization (Reader, Writer, Owner) and project (Member, Owner), and if you're using a restricted API key, that it has the necessary scopes.",
+          type: "invalid_request_error",
+          param: null,
+          code: null,
+        },
+      }),
+    );
+    const deactivated = cleanProviderMessage(
+      401,
+      JSON.stringify({
+        error: {
+          message:
+            "The OpenAI account associated with this API key has been deactivated. If you are the developer for this OpenAI app, please check your email for more information.",
+          type: "invalid_request_error",
+          code: "account_deactivated",
+          param: null,
+        },
+      }),
+    );
+    const spendLimit = cleanProviderMessage(
+      400,
+      JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+        },
+      }),
+    );
+    expect(needsOwner(restricted)).toBe(true);
+    expect(needsOwner(deactivated)).toBe(true);
+    expect(needsOwner(spendLimit)).toBe(true);
+    // a body that carries only its code still names it
+    expect(needsOwner(cleanProviderMessage(401, JSON.stringify({ error: { type: "account_deactivated" } })))).toBe(true);
+  });
+
   it("flags an OpenAI account out of credit", () => {
     const openai429 = cleanProviderMessage(
       429,
@@ -119,5 +161,8 @@ describe("needsOwner", () => {
       needsOwner("Rate limit reached for gpt-5-mini in organization org-x on tokens per min (TPM): Limit 200000, Used 199500."),
     ).toBe(false);
     expect(needsOwner("The model is overloaded. Please try again later.")).toBe(false);
+    expect(
+      needsOwner("This request would exceed the rate limit for your organization of 50,000 input tokens per minute."),
+    ).toBe(false);
   });
 });

@@ -16,9 +16,9 @@ const { notesRepo, projectsRepo, settingsRepo, tasksRepo } = await import("@/lib
 const { isoFromLocal } = await import("@/lib/utils");
 
 const TZ = "America/New_York";
-const ctx = toolContext(TZ);
 
-async function run(name: string, args: Record<string, unknown>) {
+/** Runs a tool; each call is its own chat turn unless a turn's ctx is passed. */
+async function run(name: string, args: Record<string, unknown>, ctx = toolContext(TZ)) {
   const spec = findTool(name);
   if (!spec) throw new Error(`no tool ${name}`);
   return spec.run(args, ctx);
@@ -89,6 +89,115 @@ describe("readDueInput", () => {
   });
 });
 
+describe("readDueInput zone abbreviations", () => {
+  it("accepts the user's own abbreviation at that time and no other", () => {
+    expect(readDueInput("2026-08-09T15:00:00 EDT", TZ)).toEqual({ dueAt: "2026-08-09T19:00:00.000Z", allDay: false });
+    expect(readDueInput("2026-12-09 3:00 PM est", TZ)).toEqual({ dueAt: "2026-12-09T20:00:00.000Z", allDay: false });
+    // EST in August is the wrong half of the year for New York.
+    expect(readDueInput("2026-08-09T15:00 EST", TZ)).toBe("invalid");
+    expect(readDueInput("2026-08-09T15:00 PDT", TZ)).toBe("invalid");
+    expect(readDueInput("2026-08-09T15:00Z EDT", TZ)).toBe("invalid");
+  });
+});
+
+describe("all-day dates sent with a time", () => {
+  it("keeps a midnight-Z all-day task on its own date", async () => {
+    const out = await run("create_task", { title: "pay taxes", dueAt: "2026-11-15T00:00:00Z", allDay: true });
+    const id = (out.payload as { created: { id: string } }).created.id;
+    expect(tasksRepo.get(id)?.dueAt).toBe(new Date(isoFromLocal("2026-11-15", "00:00", TZ)).toISOString());
+    expect(out.label).toBe("Added “pay taxes” · Sun Nov 15");
+  });
+
+  it("moves any other all-day time to local midnight of its day", async () => {
+    const task = tasksRepo.create({ title: "renew passport" });
+    await run("update_task", { id: task.id, dueAt: "2026-11-20T21:30", allDay: true });
+    const after = tasksRepo.get(task.id)!;
+    expect(after.allDay).toBe(true);
+    expect(after.dueAt).toBe(new Date(isoFromLocal("2026-11-20", "00:00", TZ)).toISOString());
+  });
+});
+
+describe("update_task keeps a monthly repeat day", () => {
+  /** A monthly-on-the-31st task ticked once, so it sits clamped on Nov 30. */
+  function clampedTask(title: string) {
+    const task = tasksRepo.create({
+      title,
+      dueAt: new Date(isoFromLocal("2026-11-30", "09:00", TZ)).toISOString(),
+      recurrence: { freq: "monthly", byMonthDay: 31 },
+    });
+    return task.id;
+  }
+
+  it("on a time-only change on a clamped day", async () => {
+    const id = clampedTask("card reminder");
+    await run("update_task", { id, dueAt: "2026-11-30T10:00" });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 31 });
+  });
+
+  it("when an unrelated edit echoes the stored dueAt", async () => {
+    const id = clampedTask("water bill");
+    await run("update_task", { id, priority: 3, dueAt: tasksRepo.get(id)!.dueAt });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 31 });
+  });
+
+  it("when the rule is resent without a day", async () => {
+    const id = clampedTask("phone bill");
+    await run("update_task", { id, recurrence: { freq: "monthly", interval: 2 } });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", interval: 2, byMonthDay: 31 });
+  });
+
+  it("on a one-off push to another day", async () => {
+    const id = clampedTask("gas bill");
+    await run("update_task", { id, dueAt: "2026-11-27T09:00" });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 31 });
+  });
+
+  it("but takes the day sent in recurrence.byMonthDay", async () => {
+    const id = clampedTask("council tax");
+    await run("update_task", { id, dueAt: "2026-11-27T09:00", recurrence: { freq: "monthly", byMonthDay: 27 } });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 27 });
+  });
+
+  it("and pins a rule that has no day yet from the new date", async () => {
+    const task = tasksRepo.create({
+      title: "pet insurance",
+      dueAt: new Date(isoFromLocal("2026-11-12", "09:00", TZ)).toISOString(),
+      recurrence: { freq: "monthly" },
+    });
+    await run("update_task", { id: task.id, dueAt: "2026-11-14T09:00" });
+    expect(tasksRepo.get(task.id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 14 });
+  });
+
+  it("and a Feb 29 yearly rule keeps its day on a time change", async () => {
+    const task = tasksRepo.create({
+      title: "leap birthday",
+      dueAt: new Date(isoFromLocal("2027-02-28", "09:00", TZ)).toISOString(),
+      recurrence: { freq: "yearly", byMonthDay: 29 },
+    });
+    await run("update_task", { id: task.id, dueAt: "2027-02-28T10:00" });
+    expect(tasksRepo.get(task.id)?.recurrence).toEqual({ freq: "yearly", byMonthDay: 29 });
+  });
+});
+
+describe("projects", () => {
+  it("says when create_project restores an archived project", async () => {
+    const project = projectsRepo.create({ name: "Allotment" });
+    projectsRepo.update(project.id, { archived: true });
+    const out = await run("create_project", { name: "allotment" });
+    expect(out.label).toBe("Restored archived project “Allotment”");
+    expect((out.payload as { restored?: boolean }).restored).toBe(true);
+    expect(projectsRepo.get(project.id)?.archived).toBe(false);
+  });
+
+  it("notes when filing a task restores an archived project", async () => {
+    const project = projectsRepo.create({ name: "Attic" });
+    projectsRepo.update(project.id, { archived: true });
+    const out = await run("create_task", { title: "sort boxes", projectName: "Attic" });
+    expect((out.payload as { projectNote?: string }).projectNote).toBe("Restored archived project “Attic”");
+    expect(projectsRepo.get(project.id)?.archived).toBe(false);
+  });
+});
+
 describe("create_task and update_task", () => {
   it("leaves the due date alone when update_task gets a date it cannot read", async () => {
     const task = tasksRepo.create({ title: "tax form", dueAt: "2026-10-30T13:00:00.000Z" });
@@ -127,7 +236,7 @@ describe("create_task and update_task", () => {
     expect((out.payload as { updated: { repeat: string } }).updated.repeat).toBe("Quarterly on day 31");
   });
 
-  it("moves the repeat day with the due date unless a day is sent", async () => {
+  it("moves only this occurrence when dueAt changes, and the repeat day when one is sent", async () => {
     const out = await run("create_task", {
       title: "water bill",
       dueAt: "2026-01-31T09:00",
@@ -135,9 +244,9 @@ describe("create_task and update_task", () => {
     });
     const id = (out.payload as { created: { id: string } }).created.id;
     await run("update_task", { id, dueAt: "2026-02-05T09:00" });
-    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 5 });
-    await run("update_task", { id, dueAt: "2026-02-06T09:00", recurrence: { freq: "monthly", byMonthDay: 31 } });
     expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 31 });
+    await run("update_task", { id, recurrence: { freq: "monthly", byMonthDay: 5 } });
+    expect(tasksRepo.get(id)?.recurrence).toEqual({ freq: "monthly", byMonthDay: 5 });
   });
 
   it("keeps a subtask and its assignee on the parent's list", async () => {
@@ -227,6 +336,39 @@ describe("complete_task", () => {
     const again = await run("complete_task", { id: task.id, done: false });
     expect(again.ok).toBe(false);
     expect(tasksRepo.get(task.id)?.dueAt).toBe(advanced);
+  });
+});
+
+describe("complete_task on a repeating task", () => {
+  function gym(title: string) {
+    return tasksRepo.create({
+      title,
+      dueAt: new Date(Date.now() + 3600_000).toISOString(),
+      recurrence: { freq: "daily" },
+    });
+  }
+
+  it("ticks it once when the model completes it twice in one turn", async () => {
+    const task = gym("swim");
+    const turn = toolContext(TZ);
+    await run("complete_task", { id: task.id }, turn);
+    const advanced = tasksRepo.get(task.id)!.dueAt;
+    const again = await run("complete_task", { id: task.id }, turn);
+    expect(again.label).toMatch(/^“swim” was already ticked · next /);
+    expect(completions(task.id)).toBe(1);
+    expect(tasksRepo.get(task.id)?.dueAt).toBe(advanced);
+  });
+
+  it("does not tick it again when expectedDueAt is out of date", async () => {
+    const task = gym("run");
+    await run("complete_task", { id: task.id, expectedDueAt: task.dueAt });
+    const advanced = tasksRepo.get(task.id)!.dueAt;
+    const stale = await run("complete_task", { id: task.id, expectedDueAt: task.dueAt });
+    expect(stale.label).toMatch(/^“run” was already ticked · next /);
+    expect(completions(task.id)).toBe(1);
+    const fresh = await run("complete_task", { id: task.id, expectedDueAt: advanced });
+    expect(fresh.label).toMatch(/^Completed “run” · next /);
+    expect(completions(task.id)).toBe(2);
   });
 });
 

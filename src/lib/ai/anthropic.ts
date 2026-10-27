@@ -5,6 +5,9 @@ import { iterateSse } from "@/lib/ai/sse";
 import { toAnthropicTools } from "@/lib/ai/tools";
 import {
   ANTHROPIC_VERSION,
+  OUT_OF_TOKENS,
+  REASONING_HEADROOM,
+  cleanProviderMessage,
   providerError,
   type CompleteArgs,
   type LlmToolCall,
@@ -213,6 +216,13 @@ export function anthropicSystem(system: string, shared: string[] = []): unknown 
 /** Leaves one of the API's four for the conversation tail in chat. */
 const MAX_BREAKPOINTS = 3;
 
+/**
+ * Models that refused an effort setting (some older ones reject it),
+ * remembered so each pays for one refused request per process rather than
+ * one per call.
+ */
+const NO_EFFORT = new Set<string>();
+
 async function complete({
   cfg,
   system,
@@ -222,26 +232,55 @@ async function complete({
   signal,
   feature,
 }: CompleteArgs): Promise<string> {
-  const res = await fetch(`${cfg.baseUrl}/messages`, {
-    method: "POST",
-    headers: headers(cfg),
-    body: JSON.stringify({
-      model: cfg.model,
-      max_tokens: maxTokens,
-      system: anthropicSystem(system, shared),
-      messages: [{ role: "user", content: prompt }],
-    }),
-    signal,
-  });
+  // Current Claude models think when `thinking` is left out, and max_tokens
+  // caps the thinking and the answer together, so a cap sized for the answer
+  // alone can run out first. They get the headroom, which bills nothing
+  // unused, and effort "low", which is below every model's default (high, or
+  // medium on some). Thinking is never switched off: the newest models refuse
+  // that outright.
+  let lowEffort = !NO_EFFORT.has(cfg.model);
+  let headroom = true;
+
+  const send = () =>
+    fetch(`${cfg.baseUrl}/messages`, {
+      method: "POST",
+      headers: headers(cfg),
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: headroom ? maxTokens + REASONING_HEADROOM : maxTokens,
+        system: anthropicSystem(system, shared),
+        messages: [{ role: "user", content: prompt }],
+        ...(lowEffort ? { output_config: { effort: "low" } } : {}),
+      }),
+      signal,
+    });
+
+  let res = await send();
+  for (let retry = 0; !res.ok && res.status === 400 && retry < 2; retry++) {
+    const raw = await res.text().catch(() => "");
+    if (lowEffort && /effort|output_config/i.test(raw)) {
+      lowEffort = false;
+      NO_EFFORT.add(cfg.model);
+    } else if (headroom && /max_tokens/i.test(raw)) {
+      // A model with a small output limit: the answer's own cap still fits.
+      headroom = false;
+    } else {
+      throw new Error(cleanProviderMessage(res.status, raw));
+    }
+    res = await send();
+  }
   if (!res.ok) throw await providerError(res);
+
   const payload = asRecord(safeJsonParse(await res.text()));
   recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload?.usage) });
-  return asArray(payload?.content)
+  const text = asArray(payload?.content)
     .map((entry) => {
       const rec = asRecord(entry);
       return asString(rec?.type) === "text" ? (asString(rec?.text) ?? "") : "";
     })
     .join("");
+  if (!text && asString(payload?.stop_reason) === "max_tokens") throw new Error(OUT_OF_TOKENS);
+  return text;
 }
 
 async function models(cfg: ProviderConfig): Promise<ModelInfo[]> {

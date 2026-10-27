@@ -9,7 +9,7 @@ import type { StatsSummary, WeeklyReview } from "@/lib/types";
 import { weekRangeLabel } from "@/lib/format";
 import { Page } from "@/components/shell/Page";
 import { PageHeader, Skeleton } from "@/components/ui/Misc";
-import { IconButton } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { IconRefresh, IconSparkles } from "@/components/ui/icons";
 import { AiNudge } from "@/components/today/AiNudge";
 import { StreakRing } from "@/components/review/StreakRing";
@@ -138,6 +138,14 @@ export default function ReviewPage() {
             </div>
           ) : null}
         </motion.section>
+      ) : reviewError ? (
+        // Nothing saved and the write failed; it isn't retried on its own today.
+        <section className="card flex items-center gap-3 p-5">
+          <p className="flex-1 text-[14px] text-muted">Couldn’t write this week’s review.</p>
+          <Button size="sm" onClick={refresh} loading={refreshing}>
+            Try again
+          </Button>
+        </section>
       ) : null}
     </Page>
   );

@@ -27,9 +27,10 @@ vi.mock("@/lib/push", () => ({
   sendPushToAll: async (payload: unknown) => void mocks.pushes.push(payload),
 }));
 
-const { openaiAdapter, toOpenAiMessages, GEMINI_SKIP_SIGNATURE } = await import("@/lib/ai/openai");
+const { openaiAdapter, toOpenAiMessages, lowEffortCutsSpend, GEMINI_SKIP_SIGNATURE } = await import("@/lib/ai/openai");
+const { anthropicAdapter, anthropicSystem } = await import("@/lib/ai/anthropic");
 const { fallbackConfig, recordFallback, refreshFallbackModel, testProvider } = await import("@/lib/ai/adapters");
-const { GEMINI_BASE, OPENAI_BASE, OUT_OF_TOKENS } = await import("@/lib/ai/provider");
+const { ANTHROPIC_BASE, GEMINI_BASE, OPENAI_BASE, OUT_OF_TOKENS } = await import("@/lib/ai/provider");
 type ProviderConfig = import("@/lib/ai/provider").ProviderConfig;
 type LlmTurn = import("@/lib/ai/provider").LlmTurn;
 
@@ -255,13 +256,25 @@ describe("complete() with models that think before they answer", () => {
     json: { error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } },
   };
 
-  it("gives an OpenAI reasoning model room to think and asks it to keep that short", async () => {
+  const gpt5mini: ProviderConfig = { ...openai, model: "gpt-5-mini" };
+
+  it("gives an OpenAI reasoning model room to think, and low effort where its default is higher", async () => {
     replies.push(demandsNewField, answer("{}"));
-    expect(await ask(openai)).toBe("{}");
+    expect(await ask(gpt5mini)).toBe("{}");
     expect(sent[0].body).toMatchObject({ max_tokens: 400 });
     expect(sent[0].body).not.toHaveProperty("reasoning_effort");
     expect(sent[1].body).toMatchObject({ max_completion_tokens: 400 + 4096, reasoning_effort: "low" });
     expect(sent[1].body).not.toHaveProperty("max_tokens");
+  });
+
+  it("never raises a later GPT-5 release above its default of none", async () => {
+    for (const model of ["gpt-5.1", "gpt-5.4-mini", "gpt-5.6-terra"]) {
+      sent.length = 0;
+      replies.push(demandsNewField, answer("{}"));
+      await ask({ ...openai, model });
+      expect(sent[1].body).toMatchObject({ max_completion_tokens: 400 + 4096 });
+      expect(sent[1].body).not.toHaveProperty("reasoning_effort");
+    }
   });
 
   it("keeps the room but drops the effort for a model that won't take one", async () => {
@@ -270,15 +283,58 @@ describe("complete() with models that think before they answer", () => {
       { status: 400, json: { error: { message: "Unsupported value: 'reasoning_effort' does not support 'low' with this model." } } },
       answer("{}"),
     );
-    expect(await ask(openai)).toBe("{}");
+    expect(await ask(gpt5mini)).toBe("{}");
     expect(sent[2].body).toMatchObject({ max_completion_tokens: 400 + 4096 });
     expect(sent[2].body).not.toHaveProperty("reasoning_effort");
   });
 
-  it("treats Gemini as a thinking model from the first request", async () => {
+  it("gives Gemini room from the first request, and low effort only where its default is higher", async () => {
     replies.push(answer("{}"));
     await ask(gemini);
     expect(sent[0].body).toMatchObject({ max_tokens: 400 + 4096, reasoning_effort: "low" });
+
+    for (const model of ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash"]) {
+      sent.length = 0;
+      replies.push(answer("{}"));
+      await ask({ ...gemini, model });
+      expect(sent[0].body).toMatchObject({ max_tokens: 400 + 4096 });
+      expect(sent[0].body).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("asks for low effort only from families whose default is higher", () => {
+    const yes: Array<[ProviderConfig["kind"], string]> = [
+      ["openai", "gpt-5"],
+      ["openai", "gpt-5-mini-2025-08-07"],
+      ["openai", "gpt-5-nano"],
+      ["openai", "o3"],
+      ["openai", "o4-mini"],
+      ["gemini", "gemini-2.5-pro"],
+      ["gemini", "gemini-2.5-flash"],
+      ["gemini", "gemini-2.5-flash-preview-09-2025"],
+      ["gemini", "gemini-3-pro-preview"],
+      ["gemini", "gemini-3.8-flash"],
+      ["gemini", "gemini-4-argon"],
+    ];
+    const no: Array<[ProviderConfig["kind"], string]> = [
+      ["openai", "gpt-5.1"],
+      ["openai", "gpt-5.2"],
+      ["openai", "gpt-5.4-mini"],
+      ["openai", "gpt-5-chat-latest"],
+      ["openai", "gpt-4o"],
+      ["gemini", "gemini-2.5-flash-lite"],
+      ["gemini", "gemini-3.5-flash-lite"],
+      ["gemini", "gemini-4-flash-lite"],
+      ["gemini", "gemini-2.0-flash"],
+      ["gemini", "gemini-pro-latest"],
+      ["gemini", "gemini-40-pro"],
+      // the same ids on a custom host could be anything
+      ["custom", "gpt-5-mini"],
+      ["custom", "gemini-3.8-pro"],
+      ["anthropic", "o3"],
+    ];
+    for (const [kind, id] of yes) expect(lowEffortCutsSpend(kind, id), `${kind} ${id}`).toBe(true);
+    for (const [kind, id] of no) expect(lowEffortCutsSpend(kind, id), `${kind} ${id}`).toBe(false);
   });
 
   it("leaves a plain model's request as it was", async () => {
@@ -303,6 +359,84 @@ describe("complete() with models that think before they answer", () => {
     replies.push({ status: 500, json: { error: { message: "server exploded" } } });
     await expect(ask(openai)).rejects.toThrow("server exploded");
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("Anthropic complete() with models that think by default", () => {
+  const claude = (model: string): ProviderConfig => ({ kind: "anthropic", baseUrl: ANTHROPIC_BASE, apiKey: "ak", model });
+  const ask = (model: string, maxTokens = 400) =>
+    anthropicAdapter.complete({
+      cfg: claude(model),
+      system: "SYS",
+      shared: ["RULES", "CONTEXT"],
+      prompt: "go",
+      maxTokens,
+      signal: AbortSignal.timeout(5000),
+    });
+  const reply = (content: unknown[], stop_reason = "end_turn") => ({
+    json: { type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 40, output_tokens: 5 } },
+  });
+  const refused = (message: string) => ({ status: 400, json: { type: "error", error: { type: "invalid_request_error", message } } });
+
+  it("gives room and low effort, never touches thinking, and keeps the cached system blocks as they were", async () => {
+    replies.push(reply([{ type: "text", text: "{}" }]));
+    expect(await ask("claude-test-sonnet")).toBe("{}");
+    const body = sent[0].body!;
+    expect(body.max_tokens).toBe(400 + 4096);
+    expect(body.output_config).toEqual({ effort: "low" });
+    expect(body).not.toHaveProperty("thinking");
+    expect(JSON.stringify(body.system)).toBe(JSON.stringify(anthropicSystem("SYS", ["RULES", "CONTEXT"])));
+  });
+
+  it("drops effort for a model that refuses it, keeps the room, and remembers", async () => {
+    replies.push(refused("This model does not support the effort parameter."), reply([{ type: "text", text: "{}" }]));
+    expect(await ask("claude-old-a")).toBe("{}");
+    expect(sent[1].body).not.toHaveProperty("output_config");
+    expect(sent[1].body?.max_tokens).toBe(400 + 4096);
+
+    // the next call goes straight to what works
+    replies.push(reply([{ type: "text", text: "{}" }]));
+    await ask("claude-old-a");
+    expect(sent).toHaveLength(3);
+    expect(sent[2].body).not.toHaveProperty("output_config");
+  });
+
+  it("falls back to the plain cap on a model with a small output limit", async () => {
+    replies.push(
+      refused("max_tokens: 4496 > 4096, which is the maximum allowed number of output tokens for claude-old-b"),
+      reply([{ type: "text", text: "{}" }]),
+    );
+    expect(await ask("claude-old-b")).toBe("{}");
+    expect(sent[1].body?.max_tokens).toBe(400);
+  });
+
+  it("says so when the whole budget went on thinking", async () => {
+    replies.push(reply([{ type: "thinking", thinking: "", signature: "x" }], "max_tokens"));
+    await expect(ask("claude-test-opus")).rejects.toThrow(OUT_OF_TOKENS);
+  });
+
+  it("still returns a partial answer cut off at the cap, for salvage", async () => {
+    replies.push(reply([{ type: "thinking", thinking: "" }, { type: "text", text: '{"tasks":[' }], "max_tokens"));
+    expect(await ask("claude-test-haiku")).toBe('{"tasks":[');
+  });
+
+  it("does not retry other failures", async () => {
+    replies.push({ status: 529, json: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } } });
+    await expect(ask("claude-test-sonnet")).rejects.toThrow("Overloaded");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("lets testProvider count a Claude model that ran dry as connected, and say so", async () => {
+    process.env.ANTHROPIC_API_KEY = "ak";
+    try {
+      mocks.app.ai = baseAi({ provider: "anthropic", model: "claude-test-sonnet" });
+      replies.push(reply([{ type: "thinking", thinking: "" }], "max_tokens"));
+      const r = await testProvider("anthropic");
+      expect(r.ok).toBe(true);
+      expect(r.message).toMatch(/^claude-test-sonnet responded, but used its whole token budget thinking/);
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
   });
 });
 

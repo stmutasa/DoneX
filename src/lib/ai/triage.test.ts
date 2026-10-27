@@ -366,19 +366,48 @@ describe("triageInboxItem", () => {
     expect(call.prompt).not.toContain("Return JSON exactly like");
   });
 
-  it("updates a joint-list task the prompt showed the model", async () => {
-    const joint = tasksRepo.create({ title: "Dentist appointment Tue 3pm", space: "joint" });
-    const item = email("Your appointment has moved to Thursday at 10am.");
+  it("never applies an update to a joint task or copies the owner's mail into it", async () => {
+    const joint = tasksRepo.create({ title: "Dentist appointment", space: "joint", dueAt: "2026-11-03T20:00:00.000Z" });
+    const item = email("Your biopsy results are in. Your follow-up moved to Thursday 10am.");
     answer({
       decision: "update",
       reason: "Appointment moved",
-      update: { taskTitle: "Dentist appointment Tue 3pm", dueAtLocal: null, priority: null, note: "Moved to Thu 10am" },
+      update: {
+        taskTitle: "Dentist appointment",
+        dueAtLocal: "2026-11-05 10:00",
+        priority: null,
+        note: "Biopsy results are in; follow-up moved to Thu 10am",
+      },
+    });
+    const out = await triageInboxItem(item.id);
+
+    // The owner confirms it on the card: still in the inbox, naming the task and the change.
+    expect(out.status).toBe("new");
+    expect(out.suggestion?.action).toBe("task");
+    expect(out.suggestion?.reason).toContain("shared task “Dentist appointment”");
+    expect(out.suggestion?.reason).toContain("due");
+    expect(out.suggestion?.updatedTaskTitle).toBeUndefined();
+    // The partner-visible task is untouched.
+    const shared = tasksRepo.get(joint.id)!;
+    expect(shared.notes).toBe("");
+    expect(shared.dueAt).toBe("2026-11-03T20:00:00.000Z");
+    // And the sweep leaves it for the owner.
+    sweepAutoDismissable();
+    expect(inboxRepo.get(item.id)?.status).toBe("new");
+  });
+
+  it("still applies an update to a personal task straight away", async () => {
+    const mine = tasksRepo.create({ title: "Pick up the dry cleaning" });
+    const item = email("Your order is ready for pickup after 3pm.");
+    answer({
+      decision: "update",
+      update: { taskTitle: "Pick up the dry cleaning", dueAtLocal: null, priority: null, note: "Ready after 3pm" },
     });
     const out = await triageInboxItem(item.id);
 
     expect(out.status).toBe("resolved");
-    expect(out.resolvedTaskId).toBe(joint.id);
-    expect(tasksRepo.get(joint.id)?.notes).toContain("Moved to Thu 10am");
+    expect(out.resolvedTaskId).toBe(mine.id);
+    expect(tasksRepo.get(mine.id)?.notes).toContain("Ready after 3pm");
   });
 
   it("appends an update without cutting the task's long notes", async () => {

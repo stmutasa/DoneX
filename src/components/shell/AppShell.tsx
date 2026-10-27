@@ -9,7 +9,6 @@ import { motion } from "framer-motion";
 import { fetcher, keys } from "@/lib/api";
 import { setDisplayTimeZone } from "@/lib/format";
 import { usePushDevice } from "@/lib/pushClient";
-import { signOutThisDevice } from "@/lib/signOut";
 import type { FeatureSettings, InboxItem, StatsSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -38,7 +37,9 @@ import {
   visibleItems,
 } from "./nav";
 import { OfflineBanner } from "./OfflineBanner";
+import { setInstallPromptOwner } from "@/hooks/useInstallPrompt";
 import { useTheme } from "./ThemeProvider";
+import { useSignOut } from "./useSignOut";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -47,10 +48,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
 
-  const { data: me } = useSWR<{ role: "owner" | "partner"; features?: FeatureSettings; tz?: string }>(
-    keys.me(),
-    fetcher,
-  );
+  const { data: me } = useSWR<{
+    role: "owner" | "partner";
+    features?: FeatureSettings;
+    tz?: string;
+    pinCollision?: boolean;
+  }>(keys.me(), fetcher);
   // All-day dates are stored at midnight in the app's zone. Set it here, during
   // render, so the pages rendered below already read their dates in it.
   if (me?.tz) setDisplayTimeZone(me.tz);
@@ -58,6 +61,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const features = me?.features;
   // Owner-only fetches wait until the role is actually known.
   const owner = me?.role === "owner";
+  // Only the owner has an in-app Install button (Settings → Appearance), so
+  // only the owner's session holds back the browser's own install prompt.
+  useEffect(() => {
+    if (me?.role) setInstallPromptOwner(me.role === "owner");
+  }, [me?.role]);
 
   // Re-posts this device's push subscription once the role is known, so the
   // server sends it what belongs to whoever is signed in here now.
@@ -104,15 +112,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => setMoreOpen(false), [pathname]);
 
-  // Only the server can end the (httpOnly) session, so a failed logout stays
-  // signed in and says so rather than showing a lock screen over it.
-  const signOut = async () => {
-    try {
-      await signOutThisDevice();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not sign out");
-    }
-  };
+  // Asks before losing unsynced changes; a failed logout stays signed in and
+  // says so rather than showing a lock screen over a live session.
+  const signOut = useSignOut();
 
   if (partner) {
     // Settings is the owner's, so the partner turns pings on from her bar.
@@ -140,6 +142,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-bg">
       <OfflineBanner />
+      {me?.pinCollision ? (
+        <Link
+          href="/settings/profile"
+          className="block border-b border-stroke bg-elev px-4 py-2 text-center text-[13px] font-medium text-warn lg:pl-[264px]"
+        >
+          Your PIN is the same as your partner’s — change it in Settings → Profile.
+        </Link>
+      ) : null}
       <DesktopSidebar
         pathname={pathname}
         features={features}

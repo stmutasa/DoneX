@@ -40,8 +40,11 @@ export interface Trip {
   startDay?: string;
   /** set when the trip ends on an all-day booking: its last date */
   endDay?: string;
-  destination: string;
-  /** destination's IANA zone, when the calendar named one */
+  /** the place the trip is about — where you spend longest; null when nothing names it */
+  destination: string | null;
+  /** where you are now on a trip with several stops, once you've reached one */
+  here?: string;
+  /** IANA zone the trip's clock follows, when the calendar named one */
   timeZone?: string | null;
   /** destination's UTC offset in minutes, when it could be read */
   offsetMinutes: number | null;
@@ -165,92 +168,167 @@ export function travelLegs(events: CalendarEvent[], opts: TripOptions = {}): Tra
 
 /** Legs within a day of each other belong to the same trip. */
 const GAP_MS = 36 * 60 * 60 * 1000;
+/** A flight back within this long of a flight out is the same trip, with no hotel between. */
+const RETURN_MS = 21 * DAY_MS;
 /** A booking longer than this has someone sleeping away from home. */
 const NIGHT_MS = 20 * 60 * 60 * 1000;
 
 const spansNight = (l: TravelLeg) => Date.parse(l.end) - Date.parse(l.start) > NIGHT_MS;
 
+/** "(DEN → LGA)" → { from: "DEN", to: "LGA" } */
+function airportsOf(l: TravelLeg): { from: string; to: string } | null {
+  const pair = AIRPORTS_RE.exec(l.title);
+  return pair ? { from: pair[1], to: pair[2] } : null;
+}
+
+/** A stay or car booked in the home zone: home-side (an airport hotel, a car
+ *  to the airport), or typed in at home and carrying the home calendar's zone. */
+function homeSide(l: TravelLeg, opts: TripOptions): boolean {
+  return l.kind !== "flight" && !!opts.tz && l.timeZone === opts.tz;
+}
+
+/** How a group of legs starts, and which flight (if any) takes you home. */
+function shapeOf(cluster: TravelLeg[], opts: TripOptions): { startLeg: TravelLeg; flightHome: TravelLeg | null } {
+  // An all-day booking has a date but no time: a timed leg that starts on its
+  // first day (the flight out) starts the trip.
+  const first = cluster[0];
+  const last = cluster[cluster.length - 1];
+  const startLeg = first.startDay
+    ? (cluster.find((l) => !l.startDay && Date.parse(l.start) < Date.parse(first.start) + DAY_MS) ?? first)
+    : first;
+
+  // The last flight goes home only if something came before it away from
+  // home: a flight out, or a night somewhere other than home. A flight that
+  // lands outside the home zone never does — the night before at the
+  // airport hotel leaves it as the way out.
+  const landsAway = !!opts.tz && !!last.timeZone && last.timeZone !== opts.tz;
+  const awayBefore = cluster.some(
+    (l) => l !== last && (l.kind === "flight" || (spansNight(l) && !homeSide(l, opts))),
+  );
+  const flightHome = last.kind === "flight" && last !== startLeg && !landsAway && awayBefore ? last : null;
+  return { startLeg, flightHome };
+}
+
+/**
+ * A flight out and a flight back with nothing booked between (staying with
+ * family) fall more than a day apart; they are still one trip when the
+ * second leaves from where the first landed, or, when the titles name no
+ * airports, lands back in the home zone.
+ */
+function continues(prev: TravelLeg[], prevEnd: number, next: TravelLeg[], opts: TripOptions): boolean {
+  const out = prev[prev.length - 1];
+  const back = next[0];
+  if (out.kind !== "flight" || back.kind !== "flight") return false;
+  if (Date.parse(back.start) - prevEnd > RETURN_MS) return false;
+  if (shapeOf(prev, opts).flightHome) return false; // already home
+  const landed = airportsOf(out)?.to;
+  const leaves = airportsOf(back)?.from;
+  if (landed && leaves) return landed === leaves;
+  return !!opts.tz && back.timeZone === opts.tz;
+}
+
+/**
+ * The place a trip is about: the arrival followed by the longest time on the
+ * ground, so a connection doesn't name it. Stays carry no place of their own.
+ */
+function mainStop(away: TravelLeg[], cluster: TravelLeg[], tripEnd: number): TravelLeg | undefined {
+  let best: TravelLeg | undefined;
+  let longest = -Infinity;
+  for (const leg of away) {
+    if (leg.kind !== "flight" || !leg.destination) continue;
+    const landed = Date.parse(leg.end);
+    const next = cluster.find((l) => l !== leg && l.kind === "flight" && Date.parse(l.start) >= landed);
+    const ground = (next ? Date.parse(next.start) : tripEnd) - landed;
+    if (ground > longest) {
+      best = leg;
+      longest = ground;
+    }
+  }
+  return best ?? away.find((l) => l.destination);
+}
+
 /**
  * The leg whose zone the trip's clock follows: the latest one that has begun,
- * so a multi-stop trip moves with you. Legs in the home zone are passed over
- * while any other zone is on the trip — an airport hotel, or an event typed
- * in at home, carries the home calendar's zone wherever it is.
+ * so a multi-stop trip moves with you. A flight's zone is where it lands,
+ * home included. A stay or car in the home zone is passed over while any
+ * other zone is on the trip, but until something away has begun the clock
+ * stays home: the night at the airport hotel is still home time.
  */
 function clockLeg(away: TravelLeg[], opts: TripOptions): TravelLeg | undefined {
-  const zoned = away.filter((l) => l.timeZone);
-  const abroad = zoned.filter((l) => l.timeZone !== opts.tz);
-  const pool = abroad.length > 0 ? abroad : zoned;
   const at = (opts.now ?? new Date()).getTime();
-  const begun = pool.filter((l) => Date.parse(l.start) <= at);
-  return begun[begun.length - 1] ?? pool[0] ?? away.find((l) => l.offsetMinutes !== null);
+  const begun = (legs: TravelLeg[]) => legs.filter((l) => Date.parse(l.start) <= at);
+  const zoned = away.filter((l) => l.timeZone);
+  if (zoned.length === 0) {
+    // Only offsets written into the times to go on.
+    const offsets = away.filter((l) => l.offsetMinutes !== null);
+    return begun(offsets).pop() ?? offsets[0];
+  }
+  const trusted = zoned.filter((l) => !homeSide(l, opts));
+  const pool = trusted.length > 0 ? trusted : zoned;
+  const begunAway = begun(pool);
+  if (begunAway.length > 0) return begunAway[begunAway.length - 1];
+  if (begun(away).length > 0) return begun(zoned).pop();
+  return pool[0];
 }
 
 export function detectTrips(events: CalendarEvent[], opts: TripOptions = {}): Trip[] {
   const legs = travelLegs(events, opts);
   if (legs.length === 0) return [];
+  const at = (opts.now ?? new Date()).getTime();
 
   // The gap is measured from the latest end so far, so a short stay inside a
   // long car rental doesn't split the flight home off into a trip of its own.
-  const clusters: TravelLeg[][] = [];
-  let clusterEnd = 0;
+  const clusters: { legs: TravelLeg[]; end: number }[] = [];
   for (const leg of legs) {
     const current = clusters[clusters.length - 1];
     const end = Date.parse(leg.end);
-    if (current && Date.parse(leg.start) - clusterEnd <= GAP_MS) {
-      current.push(leg);
-      clusterEnd = Math.max(clusterEnd, end);
+    if (current && Date.parse(leg.start) - current.end <= GAP_MS) {
+      current.legs.push(leg);
+      current.end = Math.max(current.end, end);
+    } else if (current && continues(current.legs, current.end, [leg], opts)) {
+      current.legs.push(leg);
+      current.end = Math.max(current.end, end);
     } else {
-      clusters.push([leg]);
-      clusterEnd = end;
+      clusters.push({ legs: [leg], end });
     }
   }
 
   return clusters
-    .map((cluster) => {
+    .map(({ legs: cluster }) => {
       // A single rental car or a one-night hotel is an errand, not a trip.
       const hasFlight = cluster.some((l) => l.kind === "flight");
       if (!hasFlight && !cluster.some(spansNight)) return null;
 
-      // An all-day booking has a date but no time: a timed leg that starts on
-      // its first day (the flight out) starts the trip, and one that ends on
-      // its last day (the flight home) ends it.
-      const first = cluster[0];
-      const last = cluster[cluster.length - 1];
-      const startLeg = first.startDay
-        ? (cluster.find((l) => !l.startDay && Date.parse(l.start) < Date.parse(first.start) + DAY_MS) ?? first)
-        : first;
-
-      // The flight that closes a trip goes home, so it names neither the place
-      // nor its clock. It is only that when there is a flight out before it,
-      // or a night spent away: a short airport hotel or a car to the airport
-      // ahead of the only flight leaves that flight as the way out. When the
-      // flight out is missing, where the flight home leaves from is the best
-      // name there is.
-      const before = cluster.filter((l) => l !== last);
-      const flightHome =
-        last.kind === "flight" && last !== startLeg && before.some((l) => l.kind === "flight" || spansNight(l))
-          ? last
-          : null;
+      const { startLeg, flightHome } = shapeOf(cluster, opts);
       const away = cluster.filter((l) => l !== flightHome);
-      const named = away.find((l) => l.destination)?.destination ?? (flightHome && originFrom(flightHome.title));
-      const zoned = clockLeg(away, opts);
 
+      // An all-day booking's last day ends the trip, unless a timed leg (the
+      // flight home) ends on that day.
       const lastEnd = Math.max(...cluster.map((l) => Date.parse(l.end)));
-      const lastLeg = cluster.find((l) => Date.parse(l.end) === lastEnd) ?? last;
+      const lastLeg = cluster.find((l) => Date.parse(l.end) === lastEnd) ?? cluster[cluster.length - 1];
       const endLeg = lastLeg.endDay
         ? (cluster
             .filter((l) => !l.endDay && Date.parse(l.end) > lastEnd - DAY_MS)
             .sort((a, b) => Date.parse(b.end) - Date.parse(a.end))[0] ?? lastLeg)
         : lastLeg;
 
+      // When the flight out is missing, where the flight home leaves from is
+      // the best name there is.
+      const named =
+        mainStop(away, cluster, Date.parse(endLeg.end))?.destination ??
+        (flightHome ? originFrom(flightHome.title) : null);
+      const here = away.filter((l) => l.destination && Date.parse(l.start) <= at).pop()?.destination;
+      const zoned = clockLeg(away, opts);
+
       const trip: Trip = {
         start: startLeg.start,
         end: endLeg.end,
-        destination: named || "your trip",
+        destination: named ?? null,
         timeZone: zoned?.timeZone ?? null,
         offsetMinutes: zoned?.offsetMinutes ?? null,
         legs: cluster,
       };
+      if (here) trip.here = here;
       if (startLeg.startDay) trip.startDay = startLeg.startDay;
       if (endLeg.endDay) trip.endDay = endLeg.endDay;
       return trip;

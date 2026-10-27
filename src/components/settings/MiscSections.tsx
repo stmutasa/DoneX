@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { authApi, dataApi } from "@/lib/api";
-import { signOutThisDevice } from "@/lib/signOut";
+import { mutate as refresh } from "swr";
+import { authApi, dataApi, keys } from "@/lib/api";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
@@ -18,6 +18,7 @@ import {
   IconUpload,
 } from "@/components/ui/icons";
 import { useTheme } from "@/components/shell/ThemeProvider";
+import { useSignOut } from "@/components/shell/useSignOut";
 import { SettingsCard, Divider, useSettingsPatch, type SectionProps } from "./common";
 
 export function ProfileSection({ settings, mutate }: SectionProps) {
@@ -48,6 +49,8 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
     try {
       await authApi.changePin(pin);
       toast.success("PIN updated — your other devices are signed out");
+      // Drops the shell's "same PIN as your partner's" banner, if it showed.
+      void refresh(keys.me());
       setPin("");
       setPinConfirm("");
       setPinOpen(false);
@@ -58,18 +61,14 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
     }
   };
 
+  const signOutThisDevice = useSignOut();
   const signOut = async () => {
     const ok = await confirm({
       title: "Sign out?",
       message: "You’ll need your PIN to get back in.",
       confirmLabel: "Sign out",
     });
-    if (!ok) return;
-    try {
-      await signOutThisDevice();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not sign out");
-    }
+    if (ok) await signOutThisDevice();
   };
 
   return (

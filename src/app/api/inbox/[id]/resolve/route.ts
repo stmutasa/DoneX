@@ -64,11 +64,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!item) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  // Already handled (a second tap, or scheduled triage got there first):
-  // resolving again would make a duplicate task or note. Dismissing a
-  // dismissed item again is harmless, and its reason is still a lesson.
-  const redismiss = body.action === "dismiss" && item.status === "dismissed";
-  if (item.status !== "new" && !redismiss) {
+  // Already made into a task or note (a second tap, or triage got there
+  // first): doing it again would make a duplicate. A dismissed item made
+  // nothing, so the user's choice still goes ahead over triage's, and
+  // dismissing it again just records the reason as a lesson.
+  if (item.status === "resolved") {
     return NextResponse.json({ error: "That item was already handled" }, { status: 409 });
   }
 

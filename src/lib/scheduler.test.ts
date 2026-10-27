@@ -322,6 +322,14 @@ describe("a weekly review set for Monday", () => {
     expect(settingsRepo.getKV("sched.lastReviewedWeek")).toBe("2026-W44");
   });
 
+  it("doesn't send again when a deploy lands just after the old build's Monday send", async () => {
+    settingsRepo.updateApp({ notifications: { weeklyTime: "20:00" } });
+    // The old build sent at 8 PM Monday 2026-10-26 and stored the week it fell in.
+    settingsRepo.setKV("sched.lastReviewWeek", "2026-W44");
+    await tickAt("2026-10-27T01:30:00Z"); // 9:30 PM EDT, inside the window
+    expect(sentWhere((s) => s.title === "Your week in review")).toHaveLength(0);
+  });
+
   it("still honours the old key on a Sunday, where it meant the same week", async () => {
     settingsRepo.updateApp({ notifications: { weeklyDay: 0, weeklyTime: "18:00" } });
     settingsRepo.setKV("sched.lastReviewWeek", "2026-W43");
@@ -499,6 +507,30 @@ describe("on a trip", () => {
       location: null,
     },
   ];
+
+  it("isn't skipped the next Sunday by a key the old build wrote from a trip", async () => {
+    settingsRepo.updateApp({ joint: { ownerWeekAheadEnabled: true, ownerWeekAheadTime: "18:00" } });
+    // Sun Oct 25 6 PM in Honolulu was Mon at home: the old build stored W44.
+    settingsRepo.setKV("sched.lastWeekAhead.owner", "2026-W44");
+    settingsRepo.setKV(
+      "joint.weekAhead.owner",
+      JSON.stringify({ text: "Last week's.", weekOf: "2026-10-26", at: "2026-10-26T04:00:00Z" }),
+    );
+    await tickAt("2026-11-01T23:05:00Z"); // Sun Nov 1, 6:05 PM EST, back home
+    expect(sentWhere((s) => s.tag === "week-ahead-2026-W44")).toHaveLength(1);
+    expect(settingsRepo.getKV("sched.weekAheadWeek.owner")).toBe("2026-W44");
+  });
+
+  it("trusts the old key when the old build sent this very Sunday", async () => {
+    settingsRepo.updateApp({ joint: { ownerWeekAheadEnabled: true, ownerWeekAheadTime: "18:00" } });
+    settingsRepo.setKV("sched.lastWeekAhead.owner", "2026-W44");
+    settingsRepo.setKV(
+      "joint.weekAhead.owner",
+      JSON.stringify({ text: "This week's.", weekOf: "2026-11-02", at: "2026-11-01T23:00:00Z" }),
+    );
+    await tickAt("2026-11-01T23:30:00Z"); // a deploy half an hour after it went out
+    expect(sentWhere((s) => s.title === "The week ahead")).toHaveLength(0);
+  });
 
   it("keys the week ahead to the week where the owner is", async () => {
     fake.feed.events = HAWAII;

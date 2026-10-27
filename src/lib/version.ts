@@ -4,7 +4,7 @@
  */
 import { DATA_CACHE } from "@/lib/offline";
 
-export const APP_VERSION = "1.33.0";
+export const APP_VERSION = "1.33.1";
 
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 

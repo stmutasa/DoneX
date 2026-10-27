@@ -46,6 +46,9 @@ export function RecurrenceBuilder({
       : value.freq;
 
   const setFreq = (next: Freq) => {
+    // Re-tapping the current choice must not rebuild the rule and drop what
+    // it carries, such as a yearly rule's hidden anchor day.
+    if (next === freq) return;
     setDayDraft(null);
     if (next === "none") {
       onChange(null);
@@ -64,6 +67,11 @@ export function RecurrenceBuilder({
     const base: RecurrenceRule = { freq: next, interval: carried };
     if (next === "weekly") base.byWeekday = value?.byWeekday?.length ? value.byWeekday : [new Date().getDay()];
     if (next === "monthly") base.byMonthDay = value?.byMonthDay ?? new Date().getDate();
+    // A yearly rule can carry an anchor day the server pinned (29 for a Feb 29
+    // task, kept through common years). Carry the day back when returning to
+    // yearly, from monthly too: the server only honours it while the due date
+    // still sits on that day, so a day that no longer fits is dropped there.
+    if (next === "yearly" && value?.byMonthDay) base.byMonthDay = value.byMonthDay;
     onChange(base);
   };
 

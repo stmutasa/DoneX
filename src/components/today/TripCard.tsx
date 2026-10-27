@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { differenceInCalendarDays } from "date-fns";
 import useSWR from "swr";
 import { fetcher, tripsApi } from "@/lib/api";
 import type { Trip } from "@/lib/trips";
@@ -29,6 +30,17 @@ function whenLabel(iso: string, day: string | undefined): string {
   return day ? dueLabel(keyToDate(day).toISOString(), true) : dueLabel(iso, false);
 }
 
+/** The card's heading. A trip nothing names (a hotel booking with no city in
+ *  it) is just "away", or a trip so many days off. */
+function headline(trip: Trip, away: boolean): string {
+  const place = away ? (trip.here ?? trip.destination) : trip.destination;
+  if (away) return place ? `In ${place}` : "Away";
+  if (place) return `${place} in a few days`;
+  const start = trip.startDay ? keyToDate(trip.startDay) : new Date(trip.start);
+  const days = differenceInCalendarDays(start, new Date());
+  return days <= 0 ? "Trip today" : days === 1 ? "Trip tomorrow" : `Trip in ${days} days`;
+}
+
 /**
  * Travel, taken off the calendar: where you are now, or what's coming and
  * whether you've packed for it. Renders nothing when you're not going
@@ -52,10 +64,13 @@ export function TripCard() {
     try {
       const res = await tripsApi.packing(trip.start);
       setMadeId(res.noteId);
+      const place = trip.destination;
       toast.success(
         res.added > 0
-          ? `Packing list for ${trip.destination} ready — ${res.added} items`
-          : `The ${trip.destination} list is already up to date`,
+          ? `Packing list${place ? ` for ${place}` : ""} ready — ${res.added} items`
+          : place
+            ? `The ${place} list is already up to date`
+            : "Already on your list",
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not build that list");
@@ -68,7 +83,7 @@ export function TripCard() {
     <div className="mb-3 rounded-2xl border border-stroke bg-elev px-4 py-3.5">
       <div className="flex items-baseline gap-2">
         <span className="text-[15px] font-medium text-ink">
-          {away ? `In ${trip.destination}` : `${trip.destination} in a few days`}
+          {headline(trip, away)}
         </span>
         <span className="text-[12.5px] text-muted">
           {away

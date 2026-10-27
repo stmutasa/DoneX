@@ -15,6 +15,13 @@ export const NO_MODEL = "No model selected — choose one in Settings.";
 /** An empty reply cut off at the token cap: the budget went on thinking. */
 export const OUT_OF_TOKENS = "The model ran out of tokens before it answered.";
 
+/**
+ * Room for the thinking a reasoning model does before it answers, on top of
+ * the cap sized for the answer. Only what is generated is billed, so the extra
+ * room costs nothing unless it is used.
+ */
+export const REASONING_HEADROOM = 4096;
+
 export interface ProviderConfig {
   kind: AIProviderKind;
   baseUrl: string;

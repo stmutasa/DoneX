@@ -34,7 +34,8 @@ export async function GET() {
     return NextResponse.json({
       away: active
         ? {
-            destination: active.destination,
+            // where they are now on a trip with several stops; null when nothing names it
+            destination: active.here ?? active.destination,
             until: active.end,
             untilDay: active.endDay ?? null,
             who: settings.joint.ownerName || "They",

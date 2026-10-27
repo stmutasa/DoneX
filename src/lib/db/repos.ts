@@ -252,7 +252,7 @@ function rowToTask(r: TaskRow): Task {
     allDay: !!r.all_day,
     projectId: r.project_id,
     tags: JSON.parse(r.tags || "[]"),
-    parentId: r.parent_id,
+    parentId: r.parent_id || null,
     recurrence: r.recurrence ? JSON.parse(r.recurrence) : null,
     location: r.location ? JSON.parse(r.location) : null,
     sort: r.sort,
@@ -483,7 +483,7 @@ export const tasksRepo = {
         draft.allDay ? 1 : 0,
         draft.projectId ?? null,
         JSON.stringify(draft.tags ?? []),
-        draft.parentId ?? null,
+        draft.parentId || null,
         draft.recurrence ? JSON.stringify(draft.recurrence) : null,
         draft.location ? JSON.stringify(draft.location) : null,
         Date.now(),
@@ -500,7 +500,7 @@ export const tasksRepo = {
     const now = nowIso();
     // Which list the task ends up on: a subtask follows its parent, anything
     // else takes the patch's space when it names one.
-    const parentId = "parentId" in patch ? (patch.parentId ?? null) : existing.parentId;
+    const parentId = "parentId" in patch ? patch.parentId || null : existing.parentId;
     const asked = patch.space === "joint" || patch.space === "personal" ? patch.space : existing.space;
     const space = (parentId ? spaceOf(parentId) : null) ?? asked;
     const moved = space !== existing.space;
@@ -522,7 +522,8 @@ export const tasksRepo = {
       ["allDay", "all_day", (v) => (v ? 1 : 0)],
       ["projectId", "project_id", (v) => v],
       ["tags", "tags", (v) => JSON.stringify(v ?? [])],
-      ["parentId", "parent_id", (v) => v],
+      // An empty id would hide the task from every list (they want IS NULL).
+      ["parentId", "parent_id", (v) => v || null],
       ["recurrence", "recurrence", (v) => (v ? JSON.stringify(v) : null)],
       ["location", "location", (v) => (v ? JSON.stringify(v) : null)],
       ["sort", "sort", (v) => v],
@@ -885,14 +886,15 @@ export const completionsRepo = {
       .get(fromKey, toKey) as { c: number };
     return row.c;
   },
-  /** Completed entries grouped newest-day-first for the Logbook. */
+  /** The owner's own ticks, on either list, grouped newest-day-first for the
+   *  Logbook (project work stays on its own tab). */
   logbook(fromKey: string, toKey: string): { dateLocal: string; entries: { id: string; taskId: string; title: string; completedAt: string }[] }[] {
     const rows = getDb()
       .prepare(
         `SELECT c.id, c.task_id, c.title, c.completed_at, c.date_local
          FROM completions c LEFT JOIN tasks t ON t.id = c.task_id
          WHERE c.date_local >= ? AND c.date_local <= ? AND c.completed_by='owner'
-           AND t.project_id IS NULL AND (t.space IS NULL OR t.space='personal')
+           AND t.project_id IS NULL
          ORDER BY c.completed_at DESC LIMIT 500`
       )
       .all(fromKey, toKey) as { id: string; task_id: string; title: string; completed_at: string; date_local: string }[];
@@ -964,6 +966,11 @@ interface ProjectRow {
   created_at: string;
 }
 
+/** A name as matched by findByName / findByTitle: trimmed, NFC, any-script lower case. */
+function nameKey(value: string): string {
+  return value.trim().normalize("NFC").toLocaleLowerCase();
+}
+
 export const projectsRepo = {
   list(includeArchived = false): Project[] {
     const rows = getDb()
@@ -1005,11 +1012,12 @@ export const projectsRepo = {
    * that must not change anything, which returns it still archived.
    */
   findByName(name: string, opts: { restore?: boolean } = {}): Project | null {
-    const r = getDb()
-      .prepare(
-        "SELECT * FROM projects WHERE lower(name)=lower(?) ORDER BY archived ASC, sort ASC, created_at ASC"
-      )
-      .get(name.trim()) as ProjectRow | undefined;
+    // Compared here, not with SQLite's lower(), which folds only A-Z ("École").
+    const want = nameKey(name);
+    const rows = getDb()
+      .prepare("SELECT id, name, archived FROM projects ORDER BY archived ASC, sort ASC, created_at ASC")
+      .all() as Pick<ProjectRow, "id" | "name" | "archived">[];
+    const r = rows.find((row) => nameKey(row.name) === want);
     if (!r) return null;
     if (r.archived && opts.restore !== false) return this.update(r.id, { archived: false });
     return this.get(r.id);
@@ -1099,10 +1107,13 @@ export const notesRepo = {
     return r ? rowToNote(r) : null;
   },
   findByTitle(title: string): Note | null {
-    const r = getDb()
-      .prepare("SELECT * FROM notes WHERE lower(title)=lower(?) AND archived=0")
-      .get(title.trim()) as NoteRow | undefined;
-    return r ? rowToNote(r) : null;
+    // Compared here, not with SQLite's lower(), which folds only A-Z.
+    const want = nameKey(title);
+    const rows = getDb()
+      .prepare("SELECT id, title FROM notes WHERE archived=0 ORDER BY rowid ASC")
+      .all() as Pick<NoteRow, "id" | "title">[];
+    const r = rows.find((row) => nameKey(row.title) === want);
+    return r ? this.get(r.id) : null;
   },
   create(input: Partial<Note> & { kind?: Note["kind"] }): Note {
     const id = newId();

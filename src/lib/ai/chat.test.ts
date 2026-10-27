@@ -19,6 +19,8 @@ const llm = vi.hoisted(() => {
     backup: null as { kind: "anthropic"; baseUrl: string; apiKey: string; model: string } | null,
     steps: [] as Array<(args: StreamArgs) => StreamOutcome | Promise<StreamOutcome>>,
     calls: [] as string[],
+    /** the conversation each model call was shown, serialised */
+    sent: [] as string[],
     records: [] as { from: string; to: string; reason: string }[],
   };
 });
@@ -39,6 +41,7 @@ vi.mock("@/lib/ai/adapters", async (importOriginal) => {
     adapterFor: () => ({
       stream: async (args: StreamArgs) => {
         llm.calls.push(args.cfg.kind);
+        llm.sent.push(JSON.stringify(args.turns));
         const step = llm.steps.shift();
         if (!step) throw new Error("unscripted model call");
         return step(args);
@@ -49,7 +52,9 @@ vi.mock("@/lib/ai/adapters", async (importOriginal) => {
   };
 });
 
-const { EMPTY_REPLY, STOPPED_NOTE, runChatTurn } = await import("@/lib/ai/chat");
+const { EMPTY_REPLY, STOPPED_NOTE, activityNote, historyTurns, runChatTurn, stopChatTurn } = await import(
+  "@/lib/ai/chat"
+);
 const { conversationsRepo, settingsRepo, tasksRepo } = await import("@/lib/db/repos");
 const { NOT_CONFIGURED } = await import("@/lib/ai/provider");
 
@@ -67,6 +72,7 @@ beforeEach(() => {
   llm.backup = null;
   llm.steps = [];
   llm.calls = [];
+  llm.sent = [];
   llm.records = [];
 });
 
@@ -211,10 +217,13 @@ describe("runChatTurn — failover", () => {
 describe("runChatTurn — errors", () => {
   it("names the conversation a failed turn was saved in, so a retry joins it", async () => {
     llm.configured = false;
-    const first = last(await turn("hello?"));
+    const events = await turn("hello?");
+    const first = last(events);
     expect(first).toMatchObject({ type: "error", message: NOT_CONFIGURED });
     const id = first.type === "error" ? first.conversationId : undefined;
     expect(id).toBeTruthy();
+    // The client knew it before the failure, from the opening event.
+    expect(events[0]).toMatchObject({ type: "meta", conversationId: id });
 
     const second = last(await turn("hello again", id!));
     expect(second).toMatchObject({ type: "error", conversationId: id });
@@ -223,53 +232,173 @@ describe("runChatTurn — errors", () => {
 });
 
 describe("runChatTurn — stop", () => {
-  const savedReply = (title: string) => {
-    const conversation = conversationsRepo.listRecent(20).find((c) => c.title === title);
-    return conversation ? conversationsRepo.messages(conversation.id).find((m) => m.role === "assistant") : undefined;
+  const decode = (chunk: Uint8Array): ChatStreamEvent[] =>
+    new TextDecoder()
+      .decode(chunk)
+      .split("\n\n")
+      .filter((f) => f.startsWith("data: "))
+      .map((f) => JSON.parse(f.slice(6)) as ChatStreamEvent);
+
+  /** Read until `until` has been seen, keeping every event. */
+  async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, until: (e: ChatStreamEvent) => boolean) {
+    const seen: ChatStreamEvent[] = [];
+    while (!seen.some(until)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen.push(...decode(value!));
+    }
+    return seen;
+  }
+
+  const saved = (title: string) => {
+    const conversation = conversationsRepo.listRecent(50).find((c) => c.title === title);
+    const reply = conversation
+      ? conversationsRepo.messages(conversation.id).find((m) => m.role === "assistant")
+      : undefined;
+    return { conversation, reply };
   };
 
-  it("stops before the next tool and the next paid round once the reader goes away", async () => {
+  /** Round 0 adds one errand; round 1 (slow, abortable) adds another; round 2 says so. */
+  function errands(first = "Buy oat milk", second = "Buy stamps") {
+    llm.steps = [
+      () => ({ text: "", toolCalls: [call("create_task", { title: first }, "c1")] }),
+      (args) =>
+        new Promise<StreamOutcome>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve({ text: "", toolCalls: [call("create_task", { title: second }, "c2")] }),
+            40,
+          );
+          args.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }),
+      says("Added both errands."),
+    ];
+  }
+
+  it("opens every turn with its id and conversation", async () => {
+    llm.steps = [says("Hi")];
+    const events = await turn("meta check");
+    expect(events[0]).toMatchObject({ type: "meta" });
+    const meta = events[0].type === "meta" ? events[0] : null;
+    expect(meta?.turnId).toBeTruthy();
+    expect(last(events)).toMatchObject({ type: "done", conversationId: meta?.conversationId });
+    // Finished turns can't be stopped any more.
+    expect(stopChatTurn(meta!.turnId)).toBe(false);
+  });
+
+  it("lets a turn finish its plan when the reader simply goes away", async () => {
+    errands();
+    const reader = runChatTurn({ conversationId: null, message: "errands, then gone", mode: "chat" }).getReader();
+    await readUntil(reader, (e) => e.type === "tool" && e.status === "ok");
+    await reader.cancel(); // another chat, another page, a phone in a pocket
+
+    await vi.waitFor(() => expect(saved("errands, then gone").reply).toBeTruthy());
+    expect(saved("errands, then gone").reply?.text).toBe("Added both errands.");
+    expect(tasksRepo.list({}).map((t) => t.title)).toEqual(expect.arrayContaining(["Buy oat milk", "Buy stamps"]));
+  });
+
+  it("stops at an explicit Stop: the model call in flight is cut, no failover, nothing new runs", async () => {
+    llm.backup = { kind: "anthropic", baseUrl: "", apiKey: "k", model: "backup-model" };
+    errands("Post the parcel", "Buy envelopes");
+    const reader = runChatTurn({ conversationId: null, message: "errands, then stop", mode: "chat" }).getReader();
+    const seen = await readUntil(reader, (e) => e.type === "tool" && e.status === "ok");
+    const meta = seen.find((e) => e.type === "meta");
+    expect(meta?.type === "meta" && stopChatTurn(meta.turnId)).toBe(true);
+    await reader.cancel();
+
+    await vi.waitFor(() => expect(saved("errands, then stop").reply).toBeTruthy());
+    const { reply } = saved("errands, then stop");
+    expect(reply?.text).toBe(STOPPED_NOTE);
+    expect(reply?.activity.map((a) => a.label).join()).toContain("Post the parcel");
+    expect(llm.calls).toEqual(["openai", "openai"]);
+    expect(llm.records).toEqual([]);
+    expect(tasksRepo.list({}).map((t) => t.title)).not.toContain("Buy envelopes");
+  });
+
+  it("lets the tool already running finish, then stops before the next one", async () => {
     let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
     llm.steps = [
       async (args) => {
         args.onText("On it");
-        await new Promise<void>((r) => (release = r));
-        return { text: "On it", toolCalls: [call("create_task", { title: "Never added" })] };
+        await gate;
+        return {
+          text: "On it",
+          toolCalls: [call("create_task", { title: "Never added" }, "n1"), call("create_task", { title: "Nor this" }, "n2")],
+        };
       },
       says("this round should never be asked for"),
     ];
-    const reader = runChatTurn({ conversationId: null, message: "stop test one", mode: "chat" }).getReader();
-    await reader.read(); // the first token
-    await reader.cancel();
+    const reader = runChatTurn({ conversationId: null, message: "stop before tools", mode: "chat" }).getReader();
+    const seen = await readUntil(reader, (e) => e.type === "token");
+    const meta = seen.find((e) => e.type === "meta");
+    if (meta?.type === "meta") stopChatTurn(meta.turnId);
     release();
 
-    await vi.waitFor(() => expect(savedReply("stop test one")).toBeTruthy());
-    expect(savedReply("stop test one")?.text).toBe("On it");
+    await vi.waitFor(() => expect(saved("stop before tools").reply).toBeTruthy());
+    expect(saved("stop before tools").reply?.text).toBe("On it");
     expect(llm.calls).toHaveLength(1);
-    expect(tasksRepo.list({}).map((t) => t.title)).not.toContain("Never added");
+    const titles = tasksRepo.list({}).map((t) => t.title);
+    expect(titles).not.toContain("Never added");
+    expect(titles).not.toContain("Nor this");
   });
 
-  it("aborts the model call in flight without failing over, and saves a short note", async () => {
-    llm.backup = { kind: "anthropic", baseUrl: "", apiKey: "k", model: "backup-model" };
-    let started: () => void = () => {};
-    const streaming = new Promise<void>((r) => (started = r));
-    llm.steps = [
-      (args) =>
-        new Promise<StreamOutcome>((_, reject) => {
-          started();
-          args.signal.addEventListener("abort", () =>
-            reject(new DOMException("The operation was aborted.", "AbortError")),
-          );
-        }),
-    ];
-    const reader = runChatTurn({ conversationId: null, message: "stop test two", mode: "chat" }).getReader();
-    void reader.read();
-    await streaming;
+  it("shows the next turn what a stopped turn already did, so 'carry on' doesn't redo it", async () => {
+    errands("Buy birthday card", "Wrap the present");
+    const reader = runChatTurn({ conversationId: null, message: "card, then stop", mode: "chat" }).getReader();
+    const seen = await readUntil(reader, (e) => e.type === "tool" && e.status === "ok");
+    const meta = seen.find((e) => e.type === "meta");
+    if (meta?.type === "meta") stopChatTurn(meta.turnId);
     await reader.cancel();
+    await vi.waitFor(() => expect(saved("card, then stop").reply).toBeTruthy());
 
-    await vi.waitFor(() => expect(savedReply("stop test two")).toBeTruthy());
-    expect(savedReply("stop test two")?.text).toBe(STOPPED_NOTE);
-    expect(llm.calls).toEqual(["openai"]);
-    expect(llm.records).toEqual([]);
+    llm.steps = [says("Carrying on.")];
+    await turn("carry on", saved("card, then stop").conversation!.id);
+    expect(llm.sent[llm.sent.length - 1]).toContain("Buy birthday card");
+  });
+});
+
+describe("historyTurns", () => {
+  const record = (role: "user" | "assistant", text: string, activity: { label: string; ok: boolean }[] = []) => ({
+    id: Math.random().toString(36),
+    conversationId: "c",
+    role,
+    text,
+    activity,
+    createdAt: "2026-10-27T12:00:00.000Z",
+  });
+
+  it("adds a short note of the tool work to each assistant turn", () => {
+    const turns = historyTurns([
+      record("user", "add oat milk and tick off the gym"),
+      record("assistant", "Stopped.", [
+        { label: "Added “Buy oat milk”", ok: true },
+        { label: "Task gym-1 not found", ok: false },
+      ]),
+      record("user", "carry on"),
+    ]);
+    expect(turns[1]).toMatchObject({
+      role: "assistant",
+      text: "Stopped.\n(Done: Added “Buy oat milk”. Didn't work: Task gym-1 not found)",
+    });
+  });
+
+  it("keeps a turn whose only trace is its tool work, and skips labels the text already says", () => {
+    const turns = historyTurns([
+      record("user", "add it"),
+      record("assistant", "", [{ label: "Added “Call mum”", ok: true }]),
+      record("user", "and again"),
+      record("assistant", "Added “Call mum”.", [{ label: "Added “Call mum”", ok: true }]),
+    ]);
+    expect(turns[1]).toMatchObject({ role: "assistant", text: "(Done: Added “Call mum”)" });
+    expect(turns[3]).toMatchObject({ role: "assistant", text: "Added “Call mum”." });
+  });
+
+  it("stays compact however much a turn did", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ label: `Added “Task ${i}”`, ok: true }));
+    const note = activityNote("", many);
+    expect(note.match(/Added/g)).toHaveLength(8);
   });
 });

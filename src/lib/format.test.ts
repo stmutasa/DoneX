@@ -83,3 +83,87 @@ describe("all-day dates in the display zone", () => {
     expect(dueLabel(allDay("2026-10-27"), true)).toBe("Overdue · 1d");
   });
 });
+
+describe("display zone updates", () => {
+  it("tells subscribers once per change, after the current call", async () => {
+    const { subscribeDisplayTimeZone, getDisplayTimeZone } = await import("@/lib/format");
+    const seen: (string | null)[] = [];
+    const stop = subscribeDisplayTimeZone(() => seen.push(getDisplayTimeZone()));
+    setDisplayTimeZone(NY);
+    expect(seen).toEqual([]);
+    await Promise.resolve();
+    expect(seen).toEqual([NY]);
+    setDisplayTimeZone(NY); // no change, no news
+    setDisplayTimeZone("Not/A_Zone"); // read as unset
+    await Promise.resolve();
+    expect(seen).toEqual([NY, null]);
+    stop();
+    setDisplayTimeZone(NY);
+    await Promise.resolve();
+    expect(seen).toEqual([NY, null]);
+  });
+});
+
+describe("display zone in the browser", () => {
+  const store = new Map<string, string>();
+  const fakeWindow = {
+    localStorage: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  };
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window;
+    store.clear();
+  });
+
+  it("is remembered, so a cold start reads all-day dates right away", async () => {
+    (globalThis as { window?: unknown }).window = fakeWindow;
+    vi.resetModules();
+    const first = await import("@/lib/format");
+    expect(first.getDisplayTimeZone()).toBeNull();
+    first.setDisplayTimeZone(NY);
+    expect(store.get("donex.displayTz")).toBe(NY);
+
+    // The next page load, before /api/auth/me has answered.
+    vi.resetModules();
+    const next = await import("@/lib/format");
+    expect(next.getDisplayTimeZone()).toBe(NY);
+    expect(next.dueLabel(allDay("2026-10-27"), true)).toBe("Today");
+
+    next.setDisplayTimeZone(null);
+    expect(store.has("donex.displayTz")).toBe(false);
+  });
+
+  it("works without storage", async () => {
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        setItem: () => {
+          throw new Error("blocked");
+        },
+        removeItem: () => {
+          throw new Error("blocked");
+        },
+      },
+    };
+    vi.resetModules();
+    const mod = await import("@/lib/format");
+    expect(mod.getDisplayTimeZone()).toBeNull();
+    mod.setDisplayTimeZone(NY);
+    expect(mod.getDisplayTimeZone()).toBe(NY);
+  });
+
+  it("never touches storage on the server", async () => {
+    vi.resetModules();
+    const mod = await import("@/lib/format");
+    mod.setDisplayTimeZone(NY);
+    expect(mod.getDisplayTimeZone()).toBe(NY);
+    expect(store.size).toBe(0);
+    mod.setDisplayTimeZone(null);
+  });
+});

@@ -132,8 +132,10 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
 
 async function fetchUserEmail(accessToken: string): Promise<string | null> {
   try {
+    // Only nice to have: a stall falls back to the stored email, not a hung callback.
     const res = await fetch(USERINFO_ENDPOINT, {
       headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { email?: string };

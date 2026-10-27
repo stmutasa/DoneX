@@ -397,3 +397,146 @@ describe("zoneOffsetMinutes", () => {
     expect(zoneOffsetMinutes("Not/AZone", new Date())).toBeNull();
   });
 });
+
+describe("the night before at the airport", () => {
+  const AIRPORT_NIGHT = [
+    zoned("Hotel — TWA Hotel at JFK", "2026-11-05T01:00:00.000Z", "2026-11-05T11:00:00.000Z", NY),
+    zoned("Flight to London (BA 112) (JFK → LHR)", "2026-11-05T13:30:00.000Z", "2026-11-05T20:30:00.000Z", "Europe/London"),
+    zoned("Hotel — The Hoxton, Holborn", "2026-11-05T21:30:00.000Z", "2026-11-09T11:00:00.000Z", "Europe/London"),
+    zoned("Flight to New York (BA 177) (LHR → JFK)", "2026-11-09T13:00:00.000Z", "2026-11-09T21:00:00.000Z", NY),
+  ];
+
+  it("keeps home time until the flight out", () => {
+    const now = new Date("2026-11-05T07:05:00Z"); // 2:05 AM at JFK, 7:05 AM in London
+    const trip = activeTrip(detectTrips(AIRPORT_NIGHT, { tz: NY, now }), now);
+    expect(trip?.timeZone).toBe(NY);
+    expect(trip?.destination).toBe("London");
+  });
+
+  it("switches once the flight out has begun", () => {
+    const now = new Date("2026-11-05T14:00:00Z");
+    expect(activeTrip(detectTrips(AIRPORT_NIGHT, { tz: NY, now }), now)?.timeZone).toBe("Europe/London");
+  });
+
+  it("keeps home time through a long rental with a trip inside it", () => {
+    const now = new Date("2026-10-27T11:05:00Z");
+    const [trip] = detectTrips(
+      [
+        zoned("Enterprise rent-a-car — Queens Blvd", "2026-10-15T13:00:00.000Z", "2026-11-30T14:00:00.000Z", NY),
+        zoned("Flight to Denver (LGA → DEN)", "2026-11-10T13:00:00.000Z", "2026-11-10T17:40:00.000Z", "America/Denver"),
+        zoned("Hotel — The Crawford", "2026-11-10T22:00:00.000Z", "2026-11-14T18:00:00.000Z", "America/Denver"),
+        zoned("Flight to New York (DEN → LGA)", "2026-11-14T20:00:00.000Z", "2026-11-14T23:40:00.000Z", NY),
+      ],
+      { tz: NY, now },
+    );
+    expect(trip.timeZone).toBe(NY);
+    expect(trip.destination).toBe("Denver");
+  });
+
+  it("doesn't take a one-way flight out for the flight home after a full hotel night", () => {
+    const flight = zoned("Flight to London (BA 178) (JFK → LHR)", "2026-11-06T00:00:00.000Z", "2026-11-06T07:00:00.000Z", "Europe/London");
+    const now = new Date("2026-11-03T15:00:00Z");
+    const timed = zoned("Hotel — Hilton JFK Airport", "2026-11-04T20:00:00.000Z", "2026-11-05T17:00:00.000Z", NY); // 3 PM – noon
+    const allDayStay = allDay("Hotel — Hilton JFK Airport", "2026-11-04", "2026-11-05");
+    for (const stay of [timed, allDayStay]) {
+      const [trip] = detectTrips([stay, flight], { tz: NY, now });
+      expect([trip.destination, trip.timeZone]).toEqual(["London", "Europe/London"]);
+    }
+  });
+});
+
+describe("trips with several stops", () => {
+  const OUT = zoned("Flight to London (BA 178)", "2026-11-06T00:00:00.000Z", "2026-11-06T07:00:00.000Z", "Europe/London");
+  const LDN = zoned("Hotel — The Hoxton, Holborn", "2026-11-06T15:00:00.000Z", "2026-11-09T11:00:00.000Z", "Europe/London");
+
+  it("brings the clock home with a flight into the home zone", () => {
+    const now = new Date("2026-11-10T12:00:00Z"); // 7 AM in Boston
+    const [trip] = detectTrips(
+      [
+        OUT,
+        LDN,
+        zoned("Flight to Boston (BA 213) (LHR → BOS)", "2026-11-09T10:00:00.000Z", "2026-11-09T18:00:00.000Z", NY),
+        zoned("Hotel — Omni Parker House", "2026-11-09T20:00:00.000Z", "2026-11-11T16:00:00.000Z", NY),
+        zoned("Avis rental car — BOS", "2026-11-11T17:00:00.000Z", "2026-11-11T22:00:00.000Z", NY),
+      ],
+      { tz: NY, now },
+    );
+    expect(trip.timeZone).toBe(NY);
+    expect(trip.here).toBe("Boston");
+  });
+
+  it("keeps the name for where you stay longest, and says where you are now", () => {
+    const tour = [
+      OUT,
+      LDN,
+      zoned("Flight to Paris (BA 304)", "2026-11-09T13:00:00.000Z", "2026-11-09T14:20:00.000Z", "Europe/Paris"),
+      zoned("Hotel — Le Marais", "2026-11-09T15:00:00.000Z", "2026-11-11T10:00:00.000Z", "Europe/Paris"),
+      zoned("Flight to New York (AF 22)", "2026-11-11T12:00:00.000Z", "2026-11-11T20:30:00.000Z", NY),
+    ];
+    const now = new Date("2026-11-10T08:00:00Z");
+    const [trip] = detectTrips(tour, { tz: NY, now });
+    expect(trip.destination).toBe("London"); // the packing note keys on this
+    expect([trip.here, trip.timeZone]).toEqual(["Paris", "Europe/Paris"]);
+  });
+
+  it("names a trip after where you stay, not the connection", () => {
+    const [trip] = detectTrips(
+      [
+        zoned("Flight to Chicago (UA 512) (LGA → ORD)", "2026-11-05T12:00:00.000Z", "2026-11-05T14:45:00.000Z", "America/Chicago"),
+        zoned("Flight to Denver (UA 1781) (ORD → DEN)", "2026-11-05T16:00:00.000Z", "2026-11-05T18:40:00.000Z", "America/Denver"),
+        zoned("Hotel — The Crawford", "2026-11-05T22:00:00.000Z", "2026-11-08T18:00:00.000Z", "America/Denver"),
+        zoned("Flight to Chicago (UA 900) (DEN → ORD)", "2026-11-08T20:00:00.000Z", "2026-11-08T22:30:00.000Z", "America/Chicago"),
+        zoned("Flight to New York (UA 3) (ORD → LGA)", "2026-11-09T00:00:00.000Z", "2026-11-09T02:00:00.000Z", NY),
+      ],
+      { tz: NY, now: new Date("2026-11-07T16:00:00Z") },
+    );
+    expect(trip.destination).toBe("Denver");
+  });
+});
+
+describe("a flight out and back with nothing booked between", () => {
+  const OUT = zoned("Flight to Denver (UA 1520) (LGA → DEN)", "2026-11-05T13:00:00.000Z", "2026-11-05T17:40:00.000Z", "America/Denver");
+  const BACK = zoned("Flight to New York (UA 1521) (DEN → LGA)", "2026-11-08T20:00:00.000Z", "2026-11-08T23:40:00.000Z", NY);
+  const now = new Date("2026-11-06T15:00:00Z"); // Fri 8 AM in Denver
+
+  it("is one trip, and you are on it", () => {
+    const trips = detectTrips([OUT, BACK], { tz: NY, now });
+    expect(trips).toHaveLength(1);
+    expect(activeTrip(trips, now)?.destination).toBe("Denver");
+  });
+
+  it("joins on the home zone when the titles name no airports", () => {
+    const out = zoned("Flight to Denver — UA 1520", OUT.start, OUT.end, "America/Denver");
+    const back = zoned("Flight to New York — UA 1521", BACK.start, BACK.end, NY);
+    expect(detectTrips([out, back], { tz: NY, now })).toHaveLength(1);
+  });
+
+  it("doesn't join a trip that already came home to the next one", () => {
+    const trips = detectTrips(
+      [
+        OUT,
+        zoned("Hotel — The Crawford", "2026-11-05T22:00:00.000Z", "2026-11-08T18:00:00.000Z", "America/Denver"),
+        BACK,
+        zoned("Flight to Boston (B6 1) (LGA → BOS)", "2026-11-15T13:00:00.000Z", "2026-11-15T14:15:00.000Z", NY),
+      ],
+      { tz: NY, now },
+    );
+    expect(trips.map((t) => t.destination)).toEqual(["Denver", "Boston"]);
+  });
+
+  it("doesn't join flights from different airports", () => {
+    const elsewhere = zoned("Flight to New York (B6 2) (BOS → JFK)", BACK.start, BACK.end, NY);
+    expect(detectTrips([OUT, elsewhere], { tz: NY, now })).toHaveLength(2);
+  });
+});
+
+describe("a trip nothing names", () => {
+  it("has no destination rather than a made-up one", () => {
+    const [trip] = detectTrips(
+      [zoned("Hotel — Hyatt Regency", "2026-11-06T21:00:00.000Z", "2026-11-09T16:00:00.000Z", "America/Chicago")],
+      { tz: NY, now: new Date("2026-11-07T15:00:00Z") },
+    );
+    expect(trip.destination).toBeNull();
+    expect(trip.here).toBeUndefined();
+  });
+});

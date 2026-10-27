@@ -1,15 +1,36 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import crypto from "crypto";
+import { NextRequest } from "next/server";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A throwaway data directory per run, so the real one is never touched.
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "donex-auth-"));
 process.env.DATA_DIR = DIR;
 
+/** One browser's cookie jar, as next/headers' cookies() sees it. */
+const jar = new Map<string, string>();
+const deviceSets: { value: string; maxAge?: number }[] = [];
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => (jar.has(name) ? { name, value: jar.get(name)! } : undefined),
+    set: (name: string, value: string, opts?: { maxAge?: number }) => {
+      jar.set(name, value);
+      if (name === "donex_device") deviceSets.push({ value, maxAge: opts?.maxAge });
+    },
+    delete: (name: string) => {
+      jar.delete(name);
+    },
+  }),
+  headers: async () => new Headers({ "user-agent": "family-laptop" }),
+}));
+
 const auth = await import("@/lib/auth");
 const { getDb } = await import("@/lib/db");
 const { pushRepo, sessionsRepo, settingsRepo } = await import("@/lib/db/repos");
+const login = await import("@/app/api/auth/login/route");
+const forget = await import("@/app/api/push/forget/route");
 
 afterAll(() => {
   fs.rmSync(DIR, { recursive: true, force: true });
@@ -240,5 +261,139 @@ describe("push subscriptions follow sessions", () => {
     expect(pushRepo.list(["partner"]).map((r) => r.endpoint)).toEqual([sub(2).endpoint]);
     pushRepo.removeRole("partner");
     expect(pushRepo.list().map((r) => r.endpoint)).toEqual([sub(3).endpoint]);
+  });
+});
+
+describe("the owner's devices", () => {
+  const LAPTOP = "203.0.113.5";
+  const DAY = 24 * 60 * MIN;
+
+  /** Someone elsewhere spends the shared 20-a-day budget. */
+  function strangersFillTheCap(now: number) {
+    for (let i = 0; i < 20; i++) miss({ key: `ip:198.51.100.${i}`, trusted: false }, now);
+  }
+
+  beforeEach(() => {
+    auth.__resetLoginLimiterForTests();
+    jar.clear();
+    deviceSets.length = 0;
+  });
+
+  it("stays known after the owner signs out", async () => {
+    await auth.createSession("owner");
+    await auth.destroySession();
+    strangersFillTheCap(T0);
+    const a = auth.claimLoginAttempt(auth.loginClient(jar.get(auth.DEVICE_COOKIE), LAPTOP), T0 + MIN);
+    expect("settle" in a).toBe(true);
+  });
+
+  it("stays known after the partner signs in on it once", async () => {
+    await auth.createSession("owner");
+    await auth.destroySession();
+    await auth.createSession("partner");
+    await auth.destroySession();
+    strangersFillTheCap(T0);
+    const a = auth.claimLoginAttempt(auth.loginClient(jar.get(auth.DEVICE_COOKIE), LAPTOP), T0 + MIN);
+    expect("settle" in a).toBe(true);
+  });
+
+  it("is never made by a partner sign-in", async () => {
+    await auth.createSession("partner");
+    expect(jar.get(auth.DEVICE_COOKIE)).toBeUndefined();
+  });
+
+  it("re-dates its mark once a month old, keeping the id", async () => {
+    await auth.rememberOwnerDevice(T0);
+    await auth.rememberOwnerDevice(T0 + 29 * DAY);
+    expect(deviceSets).toHaveLength(1);
+    await auth.rememberOwnerDevice(T0 + 31 * DAY);
+    expect(deviceSets).toHaveLength(2);
+    expect(deviceSets[1].maxAge).toBe(Math.floor(sessionsRepo.maxAgeMs / 1000));
+    const [first, second] = deviceSets.map((s) => auth.loginClient(s.value, LAPTOP).key);
+    expect(second).toBe(first);
+  });
+
+  it("still accepts the older undated cookie, and re-dates it", async () => {
+    auth.mintOwnerDeviceCookie(); // makes the secret if this run has none yet
+    const secret = settingsRepo.getKV("auth.deviceSecret")!;
+    const id = "a".repeat(32);
+    const sig = crypto.createHmac("sha256", secret).update(`${id}.owner`).digest("hex");
+    const legacy = `${id}.owner.${sig}`;
+    expect(auth.loginClient(legacy, LAPTOP)).toEqual({ key: `device:${id}`, trusted: true });
+
+    jar.set(auth.DEVICE_COOKIE, legacy);
+    await auth.rememberOwnerDevice(T0);
+    expect(deviceSets).toHaveLength(1);
+    expect(auth.loginClient(deviceSets[0].value, LAPTOP).key).toBe(`device:${id}`);
+  });
+});
+
+describe("one PIN for both people (left over from before the check)", () => {
+  const SHARED = "4242";
+
+  async function signIn(cookie?: string) {
+    const req = new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ pin: SHARED }),
+      headers: {
+        "content-type": "application/json",
+        "x-real-ip": "203.0.113.77",
+        ...(cookie ? { cookie: `${auth.DEVICE_COOKIE}=${cookie}` } : {}),
+      },
+    });
+    const res = await login.POST(req);
+    return { status: res.status, body: (await res.json()) as { role?: string } };
+  }
+
+  beforeEach(() => {
+    auth.__resetLoginLimiterForTests();
+    jar.clear();
+    settingsRepo.updateApp({ pinHash: auth.hashPin(SHARED), joint: { partnerPinHash: auth.hashPin(SHARED) } });
+  });
+
+  it("signs in as the owner on one of the owner's devices", async () => {
+    const res = await signIn(auth.mintOwnerDeviceCookie());
+    expect(res).toEqual({ status: 200, body: { ok: true, role: "owner" } });
+  });
+
+  it("refuses anywhere else, and leaves the owner a note to fix it", async () => {
+    expect(auth.pinsCollide()).toBe(false);
+    expect((await signIn()).status).toBe(401);
+    expect(auth.pinsCollide()).toBe(true);
+  });
+
+  it("drops the note once either PIN changes", async () => {
+    await signIn();
+    settingsRepo.updateApp({ pinHash: auth.hashPin("9090") });
+    expect(auth.pinsCollide()).toBe(false);
+  });
+});
+
+describe("forgetting a signed-out browser's pushes", () => {
+  const post = (body: unknown) =>
+    forget.POST(
+      new NextRequest("http://localhost/api/push/forget", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+  beforeEach(() => {
+    getDb().prepare("DELETE FROM push_subscriptions").run();
+  });
+
+  it("removes that endpoint's row only, with no session", async () => {
+    pushRepo.add({ endpoint: "https://push.example/a", keys: { p256dh: "p", auth: "a" } }, "owner");
+    pushRepo.add({ endpoint: "https://push.example/b", keys: { p256dh: "p", auth: "a" } }, "owner");
+    expect((await post({ endpoint: "https://push.example/a" })).status).toBe(200);
+    expect(pushRepo.list().map((r) => r.endpoint)).toEqual(["https://push.example/b"]);
+  });
+
+  it("turns away anything that isn't a push endpoint", async () => {
+    expect((await post({ endpoint: "not a url" })).status).toBe(400);
+    expect((await post({ endpoint: "http://push.example/a" })).status).toBe(400);
+    expect((await post({ endpoint: `https://push.example/${"x".repeat(3000)}` })).status).toBe(400);
+    expect((await post({})).status).toBe(400);
   });
 });

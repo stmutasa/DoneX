@@ -133,6 +133,19 @@ describe("GET /api/assistant/review", () => {
     expect(fake.calls).toEqual([{ weekKey: WEEK, force: true }]);
   });
 
+  it("doesn't pay to fail again on every visit when there is no review yet", async () => {
+    fake.fail = true;
+    expect((await get()).status).toBe(502);
+    expect((await get()).status).toBe(502);
+    expect((await get()).status).toBe(502);
+    expect(fake.calls).toHaveLength(1);
+
+    // Try again (Regenerate) always calls, and works once the model is back.
+    fake.fail = false;
+    expect((await get("?refresh=1")).narrative).toBe("Fresh.");
+    expect(fake.calls).toHaveLength(2);
+  });
+
   it("shares one generation between requests that arrive together", async () => {
     let release = () => {};
     fake.gate = new Promise<void>((resolve) => {

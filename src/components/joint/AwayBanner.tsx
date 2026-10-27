@@ -7,7 +7,7 @@ import { dueLabel, keyToDate } from "@/lib/format";
 /** Shown on the shared list when the other person is travelling. */
 export function AwayBanner() {
   const { data } = useSWR<{
-    away: { destination: string; until: string; untilDay?: string | null; who: string } | null;
+    away: { destination: string | null; until: string; untilDay?: string | null; who: string } | null;
   }>(
     "/api/trips",
     fetcher,
@@ -21,7 +21,7 @@ export function AwayBanner() {
 
   return (
     <p className="mb-4 rounded-2xl border border-stroke bg-sunken px-3.5 py-2.5 text-[13px] text-muted">
-      ✈️ {data.away.who} is in {data.away.destination} — back {back}.
+      ✈️ {data.away.who} is {data.away.destination ? `in ${data.away.destination}` : "away"} — back {back}.
     </p>
   );
 }

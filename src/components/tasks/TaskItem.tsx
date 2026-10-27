@@ -5,6 +5,7 @@ import type { Project, Task } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
 import { hueSoftVar, hueVar, normalizeJointColor } from "@/lib/jointColors";
 import { deadlineChip, dueLabel, isOverdue } from "@/lib/format";
+import { useDisplayTimeZone } from "@/hooks/useDisplayTimeZone";
 import { effectivePriority } from "@/lib/deadline";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +17,8 @@ import {
 } from "@/components/ui/icons";
 import { ProgressRing } from "@/components/ui/Misc";
 import { useTaskMutations } from "./useTaskMutations";
+
+const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 const PRIORITY_TONE: Record<1 | 2 | 3, string> = {
   3: "text-warn",
@@ -46,6 +49,10 @@ export function TaskItem({
   // updatedAt move, so resync on those too.
   useEffect(() => setDone(task.status === "done"), [task.status, task.dueAt, task.updatedAt]);
 
+  // The labels below read all-day dates in the display zone. Subscribing also
+  // re-renders the row when that zone arrives after the first paint.
+  const displayZone = useDisplayTimeZone();
+
   const subtasks = task.subtasks ?? [];
   const doneSubs = subtasks.filter((s) => s.status === "done").length;
   const overdue = !done && isOverdue(task.dueAt, task.allDay);
@@ -55,9 +62,8 @@ export function TaskItem({
       ? deadlineChip(task.dueAt, task.allDay)
       : dueLabel(task.dueAt, task.allDay)
     : "";
-  const priority = done
-    ? task.priority
-    : effectivePriority(task, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // Escalation counts days in the same zone as the deadline chip beside it.
+  const priority = done ? task.priority : effectivePriority(task, displayZone ?? deviceTz);
   const escalated = priority > task.priority;
   // A tagged task belongs to whoever it was handed to, and wears their color.
   // An untagged one is for either of you, so it says that in nobody's color —
