@@ -23,6 +23,7 @@ import {
   timeoutSignal,
   type LlmToolResult,
   type LlmTurn,
+  type ProviderConfig,
 } from "@/lib/ai/provider";
 import { encodeSse } from "@/lib/ai/sse";
 import { TOOLS, findTool, toolContext } from "@/lib/ai/tools";
@@ -30,6 +31,18 @@ import { TOOLS, findTool, toolContext } from "@/lib/ai/tools";
 const MAX_TOOL_ROUNDS = 6;
 const HISTORY_LIMIT = 24;
 const DEFAULT_TITLE = "New chat";
+/** Said when a turn ends with no text and no tool work: a refusal, a content
+ *  filter or a reply cut off before it started all come back empty. */
+export const EMPTY_REPLY = "No reply came back. Try again, or put it another way.";
+/** Saved for a turn stopped before it said anything. */
+export const STOPPED_NOTE = "Stopped.";
+
+/** A backup that failed as well: why it was covering, then what went wrong. */
+function backupFailed(why: string, backup: ProviderConfig, err: unknown): Error {
+  return new Error(
+    `${why} — and the ${backup.kind} backup (${backup.model}) also failed: ${describeCallError(err)}`,
+  );
+}
 
 export interface ChatTurnInput {
   conversationId: string | null;
@@ -95,17 +108,25 @@ export function historyTurns(records: ChatMessageRecord[]): LlmTurn[] {
 }
 
 export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
+  let closed = false;
+  // Stop, a switch to another chat or leaving the page cancels the response.
+  // The turn then stops paying for model rounds: a tool already writing is
+  // let finish, nothing new starts, and the reply is saved as far as it got.
+  const turnAbort = new AbortController();
   return new ReadableStream<Uint8Array>({
+    cancel() {
+      closed = true;
+      turnAbort.abort();
+    },
     async start(controller) {
-      let closed = false;
-      // The client can navigate away mid-turn; a dead controller must not
-      // abort the agent loop or mask the real error.
       const emit = (event: ChatStreamEvent): void => {
         if (closed) return;
         try {
           controller.enqueue(encodeSse(event));
         } catch {
+          // Nobody is reading any more.
           closed = true;
+          turnAbort.abort();
         }
       };
       const finish = (): void => {
@@ -141,7 +162,7 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
 
         if (!aiConfigured()) {
           conversationsRepo.addMessage(conversation.id, "assistant", `Sorry — ${NOT_CONFIGURED}`);
-          emit({ type: "error", message: NOT_CONFIGURED });
+          emit({ type: "error", message: NOT_CONFIGURED, conversationId: conversation.id });
           finish();
           return;
         }
@@ -157,15 +178,28 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
         const ctx = await buildAssistantContext();
         const system = chatSystemPrompt(ctx, input.mode) + nearbyDigest(input.location);
         // The backup takes the conversation when the active provider can't run.
+        const activeKind = settingsRepo.getApp().ai.provider;
         const start = await workingConfig();
         let cfg = start.cfg;
         let adapter = adapterFor(cfg.kind);
-        if (start.standIn) recordFallback(settingsRepo.getApp().ai.provider, cfg, start.standIn);
+        // Recorded once a reply comes back, so a backup that fails as well is
+        // never reported as covering.
+        let standIn = start.standIn;
+        // Why the turn is on the backup, if it is. One handover per turn: once
+        // there, "failing over" again would only repeat the failed request.
+        let handover: string | null = start.standIn;
         const tctx = toolContext(tz, input.location);
 
         let full = "";
+        // Tool calls the model still wanted when the rounds ran out.
+        let unfinished: string[] | null = null;
+        let stopped = false;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+          if (turnAbort.signal.aborted) {
+            stopped = true;
+            break;
+          }
           let pendingBreak = full.length > 0;
           const streamOnce = () =>
             adapter.stream({
@@ -174,7 +208,7 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
               turns,
               tools: TOOLS,
               feature: "chat",
-              signal: timeoutSignal(),
+              signal: AbortSignal.any([timeoutSignal(), turnAbort.signal]),
               onText: (chunk) => {
                 if (!chunk) return;
                 if (pendingBreak) {
@@ -191,18 +225,51 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
           try {
             outcome = await streamOnce();
           } catch (err) {
+            if (turnAbort.signal.aborted) {
+              stopped = true;
+              break;
+            }
+            if (handover !== null) throw backupFailed(handover, cfg, err);
             // Only safe to retry elsewhere while nothing has been spoken yet —
             // restarting mid-answer would repeat text the user already saw.
             const reason = describeCallError(err);
             const backup = full.length === 0 ? await fallbackConfig() : null;
-            if (!backup || !isFailoverWorthy(reason)) throw err;
-            recordFallback(cfg.kind, backup, reason);
+            const same = backup !== null && backup.kind === cfg.kind && backup.model === cfg.model;
+            if (!backup || same || !isFailoverWorthy(reason)) throw err;
+            handover = reason;
+            const from = cfg.kind;
             cfg = backup;
             adapter = adapterFor(backup.kind);
-            outcome = await streamOnce();
+            try {
+              outcome = await streamOnce();
+            } catch (backupErr) {
+              if (turnAbort.signal.aborted) {
+                stopped = true;
+                break;
+              }
+              throw backupFailed(reason, backup, backupErr);
+            }
+            recordFallback(from, backup, reason);
+          }
+          if (standIn) {
+            recordFallback(activeKind, cfg, standIn);
+            standIn = null;
           }
 
-          if (outcome.toolCalls.length === 0 || round === MAX_TOOL_ROUNDS) break;
+          if (outcome.toolCalls.length === 0) break;
+          if (round === MAX_TOOL_ROUNDS) {
+            // Out of rounds. Say what was left undone rather than drop it.
+            unfinished = outcome.toolCalls.flatMap((call) => {
+              const spec = findTool(call.name);
+              if (!spec?.mutating) return [];
+              try {
+                return [spec.label(asRecord(safeJsonParse(call.args || "{}")) ?? {}, tctx)];
+              } catch {
+                return [spec.name];
+              }
+            });
+            break;
+          }
 
           turns.push({
             role: "assistant",
@@ -212,6 +279,8 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
 
           const results: LlmToolResult[] = [];
           for (const call of outcome.toolCalls) {
+            // A stop lands between tools, never in the middle of one's write.
+            if (turnAbort.signal.aborted) break;
             const spec = findTool(call.name);
             if (!spec) {
               results.push({
@@ -258,12 +327,40 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
           turns.push({ role: "toolResults", results });
         }
 
-        if (!full.trim()) {
-          const done = activity.filter((a) => a.ok).map((a) => a.label);
-          const fallback = done.length > 0 ? `${done.join(". ")}.` : "Done.";
-          full = fallback;
-          emit({ type: "token", text: fallback });
+        if (stopped) {
+          // Saved as far as it got, so the transcript still reads in order.
+          const record = conversationsRepo.addMessage(
+            conversation.id,
+            "assistant",
+            full.trim() ? full : STOPPED_NOTE,
+            activity,
+          );
+          emit({ type: "done", messageId: record.id, conversationId: conversation.id, text: record.text, activity });
+          return;
         }
+
+        const say = (text: string): void => {
+          const piece = full.trim() ? `\n\n${text}` : text;
+          full += piece;
+          emit({ type: "token", text: piece });
+        };
+        if (!full.trim()) {
+          // The model went quiet after its tools: report what they did, and
+          // only what they did.
+          const done = activity.filter((a) => a.ok).map((a) => a.label);
+          const failed = activity.filter((a) => !a.ok).map((a) => a.label);
+          if (done.length > 0) say(`${done.join(". ")}.`);
+          if (failed.length > 0) say(`That didn't work: ${failed.join(". ")}.`);
+        }
+        if (unfinished) {
+          say(
+            unfinished.length > 0
+              ? `I hit my step limit, so ${unfinished.length === 1 ? "this step" : "these steps"} didn't run: ${unfinished.join("; ")}. Ask me to carry on.`
+              : "I hit my step limit before I could finish. Ask me to carry on.",
+          );
+        }
+        // No text and no tool work at all is not a success.
+        if (!full.trim()) throw new Error(EMPTY_REPLY);
 
         const record = conversationsRepo.addMessage(
           conversation.id,
@@ -292,7 +389,11 @@ export function runChatTurn(input: ChatTurnInput): ReadableStream<Uint8Array> {
             // persistence is best effort inside the failure path
           }
         }
-        emit({ type: "error", message });
+        emit(
+          conversation
+            ? { type: "error", message, conversationId: conversation.id }
+            : { type: "error", message },
+        );
       } finally {
         finish();
       }

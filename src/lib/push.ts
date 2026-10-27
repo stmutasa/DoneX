@@ -68,7 +68,7 @@ export async function sendPushToAll(
           return;
         }
         try {
-          await webpush.sendNotification(subscription, json);
+          await webpush.sendNotification(subscription, json, { timeout: 10_000 });
           sent++;
         } catch (err) {
           const statusCode = (err as { statusCode?: number }).statusCode;

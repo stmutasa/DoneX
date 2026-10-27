@@ -1,7 +1,58 @@
-import { describe, expect, it } from "vitest";
-import { buildFeedbackDigest, parseTriageDecision } from "@/lib/ai/generate";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TriageFeedback } from "@/lib/types";
+import type { CompleteArgs, ProviderAdapter, ProviderConfig } from "@/lib/ai/provider";
 import { distanceLabel, haversineKm, isQuietTime, mapLimit } from "@/lib/utils";
+
+// A throwaway data directory per run, so the real one is never touched.
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "donex-triage-"));
+process.env.DATA_DIR = DIR;
+
+// The model, scripted: each test says what it answers, and every request is
+// kept so the prompt's shape can be checked.
+const model = vi.hoisted(() => ({
+  answer: (_args: CompleteArgs): string | Promise<string> => "{}",
+  calls: [] as CompleteArgs[],
+}));
+
+vi.mock("@/lib/ai/adapters", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ai/adapters")>();
+  const cfg: ProviderConfig = { kind: "openai", baseUrl: "", apiKey: "test", model: "test" };
+  const adapter: ProviderAdapter = {
+    complete: async (args) => {
+      model.calls.push(args);
+      return model.answer(args);
+    },
+    stream: async () => ({ text: "", toolCalls: [] }),
+    models: async () => [],
+  };
+  return {
+    ...actual,
+    aiConfigured: () => true,
+    callWithFailover: <T>(run: (c: ProviderConfig, a: ProviderAdapter) => Promise<T>) => run(cfg, adapter),
+  };
+});
+
+const {
+  appendUpdateNote,
+  buildFeedbackDigest,
+  findUpdateTarget,
+  parseLocalDue,
+  parseTriageDecision,
+  sweepAutoDismissable,
+  triageInboxItem,
+} = await import("@/lib/ai/generate");
+const { inboxRepo, settingsRepo, tasksRepo } = await import("@/lib/db/repos");
+
+beforeAll(() => {
+  settingsRepo.updateApp({ tz: "America/New_York" });
+});
+
+afterAll(() => {
+  fs.rmSync(DIR, { recursive: true, force: true });
+});
 
 describe("buildFeedbackDigest", () => {
   const lesson = (kind: TriageFeedback["kind"], reason: string): TriageFeedback => ({
@@ -226,5 +277,202 @@ describe("parseTriageDecision — deadline and priority", () => {
       "x",
     );
     expect(parsed.update?.priority).toBeNull();
+  });
+});
+
+describe("appendUpdateNote", () => {
+  it("keeps the user's existing notes whole, however long", () => {
+    const existing = "x".repeat(3000);
+    const out = appendUpdateNote(existing, "Moved to Thursday 10am", "2026-10-27");
+    expect(out.startsWith(existing)).toBe(true);
+    expect(out.endsWith("Update (2026-10-27): Moved to Thursday 10am")).toBe(true);
+  });
+
+  it("caps only the new stamp", () => {
+    const out = appendUpdateNote("mine", "y".repeat(1000), "2026-10-27");
+    expect(out.startsWith("mine\n\n")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual("mine\n\n".length + 300);
+  });
+
+  it("starts the notes when there were none", () => {
+    expect(appendUpdateNote("  ", "New detail", "2026-10-27")).toBe("Update (2026-10-27): New detail");
+  });
+});
+
+describe("findUpdateTarget", () => {
+  const t = (id: string, title: string) => ({ id, title }) as unknown as import("@/lib/types").Task;
+
+  it("prefers an exact title, then forgives case, quotes, spacing and a full stop", () => {
+    const tasks = [t("a", "Call the dentist"), t("b", "Dentist appointment Tue 3pm")];
+    expect(findUpdateTarget("call the dentist", tasks)?.id).toBe("a");
+    expect(findUpdateTarget("“Dentist  appointment Tue 3pm”.", tasks)?.id).toBe("b");
+    expect(findUpdateTarget("Dentist appointment", tasks)).toBeNull();
+    expect(findUpdateTarget("", tasks)).toBeNull();
+  });
+
+  it("takes the first list's task when two lists share a title", () => {
+    const tasks = [t("personal", "Pay rent"), t("joint", "Pay rent")];
+    expect(findUpdateTarget("Pay rent", tasks)?.id).toBe("personal");
+  });
+});
+
+describe("parseLocalDue", () => {
+  const tz = "America/New_York";
+
+  it("reads 12-hour times instead of dropping the pm", () => {
+    expect(parseLocalDue("2026-10-30 5:00 PM", tz)).toEqual({ dueAt: "2026-10-30T21:00:00.000Z", allDay: false });
+    expect(parseLocalDue("2026-10-30 5pm", tz)).toEqual({ dueAt: "2026-10-30T21:00:00.000Z", allDay: false });
+    expect(parseLocalDue("2026-10-30T17:00", tz)).toEqual({ dueAt: "2026-10-30T21:00:00.000Z", allDay: false });
+  });
+
+  it("keeps the date when what follows is not a time", () => {
+    expect(parseLocalDue("2026-10-30 EOD", tz)).toEqual({ dueAt: "2026-10-30T04:00:00.000Z", allDay: true });
+    expect(parseLocalDue("2026-10-30", tz)).toEqual({ dueAt: "2026-10-30T04:00:00.000Z", allDay: true });
+  });
+
+  it("treats empty and null-ish answers as no date", () => {
+    expect(parseLocalDue("", tz)).toEqual({ dueAt: null, allDay: false });
+    expect(parseLocalDue("null", tz)).toEqual({ dueAt: null, allDay: false });
+    expect(parseLocalDue(undefined, tz)).toEqual({ dueAt: null, allDay: false });
+  });
+});
+
+describe("triageInboxItem", () => {
+  let seq = 0;
+  const email = (content: string) =>
+    inboxRepo.create({ source: "gmail", externalId: `msg-${++seq}`, fromLabel: "Office", content })!;
+  const answer = (payload: Record<string, unknown>) => {
+    model.answer = () => JSON.stringify(payload);
+  };
+
+  beforeEach(() => {
+    model.calls = [];
+    model.answer = () => "{}";
+  });
+
+  it("sends the rules and the user's context as cacheable shared segments, the item last", async () => {
+    tasksRepo.create({ title: "Renew the parking permit" });
+    const item = email("Your order has shipped");
+    answer({ decision: "dismiss", reason: "Shipping notice" });
+    await triageInboxItem(item.id);
+
+    expect(model.calls).toHaveLength(1);
+    const [call] = model.calls;
+    expect(call.shared).toHaveLength(2);
+    expect(call.shared![0]).toContain("Return JSON exactly like");
+    expect(call.shared![1]).toContain("Renew the parking permit");
+    expect(call.shared!.join("\n")).not.toContain("Your order has shipped");
+    expect(call.prompt).toContain("Your order has shipped");
+    expect(call.prompt).not.toContain("Return JSON exactly like");
+  });
+
+  it("updates a joint-list task the prompt showed the model", async () => {
+    const joint = tasksRepo.create({ title: "Dentist appointment Tue 3pm", space: "joint" });
+    const item = email("Your appointment has moved to Thursday at 10am.");
+    answer({
+      decision: "update",
+      reason: "Appointment moved",
+      update: { taskTitle: "Dentist appointment Tue 3pm", dueAtLocal: null, priority: null, note: "Moved to Thu 10am" },
+    });
+    const out = await triageInboxItem(item.id);
+
+    expect(out.status).toBe("resolved");
+    expect(out.resolvedTaskId).toBe(joint.id);
+    expect(tasksRepo.get(joint.id)?.notes).toContain("Moved to Thu 10am");
+  });
+
+  it("appends an update without cutting the task's long notes", async () => {
+    const long = "n".repeat(3000);
+    const task = tasksRepo.create({ title: "Plan the kitchen refit", notes: long });
+    const item = email("The cabinets arrive on the 12th.");
+    answer({
+      decision: "update",
+      update: { taskTitle: "Plan the kitchen refit", dueAtLocal: null, priority: null, note: "Cabinets arrive on the 12th" },
+    });
+    await triageInboxItem(item.id);
+
+    const notes = tasksRepo.get(task.id)!.notes;
+    expect(notes.startsWith(long)).toBe(true);
+    expect(notes).toContain("Cabinets arrive on the 12th");
+  });
+
+  it("keeps an update it can't match in the inbox, out of the sweep's reach", async () => {
+    const item = email("Your table for Friday is now at 8pm.");
+    answer({
+      decision: "update",
+      update: { taskTitle: "Dinner reservation", dueAtLocal: "2026-11-06 8:00 PM", priority: null, note: "Now 8pm" },
+    });
+    const out = await triageInboxItem(item.id);
+
+    expect(out.status).toBe("new");
+    expect(out.suggestion?.action).toBe("task");
+    expect(out.suggestion?.reason).toContain("no open task matches");
+    expect(out.suggestion?.task?.title).toBe("Dinner reservation");
+    expect(out.suggestion?.task?.dueAt).toBe("2026-11-07T01:00:00.000Z");
+
+    sweepAutoDismissable();
+    expect(inboxRepo.get(item.id)?.status).toBe("new");
+  });
+
+  it("leaves the user's own resolution alone when the verdict lands after it", async () => {
+    const task = tasksRepo.create({ title: "Reply to the school" });
+    const item = email("Please confirm the trip form by Friday.");
+    model.answer = () => {
+      // The user taps "Add as task" while the model is still thinking.
+      inboxRepo.resolve(item.id, "resolved", task.id);
+      return JSON.stringify({ decision: "dismiss", reason: "FYI" });
+    };
+    const out = await triageInboxItem(item.id);
+
+    expect(out.status).toBe("resolved");
+    expect(out.resolvedTaskId).toBe(task.id);
+    expect(inboxRepo.get(item.id)?.suggestion).toBeNull();
+  });
+
+  it("applies an update once when two runs triage the same item together", async () => {
+    const task = tasksRepo.create({ title: "Book the plumber" });
+    const item = email("The plumber can come Wednesday morning instead.");
+    model.answer = async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return JSON.stringify({
+        decision: "update",
+        update: { taskTitle: "Book the plumber", dueAtLocal: null, priority: null, note: "Wednesday morning works" },
+      });
+    };
+    await Promise.all([triageInboxItem(item.id), triageInboxItem(item.id)]);
+
+    expect(model.calls).toHaveLength(1);
+    const notes = tasksRepo.get(task.id)!.notes;
+    expect(notes.match(/Wednesday morning works/g)).toHaveLength(1);
+    expect(inboxRepo.get(item.id)?.status).toBe("resolved");
+  });
+
+  it("doesn't pay to triage an item that already has a verdict", async () => {
+    const item = email("Can you send the signed lease back by the 14th?");
+    answer({ decision: "task", reason: "Lease to sign", task: { title: "Send back the signed lease", dueAtLocal: "2026-11-14", deadlineBasis: "stated", priority: 2 } });
+    const first = await triageInboxItem(item.id);
+    expect(first.suggestion?.action).toBe("task");
+
+    // A run that lags behind reaches the same item with a different answer.
+    model.calls = [];
+    answer({ decision: "dismiss", reason: "Nothing to do" });
+    const again = await triageInboxItem(item.id);
+
+    expect(model.calls).toHaveLength(0);
+    expect(again.status).toBe("new");
+    expect(again.suggestion).toEqual(first.suggestion);
+  });
+
+  it("gives an unmatched update a real deadline and priority, like any triaged task", async () => {
+    const item = email("Quick note: the carpool rota changed.");
+    answer({ decision: "update", update: { taskTitle: "Carpool rota", dueAtLocal: null, priority: null, note: "Rota changed" } });
+    const out = await triageInboxItem(item.id);
+
+    expect(out.suggestion?.action).toBe("task");
+    expect(out.suggestion?.task?.dueAt).toBeTruthy();
+    expect(out.suggestion?.task?.dueKind).toBe("by");
+    expect(out.suggestion?.task?.priority).toBe(1);
+    expect(out.suggestion?.dueSuggested).toBe(true);
+    expect(out.suggestion?.dueWhy).toBeTruthy();
   });
 });

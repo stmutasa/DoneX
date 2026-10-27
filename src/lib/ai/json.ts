@@ -118,12 +118,20 @@ export function salvageJson(text: string): Record<string, unknown> | null {
  * Pull a JSON object out of a model reply: strips markdown fences and any
  * prose around the payload by slicing from the first "{" to the last "}",
  * then falls back to salvage for control characters and truncation.
+ *
+ * A bare object is tried first, and a fence is only unwrapped when the reply
+ * opens with one, up to the last closing fence: string values can carry ```
+ * blocks of their own (a code snippet in an email), and those are payload.
  */
 export function extractJsonObject(raw: string): Record<string, unknown> | null {
   if (!raw) return null;
   let text = raw.trim();
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) text = fence[1].trim();
+  const whole = asRecord(safeJsonParse(text));
+  if (whole) return whole;
+  if (text.startsWith("```")) {
+    const close = text.lastIndexOf("```");
+    text = (close > 2 ? text.slice(3, close) : text.slice(3)).replace(/^json\b/i, "").trim();
+  }
   const direct = asRecord(safeJsonParse(text));
   if (direct) return direct;
   const start = text.indexOf("{");

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireSession, sessionRole } from "@/lib/auth";
+import { currentSession, requireSession } from "@/lib/auth";
 import { pushRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +32,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid push subscription" }, { status: 400 });
   }
 
-  pushRepo.add(parsed.data.subscription, (await sessionRole()) ?? "owner");
+  // Read the session again right before the write: it may have been signed
+  // out while the body arrived, and a missing role must never become
+  // "owner". The row is tagged with whoever is signed in now and linked to
+  // this session, so it follows the person using the device and goes away
+  // when they sign out.
+  const session = await currentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  pushRepo.add(parsed.data.subscription, session.role, session.token);
   return NextResponse.json({ ok: true });
 }

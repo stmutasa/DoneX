@@ -6,14 +6,19 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { motion } from "framer-motion";
-import { authApi, fetcher, keys } from "@/lib/api";
+import { fetcher, keys } from "@/lib/api";
+import { setDisplayTimeZone } from "@/lib/format";
+import { usePushDevice } from "@/lib/pushClient";
+import { signOutThisDevice } from "@/lib/signOut";
 import type { FeatureSettings, InboxItem, StatsSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { CountBadge } from "@/components/ui/Misc";
 import { Sheet } from "@/components/ui/Sheet";
 import { Segmented } from "@/components/ui/Segmented";
+import { useToast } from "@/components/ui/Toast";
 import {
+  IconBell,
   IconChat,
   IconLogout,
   IconMonitor,
@@ -38,17 +43,25 @@ import { useTheme } from "./ThemeProvider";
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const toast = useToast();
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
 
-  const { data: me } = useSWR<{ role: "owner" | "partner"; features?: FeatureSettings }>(
+  const { data: me } = useSWR<{ role: "owner" | "partner"; features?: FeatureSettings; tz?: string }>(
     keys.me(),
     fetcher,
   );
+  // All-day dates are stored at midnight in the app's zone. Set it here, during
+  // render, so the pages rendered below already read their dates in it.
+  if (me?.tz) setDisplayTimeZone(me.tz);
   const partner = me?.role === "partner";
   const features = me?.features;
   // Owner-only fetches wait until the role is actually known.
   const owner = me?.role === "owner";
+
+  // Re-posts this device's push subscription once the role is known, so the
+  // server sends it what belongs to whoever is signed in here now.
+  const push = usePushDevice(!!me?.role);
 
   const { data: inbox } = useSWR<{ items: InboxItem[]; newCount: number }>(
     owner ? keys.inbox("new") : null,
@@ -91,22 +104,35 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => setMoreOpen(false), [pathname]);
 
+  // Only the server can end the (httpOnly) session, so a failed logout stays
+  // signed in and says so rather than showing a lock screen over it.
   const signOut = async () => {
     try {
-      await authApi.logout();
-    } catch {
-      /* signing out locally regardless */
+      await signOutThisDevice();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not sign out");
     }
-    window.location.href = "/login";
   };
 
   if (partner) {
+    // Settings is the owner's, so the partner turns pings on from her bar.
+    const enablePush =
+      push.supported && !push.subscribed
+        ? async () => {
+            try {
+              await push.enable();
+              toast.success("Notifications on for this device");
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Could not turn on notifications");
+            }
+          }
+        : undefined;
     return (
       <div className="min-h-dvh bg-bg">
         <OfflineBanner />
-        <PartnerTopBar onSignOut={signOut} />
+        <PartnerTopBar onSignOut={signOut} onEnablePush={enablePush} pushWorking={push.working} />
         <main className="pb-24 lg:pb-0">{children}</main>
-        <PartnerBar onSignOut={signOut} />
+        <PartnerBar onSignOut={signOut} onEnablePush={enablePush} pushWorking={push.working} />
       </div>
     );
   }
@@ -398,9 +424,19 @@ function MoreSheet({
   );
 }
 
-function PartnerBar({ onSignOut }: { onSignOut: () => void }) {
-  const { theme, setTheme } = useTheme();
-  const next = theme === "dark" ? "light" : "dark";
+function PartnerBar({
+  onSignOut,
+  onEnablePush,
+  pushWorking,
+}: {
+  onSignOut: () => void;
+  /** Set while this device could, but doesn't yet, get notifications. */
+  onEnablePush?: () => void;
+  pushWorking: boolean;
+}) {
+  // `resolved`, not `theme`: on "system" the page may already be dark.
+  const { resolved, setTheme } = useTheme();
+  const next = resolved === "dark" ? "light" : "dark";
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-stroke bg-elev/92 backdrop-blur-xl lg:hidden">
       <div className="mx-auto flex max-w-md items-center justify-between px-6 py-2.5 pb-safe">
@@ -409,13 +445,25 @@ function PartnerBar({ onSignOut }: { onSignOut: () => void }) {
           <span className="ml-2 font-normal text-muted">shared list</span>
         </span>
         <div className="flex items-center gap-1">
+          {onEnablePush ? (
+            <button
+              type="button"
+              onClick={onEnablePush}
+              disabled={pushWorking}
+              aria-label="Turn on notifications"
+              title="Turn on notifications"
+              className="grid h-10 w-10 place-items-center rounded-full text-muted transition-colors hover:text-ink disabled:opacity-50"
+            >
+              <IconBell className="h-5 w-5" />
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setTheme(next)}
             aria-label="Switch theme"
             className="grid h-10 w-10 place-items-center rounded-full text-muted transition-colors hover:text-ink"
           >
-            {theme === "dark" ? <IconSun className="h-5 w-5" /> : <IconMoon className="h-5 w-5" />}
+            {resolved === "dark" ? <IconSun className="h-5 w-5" /> : <IconMoon className="h-5 w-5" />}
           </button>
           <button
             type="button"
@@ -456,7 +504,15 @@ function ThemeCycleButton({
 
 /** The partner's desktop chrome: one destination, so a top bar rather than a
  *  sidebar — the phone keeps its bottom bar. */
-function PartnerTopBar({ onSignOut }: { onSignOut: () => void }) {
+function PartnerTopBar({
+  onSignOut,
+  onEnablePush,
+  pushWorking,
+}: {
+  onSignOut: () => void;
+  onEnablePush?: () => void;
+  pushWorking: boolean;
+}) {
   const { theme, setTheme } = useTheme();
   return (
     <header className="sticky top-0 z-30 hidden border-b border-stroke bg-elev/92 backdrop-blur-xl lg:block">
@@ -464,6 +520,17 @@ function PartnerTopBar({ onSignOut }: { onSignOut: () => void }) {
         <Wordmark className="text-[19px]" />
         <span className="text-[14px] text-muted">shared list</span>
         <span className="flex-1" />
+        {onEnablePush ? (
+          <button
+            type="button"
+            onClick={onEnablePush}
+            disabled={pushWorking}
+            className="flex min-h-[36px] items-center gap-2 rounded-xl px-2.5 text-[13px] text-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-50"
+          >
+            <IconBell className="h-4 w-4" />
+            Turn on notifications
+          </button>
+        ) : null}
         <ThemeCycleButton theme={theme} setTheme={setTheme} />
         <button
           type="button"

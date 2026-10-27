@@ -74,28 +74,35 @@ export function AiSection({ settings, mutate }: SectionProps) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // Draft choices, re-seeded whenever the saved settings actually change.
-  const [draftModel, setDraftModel] = useState(ai.model);
+  // Custom runs on its Model id when one is set (an older version could leave
+  // it out of step with ai.model), so that is the model to show and to save.
+  const savedModel = provider === "custom" ? ai.customModel || ai.model : ai.model;
+  // An unpinned custom backup also uses that id, not its host's newest.
+  const customBackupModel = ai.customModel.trim();
+
+  // Draft choices, each re-seeded only when the saved setting it mirrors
+  // changes — so a blur-save of the custom fields can't quietly throw away an
+  // unsaved backup pick.
+  const [draftModel, setDraftModel] = useState(savedModel);
   const [draftFallback, setDraftFallback] = useState<string>(ai.fallbackProvider);
   const [draftFallbackModel, setDraftFallbackModel] = useState(ai.fallbackModelPinned);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<SaveModelsResult | null>(null);
   useEffect(() => {
-    setDraftModel(ai.model);
+    setDraftModel(savedModel);
+  }, [savedModel, provider]);
+  useEffect(() => {
     setDraftFallback(ai.fallbackProvider);
     setDraftFallbackModel(ai.fallbackModelPinned);
-    // The custom provider's own id field mirrors the same setting, so it has
-    // to follow a save too rather than sitting there showing the old value.
+  }, [ai.fallbackProvider, ai.fallbackModelPinned]);
+  // The custom provider's own fields follow a save too, rather than sitting
+  // there showing the old value.
+  useEffect(() => {
     setCustomModel(ai.customModel);
+  }, [ai.customModel]);
+  useEffect(() => {
     setBaseUrl(ai.customBaseUrl);
-  }, [
-    ai.model,
-    ai.fallbackProvider,
-    ai.fallbackModelPinned,
-    ai.provider,
-    ai.customModel,
-    ai.customBaseUrl,
-  ]);
+  }, [ai.customBaseUrl]);
 
   // The backup provider's own catalogue, so its model can be picked by name.
   const { data: backupModelData, isLoading: backupModelsLoading } = useSWR<{ models: ModelInfo[] }>(
@@ -131,7 +138,7 @@ export function AiSection({ settings, mutate }: SectionProps) {
   // Nothing here writes until you press Save, so a half-made choice can't
   // quietly become the thing your work runs on.
   const dirty =
-    draftModel !== ai.model ||
+    draftModel !== savedModel ||
     draftFallback !== ai.fallbackProvider ||
     draftFallbackModel !== ai.fallbackModelPinned;
 
@@ -286,6 +293,9 @@ export function AiSection({ settings, mutate }: SectionProps) {
             placeholder="meta-llama/llama-3.1-70b-instruct"
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
+            // The server moves ai.model with it while custom is the provider.
+            // Sending model too could land it on another provider's pick if a
+            // provider switch is saved first.
             onBlur={() => customModel !== ai.customModel && patch({ ai: { customModel } })}
           />
         </div>
@@ -404,7 +414,9 @@ export function AiSection({ settings, mutate }: SectionProps) {
               disabled={backupModelsLoading}
             >
               <option value="">
-                Auto — newest {PROVIDER_LABEL[draftFallback as AIProviderKind]} model
+                {draftFallback === "custom" && customBackupModel
+                  ? `Auto — the Custom model id (${customBackupModel})`
+                  : `Auto — newest ${PROVIDER_LABEL[draftFallback as AIProviderKind]} model`}
               </option>
               {backupPinMissing ? (
                 <option value={draftFallbackModel}>
@@ -423,7 +435,9 @@ export function AiSection({ settings, mutate }: SectionProps) {
             <p className="mt-1.5 text-[12px] leading-snug text-faint">
               {draftFallbackModel
                 ? "Pinned — failover uses exactly this, and won't move you off it."
-                : "Follows whatever is newest there, re-checked daily."}
+                : draftFallback === "custom" && customBackupModel
+                  ? "Uses the model id set for Custom."
+                  : "Follows whatever is newest there, re-checked daily."}
             </p>
           </div>
         ) : null}
@@ -456,13 +470,19 @@ export function AiSection({ settings, mutate }: SectionProps) {
           </div>
           <div className="mt-1 text-[13.5px] leading-relaxed text-ink">
             {PROVIDER_LABEL[ai.provider]} ·{" "}
-            <span className="font-medium">{ai.model || "newest available (auto)"}</span>
+            <span className="font-medium">{savedModel || "newest available (auto)"}</span>
           </div>
           <div className="mt-0.5 text-[13px] leading-relaxed text-muted">
             {ai.fallbackProvider
               ? `Backup: ${PROVIDER_LABEL[ai.fallbackProvider]}${
                   ai.fallbackModel ? ` · ${ai.fallbackModel}` : ""
-                }${ai.fallbackModelPinned ? " (pinned)" : " (newest)"}`
+                }${
+                  ai.fallbackModelPinned
+                    ? " (pinned)"
+                    : ai.fallbackProvider === "custom" && customBackupModel
+                      ? ""
+                      : " (newest)"
+                }`
               : "No backup"}
           </div>
         </div>
@@ -484,7 +504,13 @@ export function AiSection({ settings, mutate }: SectionProps) {
               {saved.saved.fallbackProvider
                 ? `, backing up to ${PROVIDER_LABEL[saved.saved.fallbackProvider as AIProviderKind]}${
                     saved.saved.fallbackModel ? ` · ${saved.saved.fallbackModel}` : ""
-                  }${saved.saved.fallbackAuto ? " (newest)" : " (pinned)"}`
+                  }${
+                    !saved.saved.fallbackAuto
+                      ? " (pinned)"
+                      : saved.saved.fallbackProvider === "custom" && customBackupModel
+                        ? ""
+                        : " (newest)"
+                  }`
                 : ", no backup"}
               .
             </p>

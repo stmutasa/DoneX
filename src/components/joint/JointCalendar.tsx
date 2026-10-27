@@ -7,6 +7,17 @@ import { fetcher } from "@/lib/api";
 import type { CalendarEvent, Task } from "@/lib/types";
 import { hueSoftVar, hueVar, normalizeJointColor, type JointColorId } from "@/lib/jointColors";
 import { dayHeading, timeLabel } from "@/lib/format";
+import {
+  byStart,
+  covers,
+  dateOf,
+  dayKeyOf,
+  keyOf,
+  layoutLanes,
+  segmentOn,
+  spanOf,
+  type Segment,
+} from "@/lib/calendarDays";
 import { addDaysToDateKey, cn } from "@/lib/utils";
 import { useIsWideScreen } from "@/hooks/useMediaQuery";
 import { Segmented } from "@/components/ui/Segmented";
@@ -23,6 +34,9 @@ interface Payload {
   tasks: Task[];
   warnings: string[];
   from: string;
+  days?: number;
+  /** the local date the window starts on, as asked for */
+  fromKey?: string;
 }
 
 /** Each person's resolved color, defaults blue (owner) / pink (partner). */
@@ -42,19 +56,6 @@ export type CalendarMode = "agenda" | "week" | "month";
 // ── Dates ──────────────────────────────────────────────────────────────────
 // Local time throughout, keyed YYYY-MM-DD so a range survives the round trip
 // to the server (which resolves it against the account's timezone).
-
-function keyOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function dayKeyOf(iso: string): string {
-  return keyOf(new Date(iso));
-}
-
-function dateOf(key: string): Date {
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
 
 function startOfWeek(key: string): string {
   const d = dateOf(key);
@@ -100,39 +101,17 @@ function rangeLabel(mode: CalendarMode, anchor: string): string {
   return `${startText} – ${endText}, ${end.getFullYear()}`;
 }
 
-/** Google-Calendar-style lanes: overlapping events share the column width. */
-function layoutLanes(events: Entry[]): Map<string, { lane: number; lanes: number }> {
-  const sorted = [...events].sort((a, b) => a.start.localeCompare(b.start));
-  const result = new Map<string, { lane: number; lanes: number }>();
-  let cluster: Entry[] = [];
-  let clusterEnd = "";
-  const flush = () => {
-    if (cluster.length === 0) return;
-    const laneEnds: string[] = [];
-    const laneOf = new Map<string, number>();
-    for (const e of cluster) {
-      let lane = laneEnds.findIndex((end) => end <= e.start);
-      if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(e.end);
-      } else {
-        laneEnds[lane] = e.end;
-      }
-      laneOf.set(e.id, lane);
-    }
-    for (const e of cluster) {
-      result.set(e.id, { lane: laneOf.get(e.id) ?? 0, lanes: laneEnds.length });
-    }
-    cluster = [];
-    clusterEnd = "";
-  };
-  for (const e of sorted) {
-    if (cluster.length > 0 && e.start >= clusterEnd) flush();
-    cluster.push(e);
-    if (e.end > clusterEnd) clusterEnd = e.end;
+/** "9:00 AM – 10:00 AM", with the days named when it runs past midnight. */
+function whenOf(e: CalendarEvent): string {
+  const { first, last } = spanOf(e);
+  if (e.allDay) {
+    if (first === last) return "All day";
+    const day = (k: string) => dateOf(k).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${day(first)} – ${day(last)}`;
   }
-  flush();
-  return result;
+  if (first === last) return `${timeLabel(e.start)} – ${timeLabel(e.end)}`;
+  const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "short" });
+  return `${day(e.start)} ${timeLabel(e.start)} – ${day(e.end)} ${timeLabel(e.end)}`;
 }
 
 interface Selected {
@@ -166,20 +145,43 @@ export function JointCalendar({
   const [today, setToday] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected | null>(null);
+  const todayRef = useRef<string | null>(null);
 
-  // Resolved after mount so server and first client render agree.
+  // Resolved after mount so server and first client render agree, then kept
+  // current: an installed app can sit open across midnight.
   useEffect(() => {
-    const key = keyOf(new Date());
-    setToday(key);
-    setAnchor((a) => a ?? key);
+    const sync = () => {
+      const key = keyOf(new Date());
+      const prev = todayRef.current;
+      if (prev === key) return;
+      todayRef.current = key;
+      setToday(key);
+      // Move along with the date only if you were looking at today.
+      setAnchor((a) => (a === null || a === prev ? key : a));
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    sync();
+    const id = window.setInterval(sync, 60_000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", sync);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", sync);
+    };
   }, []);
 
   const { from, days } = rangeFor(mode, anchor ?? "1970-01-01");
-  const { data, isLoading } = useSWR<Payload>(
+  const { data, error, isLoading, mutate } = useSWR<Payload>(
     anchor ? `/api/joint/calendar?from=${from}&days=${days}` : null,
     fetcher,
     { refreshInterval: 5 * 60_000, keepPreviousData: true },
   );
+  // keepPreviousData leaves the last window on screen while the next loads.
+  const stale = !!data && data.fromKey !== undefined && (data.fromKey !== from || data.days !== days);
+  const failed = !!error && (!data || stale);
 
   const whoName = (w: Entry["who"]) => (w === "partner" ? names.partner : names.owner);
   const atToday = !!today && !!anchor && rangeFor(mode, anchor).from === rangeFor(mode, today).from;
@@ -202,28 +204,49 @@ export function JointCalendar({
         onToday={() => setAnchor(today)}
       />
 
-      {(data?.warnings ?? []).map((w) => (
+      {(failed ? [] : (data?.warnings ?? [])).map((w) => (
         <p key={w} className="rounded-2xl border border-stroke bg-sunken px-3.5 py-2.5 text-[13px] text-warn">
           {w}
         </p>
       ))}
 
-      {isLoading && !data ? (
+      {error && !failed ? (
+        <p className="rounded-2xl border border-stroke bg-sunken px-3.5 py-2.5 text-[13px] text-warn">
+          Couldn&rsquo;t refresh the calendar, so this is what loaded earlier.
+        </p>
+      ) : null}
+
+      {failed ? (
+        <div className="rounded-2xl border border-stroke bg-elev px-4 py-6 text-center text-[14px] text-muted">
+          <p>Couldn&rsquo;t load the calendar for these dates. Check your connection and try again.</p>
+          <button
+            type="button"
+            onClick={() => void mutate()}
+            className="mt-3 min-h-[34px] rounded-full border border-stroke px-3 text-[13px] font-medium text-ink transition-colors hover:bg-sunken"
+          >
+            Try again
+          </button>
+        </div>
+      ) : isLoading && !data ? (
         <SkeletonRows rows={4} />
-      ) : mode === "week" ? (
-        <WeekGrid data={data} from={from} today={today} onPick={setSelected} whoName={whoName} colors={who} />
-      ) : mode === "month" ? (
-        <MonthGrid
-          data={data}
-          from={from}
-          anchor={anchor}
-          today={today}
-          onPick={setSelected}
-          onOpenDay={openDayInWeek}
-          colors={who}
-        />
       ) : (
-        <Agenda data={data} colors={who} />
+        <div className={cn("transition-opacity", stale && "opacity-60")} aria-busy={stale || undefined}>
+          {mode === "week" ? (
+            <WeekGrid data={data} from={from} today={today} onPick={setSelected} whoName={whoName} colors={who} />
+          ) : mode === "month" ? (
+            <MonthGrid
+              data={data}
+              from={from}
+              anchor={anchor}
+              today={today}
+              onPick={setSelected}
+              onOpenDay={openDayInWeek}
+              colors={who}
+            />
+          ) : (
+            <Agenda data={data} from={data?.fromKey ?? from} days={data?.days ?? days} colors={who} />
+          )}
+        </div>
       )}
 
       <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected?.title ?? ""}>
@@ -324,15 +347,40 @@ function Toolbar({
 
 // ── Agenda ─────────────────────────────────────────────────────────────────
 
-function Agenda({ data, colors }: { data: Payload | undefined; colors: WhoColors }) {
+/** The time column: when it starts on its first day, when it ends on its last. */
+function agendaTime(e: Entry, key: string): string {
+  if (e.allDay) return "all day";
+  const { first, last } = spanOf(e);
+  if (key === first) return timeLabel(e.start);
+  if (key === last) return `to ${timeLabel(e.end)}`;
+  return "all day";
+}
+
+function Agenda({
+  data,
+  from,
+  days,
+  colors,
+}: {
+  data: Payload | undefined;
+  from: string;
+  days: number;
+  colors: WhoColors;
+}) {
   const byDay = useMemo(() => {
     const map = new Map<string, { events: Entry[]; tasks: Task[] }>();
+    const stretch = Array.from({ length: days }, (_, i) => addDaysToDateKey(from, i));
+    // Under every day it covers in this stretch, not just the day it started.
     for (const e of data?.events ?? []) {
-      const key = dayKeyOf(e.start);
-      const bucket = map.get(key) ?? { events: [], tasks: [] };
-      bucket.events.push(e);
-      map.set(key, bucket);
+      const { first, last } = spanOf(e);
+      for (const key of stretch) {
+        if (key < first || key > last) continue;
+        const bucket = map.get(key) ?? { events: [], tasks: [] };
+        bucket.events.push(e);
+        map.set(key, bucket);
+      }
     }
+    for (const bucket of map.values()) bucket.events.sort(byStart);
     for (const t of data?.tasks ?? []) {
       if (!t.dueAt) continue;
       const key = dayKeyOf(t.dueAt);
@@ -341,7 +389,7 @@ function Agenda({ data, colors }: { data: Payload | undefined; colors: WhoColors
       map.set(key, bucket);
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [data]);
+  }, [data, from, days]);
 
   if (byDay.length === 0) {
     return (
@@ -367,7 +415,7 @@ function Agenda({ data, colors }: { data: Payload | undefined; colors: WhoColors
               >
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={dotStyle(colors[e.who])} />
                 <span className="w-[74px] shrink-0 text-[12.5px] tabular-nums text-muted">
-                  {e.allDay ? "all day" : timeLabel(e.start)}
+                  {agendaTime(e, key)}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{e.title}</span>
               </div>
@@ -436,16 +484,29 @@ function WeekGrid({
     const timedOut: Entry[] = [];
     const allDayOut: Entry[] = [];
     for (const e of data?.events ?? []) (e.allDay ? allDayOut : timedOut).push(e);
-    return { timed: timedOut, allDay: allDayOut };
+    return { timed: timedOut, allDay: allDayOut.sort(byStart) };
   }, [data]);
+
+  // Each day's share of the timed events: one that runs past midnight is
+  // drawn in every column it reaches, cut at the day's edges.
+  const segmentsByDay = useMemo(
+    () =>
+      days.map((key) => {
+        const segments = timed.map((e) => segmentOn(e, key)).filter((x): x is Segment<Entry> => x !== null);
+        return { key, segments, lanes: layoutLanes(segments) };
+      }),
+    [days, timed],
+  );
 
   // The whole day is drawn and the grid scrolls, like every desktop calendar —
   // but it opens where the day actually starts rather than at midnight.
   const firstHour = useMemo(() => {
     let h = 8;
-    for (const e of timed) h = Math.min(h, new Date(e.start).getHours());
+    for (const { segments } of segmentsByDay) {
+      for (const seg of segments) if (seg.first) h = Math.min(h, Math.floor(seg.startH));
+    }
     return Math.max(0, h - 1);
-  }, [timed]);
+  }, [segmentsByDay]);
 
   useEffect(() => {
     // a few pixels of slack so the first hour label clears the sticky header
@@ -490,7 +551,7 @@ function WeekGrid({
           <div className="grid border-t border-stroke" style={cols}>
             <span className="py-1 pr-1 text-right text-[9px] uppercase text-faint">all day</span>
             {days.map((key) => {
-              const chips = allDay.filter((e) => dayKeyOf(e.start) === key);
+              const chips = allDay.filter((e) => covers(e, key));
               const dayTasks = (data?.tasks ?? []).filter((t) => t.dueAt && dayKeyOf(t.dueAt) === key);
               return (
                 <div key={key} className="min-h-[24px] space-y-0.5 border-l border-stroke p-0.5">
@@ -498,7 +559,7 @@ function WeekGrid({
                     <button
                       key={e.id}
                       type="button"
-                      onClick={() => onPick({ title: e.title, who: e.who, when: "All day", location: e.location })}
+                      onClick={() => onPick({ title: e.title, who: e.who, when: whenOf(e), location: e.location })}
                       className={cn(
                         "block w-full truncate rounded border-l-2 px-1 py-0.5 text-left leading-tight text-ink",
                         wide ? "text-[11.5px]" : "text-[9.5px]",
@@ -544,9 +605,7 @@ function WeekGrid({
             </span>
           ))}
         </div>
-        {days.map((key) => {
-          const dayEvents = timed.filter((e) => dayKeyOf(e.start) === key);
-          const lanes = layoutLanes(dayEvents);
+        {segmentsByDay.map(({ key, segments, lanes }) => {
           return (
             <div key={key} className="relative border-l border-stroke">
               {hours.map((h, i) =>
@@ -559,12 +618,13 @@ function WeekGrid({
                 ) : null,
               )}
               {key === today ? <NowLine hourPx={hourPx} /> : null}
-              {dayEvents.map((e) => {
-                const s = new Date(e.start);
-                const en = new Date(e.end);
-                const startH = s.getHours() + s.getMinutes() / 60;
-                const endH = en.getHours() + en.getMinutes() / 60 || startH + 1;
-                const height = Math.max(22, (Math.max(endH, startH + 0.4) - startH) * hourPx - 2);
+              {segments.map(({ e, startH, endH, first }) => {
+                // Sized by the hours it covers on this day, cut at midnight.
+                const top = startH * hourPx;
+                const height = Math.min(
+                  24 * hourPx - top,
+                  Math.max(22, (Math.max(endH, startH + 0.4) - startH) * hourPx - 2),
+                );
                 const slot = lanes.get(e.id) ?? { lane: 0, lanes: 1 };
                 const width = 100 / slot.lanes;
                 return (
@@ -575,7 +635,7 @@ function WeekGrid({
                       onPick({
                         title: e.title,
                         who: e.who,
-                        when: `${timeLabel(e.start)} – ${timeLabel(e.end)}`,
+                        when: whenOf(e),
                         location: e.location,
                       })
                     }
@@ -584,7 +644,7 @@ function WeekGrid({
                       wide ? "text-[11.5px]" : "text-[9.5px]",
                     )}
                     style={{
-                      top: startH * hourPx,
+                      top,
                       height,
                       left: `calc(${slot.lane * width}% + 2px)`,
                       width: `calc(${width}% - 4px)`,
@@ -593,8 +653,10 @@ function WeekGrid({
                     title={`${e.title} · ${whoName(e.who)}`}
                   >
                     <span className="line-clamp-3 font-medium">{e.title}</span>
-                    {height > 44 ? (
-                      <span className="block truncate opacity-70">{timeLabel(e.start)}</span>
+                    {height > 44 && (first || endH < 24) ? (
+                      <span className="block truncate opacity-70">
+                        {first ? timeLabel(e.start) : `to ${timeLabel(e.end)}`}
+                      </span>
                     ) : null}
                   </button>
                 );
@@ -650,15 +712,18 @@ function MonthGrid({
   const shownMonth = dateOf(anchor ?? from).getMonth();
   const perDay = wide ? 4 : 2;
 
+  // An event sits in every cell it covers, not only the one it starts in.
   const byDay = useMemo(() => {
     const map = new Map<string, Entry[]>();
     for (const e of data?.events ?? []) {
-      const key = dayKeyOf(e.start);
-      map.set(key, [...(map.get(key) ?? []), e]);
+      const { first, last } = spanOf(e);
+      for (const key of cells) {
+        if (first <= key && key <= last) map.set(key, [...(map.get(key) ?? []), e]);
+      }
     }
-    for (const list of map.values()) list.sort((a, b) => a.start.localeCompare(b.start));
+    for (const list of map.values()) list.sort(byStart);
     return map;
-  }, [data]);
+  }, [data, cells]);
 
   const tasksByDay = useMemo(() => {
     const map = new Map<string, Task[]>();
@@ -720,14 +785,14 @@ function MonthGrid({
                       onPick({
                         title: e.title,
                         who: e.who,
-                        when: e.allDay ? "All day" : `${timeLabel(e.start)} – ${timeLabel(e.end)}`,
+                        when: whenOf(e),
                         location: e.location,
                       })
                     }
                     className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[10.5px] leading-tight text-ink transition-colors hover:bg-sunken xl:text-[11.5px]"
                   >
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={dotStyle(colors[e.who])} />
-                    {!e.allDay ? (
+                    {!e.allDay && dayKeyOf(e.start) === key ? (
                       <span className="shrink-0 tabular-nums text-muted">{timeLabel(e.start)}</span>
                     ) : null}
                     <span className="min-w-0 flex-1 truncate">{e.title}</span>

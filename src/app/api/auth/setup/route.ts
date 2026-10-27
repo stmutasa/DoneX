@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
-import { createSession, hashPin } from "@/lib/auth";
+import { createSession, hashPin, verifyPin } from "@/lib/auth";
 import { settingsRepo } from "@/lib/db/repos";
 import { nowIso } from "@/lib/utils";
 
@@ -32,6 +32,14 @@ export async function POST(req: NextRequest) {
   // Keep an existing ingest token: a PIN reset that clears pinHash and
   // re-runs setup must not silently break the user's SMS forwarder.
   const existing = settingsRepo.getApp();
+  // A reset keeps the partner PIN too, and sign-in tries the owner's first,
+  // so reusing it would let the partner in as the owner.
+  if (existing.joint.partnerPinHash && verifyPin(pin, existing.joint.partnerPinHash)) {
+    return NextResponse.json(
+      { error: "That's your partner's PIN — pick a different one" },
+      { status: 400 },
+    );
+  }
   settingsRepo.updateApp({
     pinHash: hashPin(pin),
     tz,

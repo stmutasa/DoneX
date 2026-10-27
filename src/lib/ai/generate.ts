@@ -11,10 +11,17 @@ import {
   statsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
-import { addDaysToDateKey, clamp, localDateKey, nowIso } from "@/lib/utils";
-import { deadlineLabel, effectivePriority, isUrgent } from "@/lib/deadline";
+import { getDb } from "@/lib/db";
+import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, localTimeKey, nowIso } from "@/lib/utils";
+import { deadlineLabel, effectivePriority } from "@/lib/deadline";
 import { composeInboxNotes } from "@/lib/inboxNotes";
-import { readBasis, settleDeadline, settlePriority, type DeadlineBasis } from "@/lib/triageDeadline";
+import {
+  normalizeLocalDue,
+  readBasis,
+  settleDeadline,
+  settlePriority,
+  type DeadlineBasis,
+} from "@/lib/triageDeadline";
 import { waitingLines, waitingOn } from "@/lib/nudges";
 import {
   digestLines as digestLinesFor,
@@ -42,7 +49,13 @@ import type {
 } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
 import { aiConfigured, callWithFailover } from "@/lib/ai/adapters";
-import { buildAssistantContext, buildTaskDigest } from "@/lib/ai/context";
+import {
+  buildAssistantContext,
+  buildCalendarList,
+  buildTaskDigest,
+  safeEventsBetween,
+  type AssistantContext,
+} from "@/lib/ai/context";
 import { asArray, asNumber, asRecord, asString, asStringArray, extractJsonObject } from "@/lib/ai/json";
 import { CALL_TIMEOUT_MS, describeCallError } from "@/lib/ai/provider";
 import { describeDue, instantOf, utcFromLocal } from "@/lib/ai/tools";
@@ -125,27 +138,115 @@ function digestLines(tasks: Task[], tz: string, limit: number): string {
 
 // ── Briefing ───────────────────────────────────────────────────────────────
 
+/** "+09:00" for 540: a fixed-offset zone the date helpers accept. */
+export function offsetZone(offsetMinutes: number): string {
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const abs = Math.abs(Math.round(offsetMinutes));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+/**
+ * The tasks a briefing for `dateLocal` covers, on the clock it is read on
+ * (`tz`): what Today would show that day, overdue first. All-day tasks belong
+ * to the calendar date they were set for at home, so they keep that date
+ * wherever the user wakes up rather than sliding a day with the offset.
+ */
+export function briefingTasks(
+  open: Task[],
+  opts: { dateLocal: string; tz: string; homeTz: string; now?: Date },
+): { overdue: Task[]; dueToday: Task[] } {
+  const { dateLocal, tz, homeTz, now = new Date() } = opts;
+  const onClock = (t: Task): Task =>
+    t.allDay && t.dueAt && tz !== homeTz
+      ? { ...t, dueAt: utcFromLocal(localDateKey(t.dueAt, homeTz), "00:00", tz) }
+      : t;
+  const startOfDay = instantOf(utcFromLocal(dateLocal, "00:00", tz));
+  const startOfTomorrow = instantOf(utcFromLocal(addDaysToDateKey(dateLocal, 1), "00:00", tz));
+  const startOfDayAfter = instantOf(utcFromLocal(addDaysToDateKey(dateLocal, 2), "00:00", tz));
+  const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfDay;
+
+  // Mirrors what Today actually shows: due by the end of the day, plus live
+  // deadlines; project work stays on its own tab unless it lands within a day.
+  const today = open
+    .map(onClock)
+    .filter((t) => t.status === "open" && !t.parentId && t.dueAt !== null)
+    .filter((t) => instantOf(t.dueAt!) < startOfTomorrow || t.dueKind === "by")
+    .filter((t) => !t.projectId || instantOf(t.dueAt!) < startOfDayAfter);
+  const rank = (t: Task): number => (isOverdue(t) ? 4 : effectivePriority(t, tz, now));
+  today.sort(
+    (a, b) =>
+      rank(b) - rank(a) || instantOf(a.dueAt!) - instantOf(b.dueAt!) || a.sort - b.sort,
+  );
+  return { overdue: today.filter(isOverdue), dueToday: today.filter((t) => !isOverdue(t)) };
+}
+
+/**
+ * The events that belong to `dateLocal`. A day's window in another zone
+ * overlaps the neighbouring home day, but an all-day event belongs to its own
+ * calendar date (start inclusive, end exclusive), like an all-day task.
+ */
+export function eventsOnDate(events: CalendarEvent[], dateLocal: string): CalendarEvent[] {
+  return events.filter((e) => {
+    if (!e.allDay) return true;
+    const start = e.start.slice(0, 10);
+    const end = e.end.slice(0, 10) > start ? e.end.slice(0, 10) : addDaysToDateKey(start, 1);
+    return start <= dateLocal && dateLocal < end;
+  });
+}
+
 export async function generateBriefing(
   dateLocal: string,
-  opts: { force?: boolean } = {}
+  opts: {
+    force?: boolean;
+    /** minutes east of UTC where the user is waking up, while travelling */
+    awayOffsetMinutes?: number | null;
+  } = {}
 ): Promise<Briefing> {
   if (!opts.force) {
     const cached = briefingsRepo.get(dateLocal);
     if (cached) return cached;
   }
 
-  const ctx = await buildAssistantContext();
-  const tz = ctx.tz;
-  const startOfToday = instantOf(utcFromLocal(dateLocal, "00:00", tz));
-  // Mirrors what Today actually shows: project work stays on its own tab
-  // unless it is overdue or lands within a day.
-  const today = tasksRepo
-    .list({ view: "today" })
-    .filter((t) => !t.projectId || isUrgent(t, tz));
-  const isOverdue = (t: Task): boolean => t.dueAt !== null && instantOf(t.dueAt) < startOfToday;
-  const overdue = today.filter(isOverdue);
-  const dueToday = today.filter((t) => !isOverdue(t));
+  const home = await buildAssistantContext();
+  const homeTz = home.tz;
+  // The briefing reads the clock it is sent on: the destination's while
+  // travelling, and always the date it is filed under.
+  const offset = opts.awayOffsetMinutes;
+  const away = typeof offset === "number" && Number.isFinite(offset) && Math.abs(offset) <= 14 * 60;
+  const tz = away ? offsetZone(offset) : homeTz;
+  const now = new Date();
+
+  const open = tasksRepo.list({});
+  const { overdue, dueToday } = briefingTasks(open, { dateLocal, tz, homeTz, now });
+  const today = [...overdue, ...dueToday];
   const stats = statsRepo.summary();
+
+  // Off the home clock, everything dated is rebuilt for the briefing's day:
+  // the home context describes a different one.
+  const ctx: AssistantContext =
+    !away && dateLocal === home.todayKey
+      ? home
+      : {
+          ...home,
+          tz,
+          todayKey: dateLocal,
+          weekday: format(new TZDate(new Date(`${dateLocal}T12:00:00Z`), "UTC"), "EEEE"),
+          dateLabel: format(new TZDate(new Date(`${dateLocal}T12:00:00Z`), "UTC"), "EEEE, d MMMM yyyy"),
+          timeLabel: localTimeKey(now, tz),
+          calendarList: buildCalendarList(
+            eventsOnDate(
+              await safeEventsBetween(
+                utcFromLocal(dateLocal, "00:00", tz),
+                utcFromLocal(addDaysToDateKey(dateLocal, 1), "00:00", tz),
+              ),
+              dateLocal,
+            ),
+            tz,
+          ),
+          // Nothing is done yet on a day that has only just begun here.
+          statsLine: `${today.length} on today's list · ${stats.totalOpen} open overall · ${overdue.length} overdue · ${stats.streakDays}-day streak`,
+        };
   const yesterdayKey = addDaysToDateKey(dateLocal, -1);
   const doneYesterday = stats.week.find((d) => d.dateLocal === yesterdayKey)?.done ?? 0;
 
@@ -157,7 +258,8 @@ export async function generateBriefing(
       dueToday: digestLines(dueToday, tz, 16),
       streak: stats.streakDays,
       doneYesterday,
-      weather: await safeWeatherLine(tz),
+      // Away, the forecast's day is wherever the last position fix was.
+      weather: await safeWeatherLine(away ? "auto" : homeTz),
     }),
     900,
     "briefing",
@@ -181,6 +283,17 @@ export async function generateBriefing(
 }
 
 // ── Weekly review ──────────────────────────────────────────────────────────
+
+/** Personal top-level tasks created in [fromIso, toIso), done or not. Counted
+ *  in SQL: a capped task list drops the newest once the history grows. */
+function countCreatedBetween(fromIso: string, toIso: string): number {
+  const row = getDb()
+    .prepare(
+      "SELECT COUNT(*) c FROM tasks WHERE parent_id IS NULL AND space='personal' AND created_at >= ? AND created_at < ?",
+    )
+    .get(fromIso, toIso) as { c: number };
+  return row.c;
+}
 
 /** Monday…Sunday date keys for an ISO week key like "2026-W32". */
 export function isoWeekRange(weekKey: string): { from: string; to: string } {
@@ -211,12 +324,10 @@ export async function generateWeeklyReview(
   const stats = statsRepo.summary();
   const counts = tasksRepo.counts();
 
-  const createdCount = tasksRepo
-    .list({ includeDone: true })
-    .filter((t) => {
-      const key = localDateKey(t.createdAt, tz);
-      return key >= from && key <= to;
-    }).length;
+  const createdCount = countCreatedBetween(
+    isoFromLocal(from, "00:00", tz),
+    isoFromLocal(addDaysToDateKey(to, 1), "00:00", tz),
+  );
 
   const perDayLines: string[] = [];
   let computedBest: string | null = null;
@@ -361,16 +472,18 @@ export async function generateTaskBreakdown(
 
 // ── Inbox triage ───────────────────────────────────────────────────────────
 
-function parseLocalDue(raw: unknown, tz: string): { dueAt: string | null; allDay: boolean } {
+export function parseLocalDue(raw: unknown, tz: string): { dueAt: string | null; allDay: boolean } {
   const value = asString(raw)?.trim() ?? "";
   if (!value || /^(null|none)$/i.test(value)) return { dueAt: null, allDay: false };
-  const withTime = /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/.exec(value);
-  if (withTime) {
-    const hh = String(clamp(Number(withTime[2]), 0, 23)).padStart(2, "0");
-    return { dueAt: utcFromLocal(withTime[1], `${hh}:${withTime[3]}`, tz), allDay: false };
+  // Read the shapes a model drifts into ("5:00 PM", "5pm", "EOD") the same
+  // way triage's own deadlines are, so breakdown drafts and updates agree.
+  const local = normalizeLocalDue(value);
+  if (local) {
+    const [date, time] = local.split(" ");
+    return time
+      ? { dueAt: utcFromLocal(date, time, tz), allDay: false }
+      : { dueAt: utcFromLocal(date, "00:00", tz), allDay: true };
   }
-  const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(value);
-  if (dateOnly) return { dueAt: utcFromLocal(dateOnly[1], "00:00", tz), allDay: true };
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return { dueAt: null, allDay: false };
   return { dueAt: parsed.toISOString(), allDay: false };
@@ -520,9 +633,55 @@ async function safeSentDigest(): Promise<string> {
   }
 }
 
-function appendUpdateNote(existing: string, addition: string, todayKey: string): string {
-  const stamp = `Update (${todayKey}): ${addition}`;
-  return (existing ? `${existing.trimEnd()}\n\n${stamp}` : stamp).slice(0, 2000);
+/** The user's notes are kept whole; only the new stamp is capped. */
+export function appendUpdateNote(existing: string, addition: string, todayKey: string): string {
+  const stamp = `Update (${todayKey}): ${addition.trim()}`.slice(0, 300);
+  return existing.trim() ? `${existing.trimEnd()}\n\n${stamp}` : stamp;
+}
+
+/** Titles as a model echoes them back: case, spacing, quotes and a trailing
+ *  full stop are not what makes two tasks different. */
+function titleKey(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[“”"‘’'`]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.!,;:]+$/, "")
+    .trim();
+}
+
+/** The open task an update verdict names, looked up across every list the
+ *  triage prompt showed: personal first, then the joint list. */
+export function findUpdateTarget(title: string, tasks: Task[]): Task | null {
+  const wanted = title.trim().toLowerCase();
+  if (!wanted) return null;
+  const exact = tasks.find((t) => t.title.trim().toLowerCase() === wanted);
+  if (exact) return exact;
+  const key = titleKey(title);
+  return key ? (tasks.find((t) => titleKey(t.title) === key) ?? null) : null;
+}
+
+/** Nothing but triage may have touched the item while the model thought it
+ *  over: still new, with the suggestion it had when triage read it. */
+function untouchedSince(before: InboxItem, now: InboxItem | null): now is InboxItem {
+  return (
+    now !== null &&
+    now.status === "new" &&
+    JSON.stringify(now.suggestion ?? null) === JSON.stringify(before.suggestion ?? null)
+  );
+}
+
+/**
+ * Who is who, seen from `role`. A blank name falls back by viewpoint: the
+ * other person is always "your partner", never "You".
+ */
+export function viewpointNames(
+  joint: { ownerName: string; partnerName: string },
+  role: SessionRole,
+): { personName: string; partnerName: string } {
+  const own = (role === "owner" ? joint.ownerName : joint.partnerName).trim();
+  const other = (role === "owner" ? joint.partnerName : joint.ownerName).trim();
+  return { personName: own || "You", partnerName: other || "your partner" };
 }
 
 /**
@@ -548,17 +707,12 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
   const { mine, ours } = splitForDigest(joint, role);
   // Their own asks of the other person, gone past due — theirs to know about,
   // and the reason the other person only ever hears one nudge.
-  const waiting = waitingOn(joint, role, now);
+  const waiting = waitingOn(joint, role, now, tz);
   if (mine.length === 0 && ours.length === 0 && waiting.length === 0) return "";
 
-  const names = {
-    owner: settings.joint.ownerName || "You",
-    partner: settings.joint.partnerName || "Your partner",
-  };
-  const personName = role === "owner" ? names.owner : names.partner;
-  const partnerName = role === "owner" ? names.partner : names.owner;
+  const { personName, partnerName } = viewpointNames(settings.joint, role);
 
-  const fallback = fallbackDigest({ mine, ours, partnerName, waiting: waiting.length });
+  const fallback = fallbackDigest({ mine, ours, partnerName, waiting: waiting.length, tz, now });
   if (!aiConfigured()) return fallback;
 
   try {
@@ -569,8 +723,8 @@ export async function generateJointDigest(role: SessionRole): Promise<string> {
         todayKey,
         weekday: format(new TZDate(now, tz), "EEEE"),
         tz,
-        mine: digestLinesFor(mine, tz).join("\n"),
-        ours: digestLinesFor(ours, tz).join("\n"),
+        mine: digestLinesFor(mine, tz, now).join("\n"),
+        ours: digestLinesFor(ours, tz, now).join("\n"),
         waiting: waitingLines(waiting, partnerName),
       }),
       400,
@@ -596,15 +750,10 @@ export async function generateWeekAhead(
   const settings = settingsRepo.getApp();
   const tz = settings.tz;
 
-  const ctx = weekAheadContext({ tasks: tasksRepo.list({ space: "joint" }), events, role });
+  const ctx = weekAheadContext({ tasks: tasksRepo.list({ space: "joint" }), events, role, tz });
   if (!worthSending(ctx)) return "";
 
-  const names = {
-    owner: settings.joint.ownerName || "You",
-    partner: settings.joint.partnerName || "Your partner",
-  };
-  const personName = role === "owner" ? names.owner : names.partner;
-  const partnerName = role === "owner" ? names.partner : names.owner;
+  const { personName, partnerName } = viewpointNames(settings.joint, role);
 
   const fallback = fallbackWeekAhead(ctx, partnerName);
   if (!aiConfigured()) return fallback;
@@ -633,9 +782,27 @@ export async function generateWeekAhead(
   }
 }
 
-export async function triageInboxItem(id: string): Promise<InboxItem> {
+// One triage per item at a time: a second caller for the same item shares the
+// first one's answer instead of paying for another model call. On globalThis
+// so the scheduler and the routes see one map, and a dev reload keeps it.
+const triageGlobal = globalThis as unknown as { __donexTriageInFlight?: Map<string, Promise<InboxItem>> };
+const triageInFlight = (triageGlobal.__donexTriageInFlight ??= new Map<string, Promise<InboxItem>>());
+
+export function triageInboxItem(id: string): Promise<InboxItem> {
+  const running = triageInFlight.get(id);
+  if (running) return running;
+  const job = triageOnce(id).finally(() => triageInFlight.delete(id));
+  triageInFlight.set(id, job);
+  return job;
+}
+
+async function triageOnce(id: string): Promise<InboxItem> {
   const item = inboxRepo.get(id);
   if (!item) throw new Error("Inbox item not found");
+  // Only untriaged items are worth a model call. A run that lags behind
+  // another, or a request for an item the user already settled, gets the
+  // item as it stands.
+  if (item.status !== "new" || item.suggestion !== null) return item;
 
   const tz = settingsRepo.getApp().tz;
   const now = new Date();
@@ -659,6 +826,12 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
   // The rules and the user's context are shared by every item in a run, so
   // they ride ahead of the item where the provider can serve them from cache.
   const payload = await jsonCall(parts.item, 900, "triage", [parts.instructions, parts.context]);
+
+  // The call can take a minute. If the user acted on the item meanwhile, or
+  // another run got to it first, that outcome stands. Everything from here on
+  // is synchronous, so nothing can slip in between this check and the writes.
+  const current = inboxRepo.get(id);
+  if (!untouchedSince(item, current)) return current ?? item;
 
   const parsed = parseTriageDecision(payload, item.content);
   const suggestion: InboxSuggestion = { action: "ignore", reason: parsed.reason };
@@ -687,6 +860,7 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
         source: item.source,
         receivedAt: item.receivedAt,
         suggestedDeadline: deadline.inferred ? deadline.why : null,
+        tz,
       }),
       dueAt: due.dueAt,
       dueKind: due.dueAt ? deadline.dueKind : "on",
@@ -703,10 +877,11 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
     suggestion.action = "note";
     suggestion.note = { ...parsed.note, content: parsed.note.content || item.content };
   } else if (parsed.decision === "update" && parsed.update) {
-    const wanted = parsed.update.taskTitle.toLowerCase();
-    const target = tasksRepo
-      .list({ view: "all" })
-      .find((t) => t.title.toLowerCase() === wanted);
+    // The same lists the prompt showed the model: personal and joint.
+    const target = findUpdateTarget(parsed.update.taskTitle, [
+      ...tasksRepo.list({ view: "all" }),
+      ...tasksRepo.list({ space: "joint" }),
+    ]);
 
     if (target) {
       const changes: string[] = [];
@@ -736,9 +911,46 @@ export async function triageInboxItem(id: string): Promise<InboxItem> {
       return inboxRepo.get(id) ?? { ...item, suggestion };
     }
 
-    // Couldn't match the task the model named — keep the item visible.
-    suggestion.reason =
-      suggestion.reason || `Mentions “${parsed.update.taskTitle}” but no open task matches`;
+    // Couldn't match the task the model named. Keep the item in front of the
+    // user as a task to add: an "ignore" verdict would let the sweep dismiss
+    // news about something they are tracking.
+    const named = parsed.update.taskTitle || item.content;
+    // Settled like any other triaged task: the date the item gave, or a
+    // sensible one, and a real priority.
+    const deadline = settleDeadline({
+      dueAtLocal: parsed.update.dueAtLocal,
+      basis: parsed.update.dueAtLocal ? "stated" : "inferred",
+      why: "",
+      dueKind: "on",
+      todayKey,
+    });
+    const due = parseLocalDue(deadline.dueAtLocal, tz);
+    suggestion.action = "task";
+    suggestion.reason = parsed.update.taskTitle
+      ? `Mentions “${parsed.update.taskTitle.slice(0, 50)}” but no open task matches`
+      : "News about a task, but no open task matches";
+    suggestion.task = {
+      title: named.slice(0, 80),
+      notes: composeInboxNotes({
+        summary: parsed.update.note,
+        content: item.content,
+        fromLabel: item.fromLabel,
+        source: item.source,
+        receivedAt: item.receivedAt,
+        suggestedDeadline: deadline.inferred ? deadline.why : null,
+        tz,
+      }),
+      dueAt: due.dueAt,
+      dueKind: due.dueAt ? deadline.dueKind : "on",
+      allDay: due.allDay,
+      priority: settlePriority(parsed.update.priority),
+      projectId: null,
+      tags: [],
+    };
+    if (deadline.inferred) {
+      suggestion.dueSuggested = true;
+      suggestion.dueWhy = deadline.why;
+    }
   } else {
     // dismiss / duplicate
     if (parsed.decision === "duplicate" && parsed.duplicateOf) {

@@ -1,18 +1,26 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { ApiError, authApi } from "@/lib/api";
+import { forgetPushOnThisDevice } from "@/lib/pushClient";
 import { Button } from "@/components/ui/Button";
 import { PIN_MIN, PinPad } from "./PinPad";
 
 export function LoginForm() {
-  const router = useRouter();
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [shake, setShake] = useState(0);
+
+  // A device at the PIN pad has no session, so it should get no pushes. This
+  // also catches one whose session ended without a sign-out here (revoked,
+  // expired, or signed out before pushes followed sessions): once the browser
+  // unsubscribes, the push service rejects the next send and the server
+  // prunes the row.
+  useEffect(() => {
+    void forgetPushOnThisDevice();
+  }, []);
 
   const submit = async () => {
     if (pin.length < PIN_MIN || busy) return;
@@ -20,11 +28,13 @@ export function LoginForm() {
     setError("");
     try {
       const res = await authApi.login(pin);
-      router.push(res.role === "partner" ? "/joint" : "/today");
-      router.refresh();
+      // A full load, not a client-side push: whatever an earlier session left
+      // in memory (SWR's cache included) must not show for this one.
+      window.location.replace(res.role === "partner" ? "/joint" : "/today");
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;
-      if (status === 429) setError("Too many tries. Take a breath — try again in a minute.");
+      // The server says how long the lockout is; it grows with each miss.
+      if (status === 429) setError(err instanceof Error ? err.message : "Too many tries. Try again later.");
       else if (status === 401) setError("That PIN doesn’t match.");
       else setError(err instanceof Error ? err.message : "Could not sign in");
       setPin("");

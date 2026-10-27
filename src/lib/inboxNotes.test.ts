@@ -105,3 +105,21 @@ describe("composeInboxNotes — a deadline nobody named", () => {
     expect(composeInboxNotes(base)).not.toContain("Suggested deadline");
   });
 });
+
+describe("composeInboxNotes in the user's timezone", () => {
+  it("dates an evening email by the day it arrived where the user is", () => {
+    // 9:30 PM EDT on Oct 26 is already Oct 27 in UTC, the server's clock.
+    const notes = composeInboxNotes({
+      ...base,
+      summary: "s",
+      receivedAt: "2026-10-27T01:30:00.000Z",
+      tz: "America/New_York",
+    });
+    expect(notes.endsWith("· email · Oct 26")).toBe(true);
+  });
+
+  it("falls back to the process clock when the zone isn't a real one", () => {
+    const notes = composeInboxNotes({ ...base, summary: "s", tz: "Not/AZone" });
+    expect(notes).toContain("· email ·");
+  });
+});

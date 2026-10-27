@@ -2,19 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import { format } from "date-fns";
 import { fetcher, keys, projectsApi, tasksApi } from "@/lib/api";
-import type {
-  Priority,
-  Project,
-  RecurrenceRule,
-  SessionRole,
-  Task,
-  TaskDraft,
-  TaskLocation,
-} from "@/lib/types";
-import { toDateInput } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import type { Priority, Project, RecurrenceRule, SessionRole, Task, TaskDraft } from "@/lib/types";
+import { addDaysToDateKey, cn } from "@/lib/utils";
 import { useAutoGrow } from "@/hooks/useAutoGrow";
 import { Button, IconButton } from "@/components/ui/Button";
 import { FieldLabel, Input, Select, Switch } from "@/components/ui/Field";
@@ -27,6 +17,18 @@ import { LocationField } from "./LocationField";
 import { RecurrenceBuilder } from "./RecurrenceBuilder";
 import { TagInput } from "./TagInput";
 import { useTaskMutations } from "./useTaskMutations";
+import {
+  buildDraft,
+  changedFields,
+  defaultTime,
+  firstOccurrenceKey,
+  isAllDay,
+  stateFrom,
+  todayKey,
+  type FormState,
+} from "./taskForm";
+
+const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export interface TaskEditorProps {
   open: boolean;
@@ -37,49 +39,6 @@ export interface TaskEditorProps {
   /** Create mode: handle the draft yourself instead of POSTing a task. */
   onSubmitDraft?: (draft: TaskDraft) => void | Promise<void>;
   submitLabel?: string;
-}
-
-interface FormState {
-  title: string;
-  notes: string;
-  dueDate: string;
-  dueTime: string;
-  dueKind: "on" | "by";
-  allDay: boolean;
-  priority: Priority;
-  projectId: string;
-  tags: string[];
-  recurrence: RecurrenceRule | null;
-  location: TaskLocation | null;
-  assignedTo: "" | SessionRole;
-}
-
-function stateFrom(task?: Task | null, initial?: Partial<TaskDraft>): FormState {
-  const src = task ?? initial;
-  const dueAt = src?.dueAt ?? null;
-  const allDay = src?.allDay ?? false;
-  return {
-    assignedTo: src?.assignedTo ?? "",
-    title: src?.title ?? "",
-    notes: src?.notes ?? "",
-    dueDate: toDateInput(dueAt),
-    dueTime: dueAt && !allDay ? format(new Date(dueAt), "HH:mm") : "",
-    dueKind: src?.dueKind === "by" ? "by" : "on",
-    allDay,
-    priority: (src?.priority ?? 0) as Priority,
-    projectId: src?.projectId ?? "",
-    tags: src?.tags ?? [],
-    recurrence: src?.recurrence ?? null,
-    location: src?.location ?? null,
-  };
-}
-
-function composeDue(s: FormState): string | null {
-  if (!s.dueDate) return null;
-  const iso = s.allDay
-    ? new Date(`${s.dueDate}T00:00:00`)
-    : new Date(`${s.dueDate}T${s.dueTime || "09:00"}`);
-  return Number.isNaN(iso.getTime()) ? null : iso.toISOString();
 }
 
 export function TaskEditor({
@@ -95,7 +54,24 @@ export function TaskEditor({
   const confirm = useConfirm();
   const toast = useToast();
 
-  const [form, setForm] = useState<FormState>(() => stateFrom(task, initial));
+  const { data: me } = useSWR<{
+    role: SessionRole;
+    ownerName: string;
+    partnerName: string;
+    tz?: string;
+  }>(open ? keys.me() : null, fetcher);
+  // All-day dates are midnight in the app's time zone (settings.tz), not the
+  // device's. /api/auth/me carries it for both roles; until it does, the owner
+  // can read it from settings, and the device zone is the last resort.
+  const { data: settings } = useSWR<{ tz: string }>(
+    open && me?.role === "owner" && !me.tz ? keys.settings() : null,
+    fetcher,
+  );
+  const tz = me?.tz || settings?.tz || deviceTz;
+
+  const [form, setForm] = useState<FormState>(() => stateFrom(task, initial, tz));
+  /** The form as it was opened, so a save sends only what changed. */
+  const baseRef = useRef<FormState>(form);
   const [saving, setSaving] = useState(false);
   const [subtasks, setSubtasks] = useState<Task[]>(task?.subtasks ?? []);
   const [subtaskDraft, setSubtaskDraft] = useState("");
@@ -110,10 +86,6 @@ export function TaskEditor({
     fetcher,
   );
   const { data: tagData } = useSWR<{ tags: string[] }>(open ? keys.tags() : null, fetcher);
-  const { data: me } = useSWR<{ role: SessionRole; ownerName: string; partnerName: string }>(
-    open && task?.space === "joint" ? keys.me() : null,
-    fetcher,
-  );
   const myRole: SessionRole = me?.role ?? "owner";
   const theirRole: SessionRole = myRole === "owner" ? "partner" : "owner";
   const theirName =
@@ -122,7 +94,9 @@ export function TaskEditor({
 
   useEffect(() => {
     if (!open) return;
-    setForm(stateFrom(task, initial));
+    const next = stateFrom(task, initial, tz);
+    baseRef.current = next;
+    setForm(next);
     setSubtasks(task?.subtasks ?? []);
     setSubtaskDraft("");
     setCreatingProject(false);
@@ -130,35 +104,64 @@ export function TaskEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
 
+  // The app's time zone can arrive just after the sheet opens. Re-read the
+  // dates with it, but only while nothing has been touched yet.
+  useEffect(() => {
+    if (!open || JSON.stringify(form) !== JSON.stringify(baseRef.current)) return;
+    const next = stateFrom(task, initial, tz);
+    baseRef.current = next;
+    setForm(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tz]);
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  const setDueDate = (dueDate: string) =>
+    setForm((p) => ({ ...p, dueDate, dateFromRepeat: false }));
+
   const quickDate = (offset: number | null) => {
     if (offset === null) {
-      setForm((p) => ({ ...p, dueDate: "", dueTime: "" }));
+      setForm((p) => ({ ...p, dueDate: "", dueTime: "", allDay: false, dateFromRepeat: false }));
       return;
     }
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    set("dueDate", format(d, "yyyy-MM-dd"));
+    setDueDate(addDaysToDateKey(todayKey(), offset));
   };
 
-  const buildDraft = (): TaskDraft => ({
-    title: form.title.trim(),
-    notes: form.notes,
-    priority: form.priority,
-    dueAt: composeDue(form),
-    dueKind: form.dueDate ? form.dueKind : "on",
-    allDay: form.allDay,
-    projectId: form.projectId || null,
-    tags: form.tags,
-    recurrence: form.recurrence,
-    location: form.location,
-    assignedTo: form.assignedTo || null,
-  });
+  // Turning All-day off shows the time it will use instead of keeping a
+  // hidden one.
+  const setAllDay = (allDay: boolean) =>
+    setForm((p) => ({
+      ...p,
+      allDay,
+      dueTime: allDay || p.dueTime ? p.dueTime : defaultTime(p.dueDate),
+    }));
+
+  // A repeat counts on from its date, so choosing one with no date picks the
+  // rule's first day, and keeps following the rule until a date is chosen.
+  const setRecurrence = (recurrence: RecurrenceRule | null) =>
+    setForm((p) => {
+      if (recurrence && (!p.dueDate || p.dateFromRepeat)) {
+        return {
+          ...p,
+          recurrence,
+          dueDate: firstOccurrenceKey(recurrence, todayKey()),
+          dateFromRepeat: true,
+        };
+      }
+      if (!recurrence && p.dateFromRepeat) {
+        return { ...p, recurrence, dueDate: "", dueTime: "", dateFromRepeat: false };
+      }
+      return { ...p, recurrence };
+    });
 
   const submit = async () => {
-    const draft = buildDraft();
+    // A repeating task needs a date to move on from, even if it was cleared.
+    const filled: FormState =
+      form.recurrence && !form.dueDate
+        ? { ...form, dueDate: firstOccurrenceKey(form.recurrence, todayKey()) }
+        : form;
+    const draft = buildDraft(filled, tz);
     if (!draft.title) {
       toast.error("Give it a title first");
       return;
@@ -166,11 +169,28 @@ export function TaskEditor({
     setSaving(true);
     try {
       if (onSubmitDraft) {
-        await onSubmitDraft(draft);
+        try {
+          await onSubmitDraft(draft);
+        } catch {
+          return; // the caller has said what went wrong; keep the edits open
+        }
         onClose();
         return;
       }
-      const saved = task ? await save(task.id, draft) : await create(draft);
+      if (task) {
+        const patch = changedFields(buildDraft(baseRef.current, tz), draft);
+        if (!Object.keys(patch).length) {
+          onClose();
+          return;
+        }
+        const saved = await save(task.id, patch);
+        if (saved) {
+          onSaved?.(saved);
+          onClose();
+        }
+        return;
+      }
+      const saved = await create(draft);
       if (saved) {
         onSaved?.(saved);
         onClose();
@@ -214,9 +234,18 @@ export function TaskEditor({
     if (!title || !task) return;
     setSubtaskDraft("");
     try {
-      const { task: child } = await tasksApi.create({ title, parentId: task.id });
-      setSubtasks((prev) => [...prev, child]);
+      // The server files a child in its parent's space; sending it too is harmless.
+      const { task: child } = await tasksApi.create({
+        title,
+        parentId: task.id,
+        space: task.space,
+      });
       revalidate();
+      if (child.parentId !== task.id) {
+        toast.error("Added as a separate task, not a subtask");
+        return;
+      }
+      setSubtasks((prev) => [...prev, child]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not add subtask");
     }
@@ -239,11 +268,18 @@ export function TaskEditor({
   };
 
   const deleteSubtask = async (child: Task) => {
+    const index = subtasks.findIndex((s) => s.id === child.id);
     setSubtasks((prev) => prev.filter((s) => s.id !== child.id));
     try {
       await tasksApi.remove(child.id);
       revalidate();
     } catch {
+      // Put it back where it was.
+      setSubtasks((prev) => {
+        if (prev.some((s) => s.id === child.id)) return prev;
+        const at = index < 0 ? prev.length : Math.min(index, prev.length);
+        return [...prev.slice(0, at), child, ...prev.slice(at)];
+      });
       toast.error("Could not delete subtask");
     }
   };
@@ -297,8 +333,9 @@ export function TaskEditor({
               All-day
               <Switch
                 label="All-day"
-                checked={form.allDay}
-                onChange={(v) => set("allDay", v)}
+                checked={isAllDay(form)}
+                disabled={!form.dueDate}
+                onChange={setAllDay}
               />
             </label>
           </div>
@@ -306,7 +343,7 @@ export function TaskEditor({
             <input
               type="date"
               value={form.dueDate}
-              onChange={(e) => set("dueDate", e.target.value)}
+              onChange={(e) => setDueDate(e.target.value)}
               className="h-11 flex-1 rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none"
             />
             <input
@@ -444,7 +481,7 @@ export function TaskEditor({
           suggestions={tagData?.tags ?? []}
         />
 
-        <RecurrenceBuilder value={form.recurrence} onChange={(r) => set("recurrence", r)} />
+        <RecurrenceBuilder value={form.recurrence} onChange={setRecurrence} />
 
         {task ? (
           <div>

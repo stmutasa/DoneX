@@ -43,22 +43,34 @@ export async function POST(req: Request): Promise<Response> {
 
   const settled = await mapLimit(pending, 2, (item) => triageInboxItem(item.id));
   const firstFailure = settled.find((r) => r.status === "rejected");
+  const failure = firstFailure
+    ? firstFailure.reason instanceof Error
+      ? firstFailure.reason.message
+      : "Could not triage"
+    : undefined;
 
   const items = inboxRepo.list({ status: "new" });
   let kept = 0;
   let dismissed = swept;
   let updated = 0;
-  for (const before of pending) {
+  // A failed item is still waiting in the inbox, but nothing has looked at it
+  // yet, so it is not "kept for review".
+  let failed = 0;
+  pending.forEach((before, i) => {
+    if (settled[i]?.status === "rejected") {
+      failed += 1;
+      return;
+    }
     const after = inboxRepo.get(before.id);
     if (!after || after.status === "new") kept += 1;
-    else if (after.status === "resolved") updated += 1;
-    else dismissed += 1;
-  }
+    // Credit triage only with what it did itself; the user may have settled
+    // an item while the model was thinking.
+    else if (after.status === "resolved" && after.suggestion?.updatedTaskTitle) updated += 1;
+    else if (after.status === "dismissed" && after.suggestion?.autoDismissed) dismissed += 1;
+  });
 
-  if (firstFailure && pending.length > 0 && settled.every((r) => r.status === "rejected")) {
-    const reason = firstFailure.reason;
-    const message = reason instanceof Error ? reason.message : "Could not triage";
-    return NextResponse.json({ error: message }, { status: 502 });
+  if (failure && pending.length > 0 && failed === pending.length) {
+    return NextResponse.json({ error: failure }, { status: 502 });
   }
-  return NextResponse.json({ items, kept, dismissed, updated });
+  return NextResponse.json({ items, kept, dismissed, updated, failed, ...(failure ? { failure } : {}) });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { projectsApi } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -31,6 +31,8 @@ export function ProjectSheet({
   const [icon, setIcon] = useState<string>(DEFAULT_PROJECT_ICON);
   const [color, setColor] = useState<string>(DEFAULT_PROJECT_COLOR);
   const [saving, setSaving] = useState(false);
+  // A second Enter can land before the re-render that marks us saving.
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -40,11 +42,13 @@ export function ProjectSheet({
   }, [open, project]);
 
   const submit = async () => {
+    if (savingRef.current) return;
     const trimmed = name.trim();
     if (!trimmed) {
       toast.error("Give the project a name");
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     try {
       const res = project
@@ -55,6 +59,7 @@ export function ProjectSheet({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save project");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -82,7 +87,10 @@ export function ProjectSheet({
           autoFocus
           placeholder="Home, Work, Reading…"
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
+          onKeyDown={(e) => {
+            // Ignore key repeat and the Enter that confirms an IME composition.
+            if (e.key === "Enter" && !e.repeat && !e.nativeEvent.isComposing) void submit();
+          }}
         />
 
         <div>

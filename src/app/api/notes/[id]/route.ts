@@ -22,6 +22,19 @@ const patchSchema = z.object({
   archived: z.boolean().optional(),
 });
 
+/** One note, archived or not; the notes page checks it before discarding a blank one. */
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await requireOwner();
+  if (gate) return gate;
+  const { id } = await params;
+
+  const note = notesRepo.get(id);
+  if (!note) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return NextResponse.json({ note });
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireOwner();
   if (gate) return gate;

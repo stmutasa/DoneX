@@ -34,7 +34,7 @@ interface GoogleEventTime {
   timeZone?: string;
 }
 
-interface GoogleEvent {
+export interface GoogleEvent {
   id?: string;
   summary?: string;
   location?: string;
@@ -52,6 +52,48 @@ export async function getTodayEvents(): Promise<CalendarEvent[]> {
   );
 }
 
+/** Google answers a page at a time; a month of a busy calendar runs past one. */
+const PAGE_SIZE = "250";
+const MAX_PAGES = 10;
+
+/** Google writes a timed event in the calendar's own offset; everything else
+ *  speaks UTC, so normalize to the Z form. null when it isn't a real instant. */
+function utcInstant(dateTime: string): string | null {
+  const ms = Date.parse(dateTime);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
+/** Google's shape, in the app's: timed events as UTC instants, all-day ones
+ *  as the bare dates Google gives (end exclusive). null for what can't show. */
+export function toCalendarEvent(item: GoogleEvent): CalendarEvent | null {
+  if (item.status === "cancelled") return null;
+  const base = {
+    title: item.summary || "(untitled)",
+    location: item.location || null,
+  };
+
+  const day = item.start?.date;
+  if (day && !item.start?.dateTime) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+    const endDay = item.end?.date && item.end.date > day ? item.end.date : addDaysToDateKey(day, 1);
+    return { id: item.id ?? day, ...base, start: day, end: endDay, allDay: true };
+  }
+
+  const start = item.start?.dateTime ? utcInstant(item.start.dateTime) : null;
+  if (!start) return null;
+  const end = (item.end?.dateTime && utcInstant(item.end.dateTime)) || start;
+  // A flight booked from an email carries its arrival zone on the end.
+  const endTimeZone = item.end?.timeZone || item.start?.timeZone;
+  return {
+    id: item.id ?? start,
+    ...base,
+    start,
+    end,
+    allDay: false,
+    ...(endTimeZone ? { endTimeZone } : {}),
+  };
+}
+
 /** Events between two ISO instants; [] when Google is not connected.
  *  `calendarId` defaults to the owner's own calendar; pass an address to read
  *  a calendar someone has shared with the connected account. */
@@ -62,35 +104,33 @@ export async function listEventsRange(
 ): Promise<CalendarEvent[]> {
   if (!isGoogleConnected()) return [];
 
-  const params = new URLSearchParams({
-    timeMin: fromIso,
-    timeMax: toIso,
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "100",
-  });
-
-  const res = await googleFetch(`${eventsUrlFor(calendarId)}?${params.toString()}`);
-  if (!res.ok) {
-    const err = await googleApiError(res, "Google Calendar");
-    throw new GoogleCalendarError(err.message, res.status);
-  }
-
-  const data = (await res.json()) as { items?: GoogleEvent[] };
   const events: CalendarEvent[] = [];
-  for (const item of data.items ?? []) {
-    if (item.status === "cancelled") continue;
-    const start = item.start?.dateTime || item.start?.date;
-    if (!start) continue;
-    events.push({
-      id: item.id ?? start,
-      title: item.summary || "(untitled)",
-      start,
-      end: item.end?.dateTime || item.end?.date || start,
-      allDay: !!item.start?.date,
-      location: item.location || null,
+  let pageToken: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      timeMin: fromIso,
+      timeMax: toIso,
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: PAGE_SIZE,
     });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const res = await googleFetch(`${eventsUrlFor(calendarId)}?${params.toString()}`);
+    if (!res.ok) {
+      const err = await googleApiError(res, "Google Calendar");
+      throw new GoogleCalendarError(err.message, res.status);
+    }
+
+    const data = (await res.json()) as { items?: GoogleEvent[]; nextPageToken?: string };
+    for (const item of data.items ?? []) {
+      const event = toCalendarEvent(item);
+      if (event) events.push(event);
+    }
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
   }
+  if (pageToken) console.warn(`[calendar] ${calendarId}: stopped after ${MAX_PAGES} pages`);
   return events;
 }
 

@@ -111,7 +111,7 @@ export function BreakdownSheet({
   const chips = (draft: TaskDraft): string[] => {
     const out: string[] = [];
     if (draft.dueAt) {
-      out.push(draft.dueKind === "by" ? deadlineChip(draft.dueAt) : dueLabel(draft.dueAt, draft.allDay ?? false));
+      out.push(draft.dueKind === "by" ? deadlineChip(draft.dueAt, draft.allDay) : dueLabel(draft.dueAt, draft.allDay ?? false));
     }
     if (draft.priority) out.push(PRIORITY_META[draft.priority].short);
     for (const t of draft.tags ?? []) out.push(`#${t}`);

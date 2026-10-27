@@ -1,11 +1,12 @@
 import { settingsRepo } from "@/lib/db/repos";
-import { nowIso } from "@/lib/utils";
+import { localDateKey, nowIso } from "@/lib/utils";
 import type { AiFallbackEvent, AIProviderKind, ModelInfo } from "@/lib/types";
 import { anthropicAdapter } from "@/lib/ai/anthropic";
 import { openaiAdapter } from "@/lib/ai/openai";
 import {
   NOT_CONFIGURED,
   NO_MODEL,
+  OUT_OF_TOKENS,
   configReady,
   describeCallError,
   resolveConfig,
@@ -96,11 +97,27 @@ export async function refreshFallbackModel(): Promise<string> {
 
   const cfg = resolveConfig(kind);
   if (!configReady(cfg)) return stored;
+
+  // The custom provider has a model id of its own. Its list is the host's
+  // whole catalogue, unfiltered, so the head may not even be a chat model.
+  if (cfg.kind === "custom" && cfg.model) {
+    if (cfg.model !== stored) settingsRepo.updateApp({ ai: { fallbackModel: cfg.model } });
+    return cfg.model;
+  }
+
   try {
     const models = await adapterFor(cfg.kind).models(cfg);
     const newest = models[0]?.id ?? "";
     if (!newest) return stored;
-    if (newest !== stored) settingsRepo.updateApp({ ai: { fallbackModel: newest } });
+    // The listing takes a moment. If the backup was changed or pinned in the
+    // meantime, the answer is not saved over a choice that no longer stands —
+    // but what comes back still belongs to `kind`, since a caller may already
+    // hold that provider's config.
+    const now = settingsRepo.getApp().ai;
+    if (now.fallbackProvider !== kind) return newest;
+    const pinnedNow = now.fallbackModelPinned.trim();
+    if (pinnedNow) return pinnedNow;
+    if (newest !== now.fallbackModel.trim()) settingsRepo.updateApp({ ai: { fallbackModel: newest } });
     return newest;
   } catch {
     return stored;
@@ -115,10 +132,13 @@ export async function fallbackConfig(): Promise<ProviderConfig | null> {
   const cfg = resolveConfig(kind);
   if (!configReady(cfg)) return null;
   // A model you pinned wins outright, so failover can never drift onto the
-  // resolved-newest value even if that were left stale. The rest covers a key
-  // added after the provider was chosen, so the first failover finds a model.
+  // resolved-newest value even if that were left stale. Custom's own model id
+  // comes next, ahead of anything resolved from its host's list. The rest
+  // covers a key added after the provider was chosen, so the first failover
+  // finds a model.
   const model =
     ai.fallbackModelPinned.trim() ||
+    (cfg.kind === "custom" ? cfg.model : "") ||
     ai.fallbackModel.trim() ||
     cfg.model ||
     (await refreshFallbackModel());
@@ -152,11 +172,25 @@ export function recordFallback(from: AIProviderKind, to: ProviderConfig, reason:
   void alertIfNeedsYou(from, to, reason);
 }
 
-/** Failures a retry won't cure: the key or model has to be fixed by hand. */
+const OWNER_FIX =
+  /no API key (saved|set)|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|x-api-key|authentication_error|API key not valid|API key expired|permission_error|does not have permission|permission denied|credit balance|HTTP 40[13]\b/i;
+
+/**
+ * OpenAI's words for an account out of credit. Gemini uses the same words for
+ * an ordinary per-minute limit, but points at its rate-limit docs and says
+ * when to retry — and that passes on its own.
+ */
+const OUT_OF_CREDIT = /exceeded your current quota|insufficient_quota/i;
+const RATE_LIMITED = /rate[- ]?limit|retry in|per minute|free_tier|RESOURCE_EXHAUSTED/i;
+
+/**
+ * Failures a retry won't cure: the key, the model or the account has to be
+ * fixed by hand. Matched on the provider's own wording, since only the message
+ * gets here (callers rethrow it as a plain Error), and when the provider sends
+ * a body the HTTP status is not in it.
+ */
 export function needsOwner(reason: string): boolean {
-  return /no API key (saved|set)|no model selected|rejected the API key|Incorrect API key|invalid[_ ]api[_ ]key|HTTP 40[13]\b/i.test(
-    reason,
-  );
+  return OWNER_FIX.test(reason) || (OUT_OF_CREDIT.test(reason) && !RATE_LIMITED.test(reason));
 }
 
 const KV_KEY_ALERT_DAY = "ai.lastKeyAlertDay";
@@ -169,7 +203,8 @@ const KV_KEY_ALERT_DAY = "ai.lastKeyAlertDay";
 async function alertIfNeedsYou(from: AIProviderKind, to: ProviderConfig, reason: string): Promise<void> {
   try {
     if (!needsOwner(reason)) return;
-    const today = new Date().toISOString().slice(0, 10);
+    // Your day, not UTC's — which turns over at 20:00 in New York.
+    const today = localDateKey(new Date(), settingsRepo.getApp().tz);
     if (settingsRepo.getKV(KV_KEY_ALERT_DAY) === today) return;
     settingsRepo.setKV(KV_KEY_ALERT_DAY, today);
     const { sendPushToAll } = await import("@/lib/push");
@@ -268,14 +303,28 @@ export async function testProvider(
       if (!model) return { ok: false, message: "The provider returned no usable models." };
     }
 
-    const text = await adapterFor(cfg.kind).complete({
-      cfg: { ...cfg, model },
-      system: "You are a connectivity probe. Answer with one word.",
-      prompt: "Reply with the single word: ok",
-      maxTokens: 8,
-      feature: "test",
-      signal: AbortSignal.timeout(30_000),
-    });
+    let text: string;
+    try {
+      text = await adapterFor(cfg.kind).complete({
+        cfg: { ...cfg, model },
+        system: "You are a connectivity probe. Answer with one word.",
+        prompt: "Reply with the single word: ok",
+        // Enough for a model that thinks before it speaks to get a word out.
+        maxTokens: 256,
+        feature: "test",
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      // The key and the model both work, but a probe this small running dry
+      // means real calls may too — say so rather than show a plain pass.
+      if (err instanceof Error && err.message === OUT_OF_TOKENS) {
+        return {
+          ok: true,
+          message: `${model} responded, but used its whole token budget thinking — replies may come back empty`,
+        };
+      }
+      throw err;
+    }
     if (!text.trim()) return { ok: false, message: `${model} returned an empty reply.` };
     return { ok: true, message: `${model} responded` };
   } catch (err) {

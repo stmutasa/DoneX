@@ -71,6 +71,41 @@ describe("parseIngestPayload", () => {
     expect(parseIngestPayload("   ", JSON_CT, none)).toEqual({});
   });
 
+  it("does not store the raw JSON when the message is empty", () => {
+    // A picture message forwarded through the documented template.
+    expect(parseIngestPayload('{"from":"Mum 555","body":""}', JSON_CT, none)).toEqual({});
+    expect(parseIngestPayload('{"from":"Mum 555","body":"  "}', JSON_CT, none)).toEqual({});
+    expect(parseIngestPayload('{"from":"Mum 555","body":null}', JSON_CT, none)).toEqual({});
+    expect(parseIngestPayload('{"sender":"Mum 555","message":""}', JSON_CT, none)).toEqual({});
+  });
+
+  it("reads other apps' message and sender keys", () => {
+    expect(parseIngestPayload('{"sender":"Vet","message":"Rex is due"}', JSON_CT, none)).toEqual({
+      from: "Vet",
+      body: "Rex is due",
+      receivedAt: undefined,
+    });
+    expect(parseIngestPayload('{"text":"Parcel at the door"}', JSON_CT, none)).toMatchObject({
+      from: "SMS",
+      body: "Parcel at the door",
+    });
+  });
+
+  it("still captures a JSON object it can't read, as text", () => {
+    const raw = '{"from":"Mum 555","msg":"call me"}';
+    expect(parseIngestPayload(raw, JSON_CT, none)).toEqual({ from: "SMS", body: raw });
+  });
+
+  it("does not store the raw text when a broken template has an empty message", () => {
+    expect(parseIngestPayload('{"from":"Sam "the man"","body":""}', JSON_CT, none)).toEqual({});
+  });
+
+  it("does not store the raw form when its message is empty", () => {
+    expect(
+      parseIngestPayload("from=School&body=", "application/x-www-form-urlencoded", none),
+    ).toEqual({});
+  });
+
   it("keeps an explicit receivedAt when supplied", () => {
     const out = parseIngestPayload(
       '{"from":"A","body":"B","receivedAt":"2026-08-17T12:00:00Z"}',

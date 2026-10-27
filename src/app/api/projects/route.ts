@@ -11,11 +11,14 @@ const bodySchema = z.object({
   icon: z.string().optional(),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
-  return NextResponse.json({ projects: projectsRepo.list() });
+  // Pickers only want live projects; the projects pages ask for archived ones
+  // too, so an archived project can still be opened and restored.
+  const includeArchived = new URL(req.url).searchParams.get("includeArchived") === "1";
+  return NextResponse.json({ projects: projectsRepo.list(includeArchived) });
 }
 
 export async function POST(req: NextRequest) {

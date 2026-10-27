@@ -80,6 +80,8 @@ export function BackupsSection() {
       toast.success(`Restored ${n} rows. Reload to see them.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Restore failed");
+      // A failed restore can still have written its safety copy.
+      void mutate();
     } finally {
       setBusy(false);
     }
@@ -111,6 +113,15 @@ export function BackupsSection() {
     >
       {isLoading && !data ? (
         <SkeletonRows rows={3} />
+      ) : !data ? (
+        // A failed fetch says nothing about whether backups exist — don't
+        // fall through to "No backup yet".
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] text-muted">Couldn’t load your backups just now.</p>
+          <Button size="sm" onClick={() => void mutate()}>
+            Try again
+          </Button>
+        </div>
       ) : (
         <>
           <div

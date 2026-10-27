@@ -26,8 +26,13 @@ export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
-  const q = new URL(req.url).searchParams.get("q");
-  return NextResponse.json({ notes: notesRepo.list(q ? { q } : {}) });
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get("q");
+  // ?archived=1 lists the archived notes instead, so they can be restored.
+  const archived = searchParams.get("archived") === "1";
+  return NextResponse.json({
+    notes: notesRepo.list({ ...(q ? { q } : {}), ...(archived ? { archived: true } : {}) }),
+  });
 }
 
 export async function POST(req: NextRequest) {

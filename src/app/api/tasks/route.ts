@@ -8,6 +8,9 @@ import type { TaskDraft, TaskListFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+/** Stands in for "#" while a quick-add is parsed, so no "#word" becomes a project. */
+const HASH_MASK = "";
+
 const VIEWS = ["today", "upcoming", "anytime", "all"] as const;
 type ViewParam = (typeof VIEWS)[number];
 function isView(v: string): v is ViewParam {
@@ -93,12 +96,21 @@ export async function POST(req: NextRequest) {
     const capturedAtRaw = (body as Record<string, unknown>).capturedAt;
     const capturedAt =
       typeof capturedAtRaw === "string" ? new Date(capturedAtRaw) : undefined;
-    const { draft: quickDraft, matchedText } = parseQuickAdd(quick, settings.tz, capturedAt);
+    // Only the owner's personal list files into projects. Anywhere else a
+    // "#word" is just part of what was typed, so it stays in the title and
+    // never creates a project.
+    const filesProjects = role === "owner" && (body as Record<string, unknown>).space !== "joint";
+    const { draft: quickDraft, matchedText } = parseQuickAdd(
+      filesProjects ? quick : quick.split("#").join(HASH_MASK),
+      settings.tz,
+      capturedAt
+    );
     draft = quickDraft;
+    if (!filesProjects) draft.title = draft.title.split(HASH_MASK).join("#");
     if ((body as Record<string, unknown>).space === "joint") draft.space = "joint";
     const tagged = (body as Record<string, unknown>).assignedTo;
     if (tagged === "owner" || tagged === "partner") draft.assignedTo = tagged;
-    if (matchedText.project) {
+    if (filesProjects && matchedText.project) {
       const project =
         projectsRepo.findByName(matchedText.project) ?? projectsRepo.create({ name: matchedText.project });
       draft.projectId = project.id;
@@ -115,11 +127,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
   }
 
+  // A subtask needs a real parent, and takes that parent's list.
+  if (draft.parentId) {
+    const parent = tasksRepo.get(draft.parentId);
+    if (!parent) {
+      return NextResponse.json({ error: "The parent task no longer exists" }, { status: 400 });
+    }
+    // A partner sees only the joint list, so any other parent is not there.
+    if (role === "partner" && parent.space !== "joint") {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    // Lists show one level of subtasks, so anything deeper would vanish.
+    if (parent.parentId) {
+      return NextResponse.json({ error: "Subtasks can't have subtasks" }, { status: 400 });
+    }
+    draft.space = parent.space;
+  }
   // Partner sessions write only to the joint list, and never into projects.
   if (role === "partner") {
     draft.space = "joint";
     draft.projectId = null;
-    draft.parentId = null;
   }
   // Only the shared list has someone else to hand a task to.
   if (draft.space !== "joint") draft.assignedTo = null;

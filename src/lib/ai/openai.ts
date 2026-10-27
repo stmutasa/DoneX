@@ -1,9 +1,10 @@
-import type { ModelInfo } from "@/lib/types";
+import type { AIProviderKind, ModelInfo } from "@/lib/types";
 import { readUsage, recordAiUsage } from "@/lib/ai/usage";
 import { asArray, asNumber, asRecord, asString, safeJsonParse } from "@/lib/ai/json";
 import { iterateSse } from "@/lib/ai/sse";
 import { toOpenAiTools } from "@/lib/ai/tools";
 import {
+  OUT_OF_TOKENS,
   cleanProviderMessage,
   providerError,
   type CompleteArgs,
@@ -19,6 +20,7 @@ interface ToolCallAcc {
   id: string;
   name: string;
   args: string;
+  extra?: Record<string, unknown>;
 }
 
 function headers(cfg: ProviderConfig): Record<string, string> {
@@ -34,7 +36,22 @@ export function openAiSystem(system: string, shared: string[] = []): string {
   return segments.length ? [system, ...segments].join("\n\n") : system;
 }
 
-export function toOpenAiMessages(system: string, turns: LlmTurn[]): unknown[] {
+/**
+ * What Gemini documents for a function call it did not make itself (a step
+ * another provider took before a failover), which has no signature to send.
+ */
+export const GEMINI_SKIP_SIGNATURE = { google: { thought_signature: "skip_thought_signature_validator" } };
+
+/**
+ * `target` is the provider the messages go to. Gemini signs the first call of
+ * each step it takes and rejects the next request in that turn unless the
+ * signature comes back with it, so whatever a provider attached to a call is
+ * echoed — but only to the provider that attached it. Strict servers (OpenAI,
+ * Mistral) reject fields they don't know, which a failover mid-turn would
+ * otherwise hand them.
+ */
+export function toOpenAiMessages(system: string, turns: LlmTurn[], target?: AIProviderKind): unknown[] {
+  const own = (c: LlmToolCall) => (target && c.origin === target ? c.extraContent : undefined);
   const messages: unknown[] = [{ role: "system", content: system }];
   for (const turn of turns) {
     if (turn.role === "user") {
@@ -45,11 +62,17 @@ export function toOpenAiMessages(system: string, turns: LlmTurn[]): unknown[] {
         content: turn.text ? turn.text : null,
       };
       if (turn.toolCalls.length > 0) {
-        msg.tool_calls = turn.toolCalls.map((c) => ({
-          id: c.id,
-          type: "function",
-          function: { name: c.name, arguments: c.args || "{}" },
-        }));
+        const unsigned = target === "gemini" && !turn.toolCalls.some((c) => own(c));
+        msg.tool_calls = turn.toolCalls.map((c, i) => {
+          const call: Record<string, unknown> = {
+            id: c.id,
+            type: "function",
+            function: { name: c.name, arguments: c.args || "{}" },
+          };
+          const extra = own(c) ?? (unsigned && i === 0 ? GEMINI_SKIP_SIGNATURE : undefined);
+          if (extra) call.extra_content = extra;
+          return call;
+        });
       }
       messages.push(msg);
     } else {
@@ -101,7 +124,7 @@ async function stream({
       // Ask for a final usage chunk; servers that don't know the option
       // simply never send one, and the call still works.
       stream_options: { include_usage: true },
-      messages: toOpenAiMessages(system, turns),
+      messages: toOpenAiMessages(system, turns, cfg.kind),
     };
     if (tools.length > 0) {
       body.tools = toOpenAiTools(tools);
@@ -135,55 +158,74 @@ async function stream({
 
   let text = "";
   const calls = new Map<number, ToolCallAcc>();
+  // OpenAI reports usage once, on the last chunk; other servers repeat the
+  // running total on many chunks. Either way the last one seen is the call's.
+  let usage: unknown = null;
 
-  for await (const msg of iterateSse(res.body)) {
-    if (msg.data === "[DONE]") break;
-    const payload = asRecord(safeJsonParse(msg.data));
-    if (!payload) continue;
-    if (payload.usage) {
-      recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload.usage) });
-    }
-    const errMsg = asRecord(payload.error);
-    if (errMsg) {
-      const m = asString(errMsg.message);
-      throw new Error(m && m.trim() ? m.trim() : "The AI provider returned an error.");
-    }
-    const choice = asRecord(asArray(payload.choices)[0]);
-    if (!choice) continue;
-    const delta = asRecord(choice.delta);
-    if (!delta) continue;
-
-    const content = asString(delta.content);
-    if (content) {
-      text += content;
-      onText(content);
-    }
-
-    for (const entry of asArray(delta.tool_calls)) {
-      const tc = asRecord(entry);
-      if (!tc) continue;
-      const index = asNumber(tc.index) ?? calls.size;
-      const acc = calls.get(index) ?? { id: "", name: "", args: "" };
-      const id = asString(tc.id);
-      if (id) acc.id = id;
-      const fn = asRecord(tc.function);
-      if (fn) {
-        const name = asString(fn.name);
-        if (name) acc.name = mergeToolName(acc.name, name);
-        const args = asString(fn.arguments);
-        if (args) acc.args += args;
+  try {
+    for await (const msg of iterateSse(res.body)) {
+      if (msg.data === "[DONE]") break;
+      const payload = asRecord(safeJsonParse(msg.data));
+      if (!payload) continue;
+      if (payload.usage) usage = payload.usage;
+      const errMsg = asRecord(payload.error);
+      if (errMsg) {
+        const m = asString(errMsg.message);
+        throw new Error(m && m.trim() ? m.trim() : "The AI provider returned an error.");
       }
-      calls.set(index, acc);
+      const choice = asRecord(asArray(payload.choices)[0]);
+      if (!choice) continue;
+      const delta = asRecord(choice.delta);
+      if (!delta) continue;
+
+      const content = asString(delta.content);
+      if (content) {
+        text += content;
+        onText(content);
+      }
+
+      for (const entry of asArray(delta.tool_calls)) {
+        const tc = asRecord(entry);
+        if (!tc) continue;
+        const index = asNumber(tc.index) ?? calls.size;
+        const acc = calls.get(index) ?? { id: "", name: "", args: "" };
+        const id = asString(tc.id);
+        if (id) acc.id = id;
+        const fn = asRecord(tc.function);
+        if (fn) {
+          const name = asString(fn.name);
+          if (name) acc.name = mergeToolName(acc.name, name);
+          const args = asString(fn.arguments);
+          if (args) acc.args += args;
+        }
+        const extra = asRecord(tc.extra_content);
+        if (extra) acc.extra = extra;
+        calls.set(index, acc);
+      }
     }
+  } finally {
+    if (usage) recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(usage) });
   }
 
   const toolCalls: LlmToolCall[] = [...calls.entries()]
     .sort((a, b) => a[0] - b[0])
     .filter(([, c]) => c.name.length > 0)
-    .map(([index, c]) => ({ id: c.id || `call_${index}`, name: c.name, args: c.args }));
+    .map(([index, c]) => ({
+      id: c.id || `call_${index}`,
+      name: c.name,
+      args: c.args,
+      origin: cfg.kind,
+      ...(c.extra ? { extraContent: c.extra } : {}),
+    }));
 
   return { text, toolCalls };
 }
+
+/**
+ * Room for the thinking a reasoning model does before it answers. Only what
+ * is generated is billed, so the extra room costs nothing unless it is used.
+ */
+const REASONING_HEADROOM = 4096;
 
 async function complete({
   cfg,
@@ -202,25 +244,44 @@ async function complete({
     { role: "user", content: prompt },
   ];
 
-  const send = async (tokenField: "max_tokens" | "max_completion_tokens") =>
+  // A thinking model counts its hidden reasoning against the same cap as the
+  // answer, so a cap sized for the answer alone can run out before a word of
+  // it is written. Gemini thinks on every current model; on OpenAI, the
+  // models that demand max_completion_tokens are the reasoning ones.
+  let tokenField: "max_tokens" | "max_completion_tokens" = "max_tokens";
+  let thinks = cfg.kind === "gemini";
+  let lowEffort = thinks;
+
+  const send = async () =>
     fetch(`${cfg.baseUrl}/chat/completions`, {
       method: "POST",
       headers: headers(cfg),
-      body: JSON.stringify({ model: cfg.model, messages, [tokenField]: maxTokens }),
+      body: JSON.stringify({
+        model: cfg.model,
+        messages,
+        [tokenField]: thinks ? maxTokens + REASONING_HEADROOM : maxTokens,
+        ...(lowEffort ? { reasoning_effort: "low" } : {}),
+      }),
       signal,
     });
 
-  let res = await send("max_tokens");
-  if (!res.ok) {
+  let res = await send();
+  for (let retry = 0; !res.ok && retry < 2; retry++) {
     const raw = await res.text().catch(() => "");
-    // Newer OpenAI reasoning models reject max_tokens and demand the new field.
-    if (raw.includes("max_completion_tokens")) {
-      res = await send("max_completion_tokens");
-      if (!res.ok) throw await providerError(res);
+    if (tokenField === "max_tokens" && raw.includes("max_completion_tokens")) {
+      // Newer OpenAI reasoning models reject max_tokens and demand the new field.
+      tokenField = "max_completion_tokens";
+      thinks = true;
+      lowEffort = true;
+    } else if (lowEffort && /reasoning|thinking/i.test(raw)) {
+      // A model that can't be told how hard to think still gets the room.
+      lowEffort = false;
     } else {
       throw new Error(cleanProviderMessage(res.status, raw));
     }
+    res = await send();
   }
+  if (!res.ok) throw await providerError(res);
 
   const payload = asRecord(safeJsonParse(await res.text()));
   recordAiUsage({ provider: cfg.kind, model: cfg.model, feature, ...readUsage(payload?.usage) });
@@ -232,11 +293,14 @@ async function complete({
   const parts = asArray(message?.content)
     .map((p) => asString(asRecord(p)?.text) ?? "")
     .join("");
+  if (!parts && asString(choice?.finish_reason) === "length") throw new Error(OUT_OF_TOKENS);
   return parts;
 }
 
+// The codex and -pro families (gpt-5-codex, gpt-5-pro, o3-pro, …) are served
+// on the Responses API only, so /chat/completions rejects them outright.
 const EXCLUDE_MODEL =
-  /(embed|whisper|tts|dall-e|audio|realtime|moderation|image|transcribe|search|instruct-beta|davinci|babbage|computer-use|codex-mini)/i;
+  /(embed|whisper|tts|dall-e|audio|realtime|moderation|image|transcribe|search|instruct-beta|davinci|babbage|computer-use|codex|-pro(?:-|$))/i;
 
 export function isChatCapableModelId(id: string): boolean {
   const lower = id.toLowerCase();
@@ -283,6 +347,37 @@ async function models(cfg: ProviderConfig): Promise<ModelInfo[]> {
 /** Gemini 4 Argon has its own slot in the list, whether or not Google lists it. */
 export const GEMINI_ARGON_ID = "gemini-4-argon";
 
+/** "gemini-3.8-pro" → [3, 8]; null for an id with no version up front, like "gemini-pro-latest". */
+function geminiVersion(id: string): number[] | null {
+  const m = /^gemini-(\d+(?:\.\d+)*)/i.exec(id);
+  return m ? m[1].split(".").map(Number) : null;
+}
+
+const GEMINI_PREVIEW = /(?:^|-)(?:preview|exp|experimental)(?:-|$)/i;
+
+/**
+ * Gemini's list carries no release dates, and string order puts letters after
+ * digits ("gemini-pro-latest" over "gemini-3.8-pro") and "10" before "9". So:
+ * highest version first, a stable release ahead of a preview of the same one,
+ * and unversioned aliases last.
+ */
+export function compareGeminiIds(a: string, b: string): number {
+  const va = geminiVersion(a);
+  const vb = geminiVersion(b);
+  if (va && !vb) return -1;
+  if (!va && vb) return 1;
+  if (va && vb) {
+    for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+      const d = (vb[i] ?? 0) - (va[i] ?? 0);
+      if (d) return d;
+    }
+  }
+  const pa = GEMINI_PREVIEW.test(a);
+  const pb = GEMINI_PREVIEW.test(b);
+  if (pa !== pb) return pa ? 1 : -1;
+  return a < b ? 1 : a > b ? -1 : 0;
+}
+
 /**
  * Gemini's catalogue through its OpenAI-compatible endpoint: chat models
  * only, ids without the "models/" prefix the native API uses, newest first.
@@ -295,10 +390,14 @@ export const GEMINI_ARGON_ID = "gemini-4-argon";
 export function selectGeminiModels(raw: RawModel[]): ModelInfo[] {
   const chat = raw
     .map((m) => ({ ...m, id: m.id.replace(/^models\//, "") }))
-    .filter((m) => /^gemini/i.test(m.id) && !/embedding|tts|image|imagen|live|audio|aqa/i.test(m.id));
-  const listed = selectOpenAiModels(chat, false).map((m) =>
-    m.id === GEMINI_ARGON_ID ? { id: m.id, label: "Gemini 4 Argon" } : m,
-  );
+    .filter(
+      (m) =>
+        /^gemini/i.test(m.id) &&
+        !/embedding|tts|image|imagen|live|audio|aqa|robotics|computer-use/i.test(m.id),
+    );
+  const listed = [...chat]
+    .sort((a, b) => compareGeminiIds(a.id, b.id))
+    .map((m) => (m.id === GEMINI_ARGON_ID ? { id: m.id, label: "Gemini 4 Argon" } : { id: m.id, label: m.id }));
   if (listed.some((m) => m.id === GEMINI_ARGON_ID)) return listed;
   return [...listed, { id: GEMINI_ARGON_ID, label: "Gemini 4 Argon — not offered to this key yet" }];
 }

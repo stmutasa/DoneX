@@ -6,12 +6,17 @@ import type { NearbyTask } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+/** A missing or blank param is no coordinate — `Number(null)` would be 0. */
+function coord(raw: string | null): number {
+  return raw === null || raw.trim() === "" ? NaN : Number(raw);
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
-  const lat = Number(req.nextUrl.searchParams.get("lat"));
-  const lng = Number(req.nextUrl.searchParams.get("lng"));
+  const lat = coord(req.nextUrl.searchParams.get("lat"));
+  const lng = coord(req.nextUrl.searchParams.get("lng"));
   const located = tasksRepo.located();
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {

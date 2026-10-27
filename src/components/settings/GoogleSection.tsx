@@ -27,6 +27,21 @@ import {
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
+/**
+ * What the connect callback's `reason` codes mean. Anyone can put any text in
+ * that link, so only these fixed messages are ever shown.
+ */
+const CONNECT_ERRORS = new Map<string, string>([
+  ["access_denied", "Google connection cancelled"],
+  ["state_mismatch", "That connect attempt expired. Try connecting again."],
+  ["missing_code", "Google didn’t send a sign-in code back. Try connecting again."],
+  ["invalid_client", "Google rejected the client id or secret. Check both and try again."],
+  ["redirect_uri_mismatch", "Google Cloud has a different redirect URI. Copy the one in the setup steps."],
+  ["no_refresh_token", "Google didn’t return a refresh token. Remove DoneX’s access in your Google account, then connect again."],
+  ["not_configured", "Add the client id and secret first."],
+]);
+const CONNECT_FAILED = "Google connection failed — check your client id and secret.";
+
 /** Turns Google's wording into the actual thing to go and fix. */
 function explainGoogleError(message: string): { title: string; fix: string; link?: string } | null {
   const m = message.toLowerCase();
@@ -74,9 +89,10 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
     const flag = params.get("google");
     if (!flag) return;
     if (flag === "connected") toast.success("Google connected");
-    else toast.error("Google connection failed — check your client id and secret.");
+    else toast.error(CONNECT_ERRORS.get(params.get("reason") ?? "") ?? CONNECT_FAILED);
     void mutateStatus();
     params.delete("google");
+    params.delete("reason");
     const q = params.toString();
     window.history.replaceState({}, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,7 +164,11 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
         value={clientId}
         placeholder="1234-abc.apps.googleusercontent.com"
         onChange={(e) => setClientId(e.target.value)}
-        onBlur={() => clientId !== settings.google.clientId && patch({ google: { clientId } })}
+        onBlur={async () => {
+          if (clientId === settings.google.clientId) return;
+          // Connect enables off /api/google/status, which the settings save doesn't refresh.
+          if (await patch({ google: { clientId } })) void mutateStatus();
+        }}
       />
 
       <div>
@@ -168,7 +188,10 @@ export function GoogleSection({ settings, mutate }: SectionProps) {
             className="mt-2"
             onClick={async () => {
               const ok = await patch({ google: { clientSecret: secretDraft.trim() } }, "Secret saved");
-              if (ok) setSecretDraft("");
+              if (ok) {
+                setSecretDraft("");
+                void mutateStatus();
+              }
             }}
           >
             Save secret

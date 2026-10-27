@@ -2,36 +2,35 @@
  * Turn the next trip into a packing checklist you can tick off. It lands in
  * Notes as a normal list — nothing about it is special afterwards.
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireOwner } from "@/lib/auth";
 import { notesRepo, settingsRepo } from "@/lib/db/repos";
-import { ownerEvents } from "@/lib/jointFeeds";
-import {
-  PACKING_NOTICE_DAYS,
-  activeTrip,
-  detectTrips,
-  packingList,
-  upcomingTrip,
-} from "@/lib/trips";
-import { addDaysToDateKey, isoFromLocal, localDateKey, newId } from "@/lib/utils";
+import { ownerTrips } from "@/lib/jointFeeds";
+import { PACKING_NOTICE_DAYS, activeTrip, packingList, upcomingTrip } from "@/lib/trips";
+import { newId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+/** `start` names the trip the card is showing; without it, the card's own pick. */
+const BodySchema = z.object({ start: z.string().max(64).optional() });
+
+export async function POST(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
-  const settings = settingsRepo.getApp();
-  const tz = settings.tz;
-  const todayKey = localDateKey(new Date(), tz);
-  const { events } = await ownerEvents(settings.joint, {
-    fromIso: isoFromLocal(todayKey, "00:00", tz),
-    toIso: isoFromLocal(addDaysToDateKey(todayKey, 45), "00:00", tz),
-  });
+  const body = BodySchema.safeParse(await req.json().catch(() => ({})));
+  const wanted = body.success ? body.data.start : undefined;
 
-  const trips = detectTrips(events);
+  // Same window and detection as GET /api/trips, so this packs the trip the
+  // card shows: the one you're on, else the next one.
+  const settings = settingsRepo.getApp();
   const now = new Date();
-  const trip = upcomingTrip(trips, PACKING_NOTICE_DAYS, now) ?? activeTrip(trips, now);
+  const { trips } = await ownerTrips(settings, now);
+  const trip =
+    (wanted ? trips.find((t) => t.start === wanted) : undefined) ??
+    activeTrip(trips, now) ??
+    upcomingTrip(trips, PACKING_NOTICE_DAYS, now);
   if (!trip) {
     return NextResponse.json({ error: "No trip on the calendar to pack for" }, { status: 404 });
   }

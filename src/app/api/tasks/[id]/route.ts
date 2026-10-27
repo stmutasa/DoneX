@@ -55,8 +55,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (parsed.data.title !== undefined && !parsed.data.title.trim()) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
   }
+  const patch = parsed.data;
+  // Partner sessions never write into projects, as on create.
+  if (role === "partner") delete patch.projectId;
+  if (patch.parentId) {
+    if (patch.parentId === id) {
+      return NextResponse.json({ error: "A task can't be its own subtask" }, { status: 400 });
+    }
+    const parent = tasksRepo.get(patch.parentId);
+    if (!parent) {
+      return NextResponse.json({ error: "The parent task no longer exists" }, { status: 400 });
+    }
+    // Nor under anything off the joint list, which a partner can't see.
+    if (role === "partner" && parent.space !== "joint") {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    // Lists show one level of subtasks, so nesting under a subtask, or moving
+    // a task that has its own, would make tasks vanish (or loop).
+    if (parent.parentId || (before?.subtasks?.length ?? 0) > 0) {
+      return NextResponse.json({ error: "Subtasks can't have subtasks" }, { status: 400 });
+    }
+  }
 
-  const task = tasksRepo.update(id, parsed.data);
+  const task = tasksRepo.update(id, patch);
   if (!task) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

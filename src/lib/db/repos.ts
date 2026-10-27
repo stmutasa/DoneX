@@ -1,7 +1,7 @@
-import { getDb } from "@/lib/db";
-import { newId, nowIso, localDateKey, addDaysToDateKey, isoFromLocal } from "@/lib/utils";
+import { alignSubtaskSpaces, getDb } from "@/lib/db";
+import { newId, nowIso, localDateKey, localTimeKey, addDaysToDateKey, isoFromLocal } from "@/lib/utils";
 import { effectivePriority } from "@/lib/deadline";
-import { nextOccurrence } from "@/lib/recurrence";
+import { anchorRule, nextOccurrence } from "@/lib/recurrence";
 import type {
   AppSettings,
   Conversation,
@@ -14,6 +14,8 @@ import type {
   Note,
   Briefing,
   Project,
+  RecurrenceRule,
+  SessionRole,
   StatsSummary,
   Task,
   TaskDraft,
@@ -24,6 +26,7 @@ import type {
   WeeklyReview,
 } from "@/lib/types";
 import type { UsageRow } from "@/lib/usage";
+import type Database from "better-sqlite3";
 import crypto from "crypto";
 
 // ── Settings ───────────────────────────────────────────────────────────────
@@ -154,6 +157,13 @@ export const settingsRepo = {
 // ── Sessions ───────────────────────────────────────────────────────────────
 
 export const sessionsRepo = {
+  /** The cookie's lifetime, enforced here too, so a copied token stops
+   *  working when the cookie it came from would have. */
+  maxAgeMs: 400 * 24 * 60 * 60 * 1000,
+  /** Oldest created_at a session can have and still count. */
+  liveSince(): string {
+    return new Date(Date.now() - sessionsRepo.maxAgeMs).toISOString();
+  },
   create(userAgent: string, role: "owner" | "partner" = "owner"): string {
     const token = crypto.randomBytes(32).toString("hex");
     getDb()
@@ -166,22 +176,35 @@ export const sessionsRepo = {
   /** null = no such session */
   roleOf(token: string): "owner" | "partner" | null {
     if (!token) return null;
-    const row = getDb().prepare("SELECT role FROM sessions WHERE token=?").get(token) as
-      | { role: string }
-      | undefined;
+    const row = getDb()
+      .prepare("SELECT role FROM sessions WHERE token=? AND created_at>=?")
+      .get(token, sessionsRepo.liveSince()) as { role: string } | undefined;
     if (!row) return null;
     getDb().prepare("UPDATE sessions SET last_seen_at=? WHERE token=?").run(nowIso(), token);
     return row.role === "partner" ? "partner" : "owner";
   },
   verify(token: string): boolean {
     if (!token) return false;
-    const row = getDb().prepare("SELECT token FROM sessions WHERE token=?").get(token);
+    const row = getDb()
+      .prepare("SELECT token FROM sessions WHERE token=? AND created_at>=?")
+      .get(token, sessionsRepo.liveSince());
     if (!row) return false;
     getDb().prepare("UPDATE sessions SET last_seen_at=? WHERE token=?").run(nowIso(), token);
     return true;
   },
+  /** Tokens of every session that still counts. */
+  liveTokens(): string[] {
+    const rows = getDb()
+      .prepare("SELECT token FROM sessions WHERE created_at>=?")
+      .all(sessionsRepo.liveSince()) as { token: string }[];
+    return rows.map((r) => r.token);
+  },
   destroy(token: string): void {
     getDb().prepare("DELETE FROM sessions WHERE token=?").run(token);
+  },
+  /** Ends every session of one role, except (optionally) the caller's own. */
+  destroyRole(role: "owner" | "partner", exceptToken = ""): void {
+    getDb().prepare("DELETE FROM sessions WHERE role=? AND token<>?").run(role, exceptToken);
   },
   destroyAll(): void {
     getDb().prepare("DELETE FROM sessions").run();
@@ -262,6 +285,79 @@ function attachSubtasks(tasks: Task[]): Task[] {
 const TASK_ORDER =
   "ORDER BY (due_at IS NULL) ASC, due_at ASC, priority DESC, sort ASC, created_at ASC";
 
+/** Done tasks returned beside the open ones when a list asks for both. */
+const RECENT_DONE_LIMIT = 100;
+
+/** A LIKE pattern that matches `q` literally; pair it with ESCAPE '\'. */
+function likeContains(q: string): string {
+  return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+/** Two due values name the same moment (or are both empty). */
+function sameMoment(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return Number.isNaN(ta) || Number.isNaN(tb) ? a === b : ta === tb;
+}
+
+/**
+ * Where a repeat goes once it is done: the first occurrence after now, so a
+ * task that is several intervals overdue doesn't stay overdue. One with no
+ * date yet counts today as done and lands, all-day, on the next matching day.
+ * `rule` comes back with its anchor day pinned (see anchorRule), for the
+ * caller to store, so a short month never pulls later repeats earlier.
+ */
+function nextDueAfterDone(
+  rule: RecurrenceRule,
+  dueAt: string | null,
+  allDay: boolean,
+  now: Date,
+  tz: string
+): { dueAt: string; allDay: boolean; rule: RecurrenceRule } {
+  if (!dueAt) {
+    const today = new Date(isoStartOfLocalDay(localDateKey(now, tz), tz));
+    const anchored = anchorRule(rule, today, tz);
+    return { dueAt: nextOccurrence(anchored, today, tz).toISOString(), allDay: true, rule: anchored };
+  }
+  const anchored = anchorRule(rule, new Date(dueAt), tz);
+  // The wall-clock time the task is set for, read once and put back on every
+  // step: carrying a spring-forward shift from step to step would leave a
+  // 02:30 task at 03:30 for good.
+  const time = localTimeKey(dueAt, tz);
+  const atTime = (d: Date) => new Date(isoFromLocal(localDateKey(d, tz), time, tz));
+  const todayKey = localDateKey(now, tz);
+  const catchUp = (from: Date): Date => {
+    let next = atTime(nextOccurrence(anchored, from, tz));
+    for (let i = 0; i < 5000 && next.getTime() <= now.getTime(); i++) {
+      const after = atTime(nextOccurrence(anchored, next, tz));
+      if (after.getTime() <= next.getTime()) break;
+      next = after;
+    }
+    return next;
+  };
+
+  // Daily and weekly repeats far behind skip whole periods first (which keeps
+  // every-N phase), so a years-old date costs a few steps, not thousands.
+  let from = new Date(dueAt);
+  const interval = Math.max(1, Math.round(anchored.interval ?? 1));
+  const periodDays = anchored.freq === "daily" ? interval : anchored.freq === "weekly" ? 7 * interval : 0;
+  if (periodDays) {
+    const dueKey = localDateKey(dueAt, tz);
+    const behind = Math.round(
+      (Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${dueKey}T00:00:00Z`)) / 86_400_000
+    );
+    const skip = Math.floor(behind / periodDays) - 1;
+    if (skip > 0) from = new Date(isoFromLocal(addDaysToDateKey(dueKey, skip * periodDays), time, tz));
+  }
+  let next = catchUp(from);
+  // Still behind (a date so old the walk gave up): carry on from yesterday.
+  if (next.getTime() <= now.getTime()) {
+    next = catchUp(new Date(isoFromLocal(addDaysToDateKey(todayKey, -1), time, tz)));
+  }
+  return { dueAt: next.toISOString(), allDay, rule: anchored };
+}
+
 export const tasksRepo = {
   get(id: string): Task | null {
     const row = getDb().prepare("SELECT * FROM tasks WHERE id=?").get(id) as TaskRow | undefined;
@@ -296,9 +392,14 @@ export const tasksRepo = {
       params.push(tomorrowStartIso);
     } else if (filter.view === "anytime") {
       where.push("status='open' AND due_at IS NULL");
-    } else if (!filter.includeDone) {
-      where.push("status='open'");
     }
+    // Open and done in one capped query let years of done tasks crowd new
+    // open ones out, so a list that wants both gets every open task plus the
+    // most recently finished ones.
+    const viewSetsStatus =
+      filter.view === "today" || filter.view === "upcoming" || filter.view === "anytime";
+    const openAndRecentDone = !!filter.includeDone && !viewSetsStatus;
+    if (!viewSetsStatus) where.push("status='open'");
 
     if (filter.projectId) {
       where.push("project_id = ?");
@@ -307,21 +408,36 @@ export const tasksRepo = {
       where.push("project_id IS NULL");
     }
     if (filter.tag) {
-      where.push("tags LIKE ?");
-      params.push(`%${JSON.stringify(filter.tag)}%`);
+      where.push("tags LIKE ? ESCAPE '\\'");
+      params.push(likeContains(JSON.stringify(filter.tag)));
     }
     if (filter.q) {
-      where.push("(title LIKE ? OR notes LIKE ?)");
-      params.push(`%${filter.q}%`, `%${filter.q}%`);
+      where.push("(title LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')");
+      params.push(likeContains(filter.q), likeContains(filter.q));
     }
     if (filter.dueBefore) {
       where.push("due_at IS NOT NULL AND due_at < ?");
       params.push(filter.dueBefore);
     }
 
-    const rows = getDb()
+    const db = getDb();
+    const rows = db
       .prepare(`SELECT * FROM tasks WHERE ${where.join(" AND ")} ${TASK_ORDER} LIMIT 500`)
       .all(...params) as TaskRow[];
+    if (openAndRecentDone) {
+      const doneWhere = where.map((w) => (w === "status='open'" ? "status='done'" : w));
+      // A project's page shows its whole done set and counts it, so only the
+      // ever-growing lists (the joint list) are capped.
+      const limit = filter.projectId ? "" : `LIMIT ${RECENT_DONE_LIMIT}`;
+      rows.push(
+        ...(db
+          .prepare(
+            `SELECT * FROM tasks WHERE ${doneWhere.join(" AND ")}
+             ORDER BY completed_at DESC, updated_at DESC ${limit}`
+          )
+          .all(...params) as TaskRow[])
+      );
+    }
     const tasks = attachSubtasks(rows.map(rowToTask));
     if (filter.view === "today") {
       // Escalation-aware order: overdue first, then effective priority
@@ -345,6 +461,9 @@ export const tasksRepo = {
   create(draft: TaskDraft, createdBy: "owner" | "partner" = "owner"): Task {
     const id = newId();
     const now = nowIso();
+    // A subtask lives on its parent's list, whatever the caller sent.
+    const parentSpace = draft.parentId ? spaceOf(draft.parentId) : null;
+    const space = parentSpace ?? (draft.space === "joint" ? "joint" : "personal");
     getDb()
       .prepare(
         `INSERT INTO tasks(id,title,notes,status,space,created_by,assigned_to,priority,due_at,due_kind,all_day,project_id,tags,parent_id,recurrence,location,sort,created_at,updated_at)
@@ -355,7 +474,7 @@ export const tasksRepo = {
         draft.title.trim(),
         draft.notes ?? "",
         "open",
-        draft.space === "joint" ? "joint" : "personal",
+        space,
         createdBy,
         draft.assignedTo === "owner" || draft.assignedTo === "partner" ? draft.assignedTo : null,
         draft.priority ?? 0,
@@ -377,8 +496,22 @@ export const tasksRepo = {
   update(id: string, patch: TaskPatch): Task | null {
     const existing = this.get(id);
     if (!existing) return null;
+    const db = getDb();
+    const now = nowIso();
+    // Which list the task ends up on: a subtask follows its parent, anything
+    // else takes the patch's space when it names one.
+    const parentId = "parentId" in patch ? (patch.parentId ?? null) : existing.parentId;
+    const asked = patch.space === "joint" || patch.space === "personal" ? patch.space : existing.space;
+    const space = (parentId ? spaceOf(parentId) : null) ?? asked;
+    const moved = space !== existing.space;
+    const effective: TaskPatch = { ...patch };
+    // Personal projects don't hold shared tasks, and only the shared list has
+    // someone else to hand a task to.
+    if (moved && space === "joint") effective.projectId = null;
+    if (moved && space === "personal") effective.assignedTo = null;
+
     const sets: string[] = ["updated_at=?"];
-    const params: unknown[] = [nowIso()];
+    const params: unknown[] = [now];
     const map: [keyof TaskPatch, string, (v: unknown) => unknown][] = [
       ["title", "title", (v) => String(v).trim()],
       ["assignedTo", "assigned_to", (v) => (v === "owner" || v === "partner" ? v : null)],
@@ -395,16 +528,31 @@ export const tasksRepo = {
       ["sort", "sort", (v) => v],
     ];
     for (const [key, col, conv] of map) {
-      if (key in patch) {
+      if (key in effective) {
         sets.push(`${col}=?`);
-        params.push(conv(patch[key]));
+        params.push(conv(effective[key]));
       }
     }
-    if ("dueAt" in patch) {
+    if (moved) {
+      sets.push("space=?");
+      params.push(space);
+    }
+    // Only a new due moment earns a new reminder; resending the same one
+    // with an unrelated edit must not fire it again.
+    if ("dueAt" in effective && !sameMoment(effective.dueAt, existing.dueAt)) {
       sets.push("notified_at=NULL");
     }
     params.push(id);
-    getDb().prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id=?`).run(...params);
+    db.transaction(() => {
+      db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id=?`).run(...params);
+      if (moved) {
+        // Its subtasks move with it.
+        db.prepare(
+          `UPDATE tasks SET space=?, assigned_to=CASE WHEN ?='personal' THEN NULL ELSE assigned_to END,
+           updated_at=? WHERE parent_id=?`
+        ).run(space, space, now, id);
+      }
+    })();
     return this.get(id);
   },
 
@@ -416,41 +564,97 @@ export const tasksRepo = {
 
   /**
    * Complete / un-complete. For recurring top-level tasks, completion logs the
-   * occurrence and advances due_at to the next occurrence (task stays open).
+   * occurrence and moves due_at to the first occurrence after now (the task
+   * stays open). Asking for the state a task is already in changes nothing,
+   * so a second tick from another device or a replayed request can't log
+   * twice, skip an occurrence or delete real history; `changed` says whether
+   * anything happened. `expectedDueAt` is the due the caller was looking at:
+   * a repeat that has moved on since then is left alone. `by` is who ticked it.
    */
-  setDone(id: string, done: boolean): { task: Task | null; recurred: boolean } {
+  setDone(
+    id: string,
+    done: boolean,
+    opts: { by?: SessionRole; expectedDueAt?: string | null } = {}
+  ): { task: Task | null; recurred: boolean; changed: boolean } {
     const task = this.get(id);
-    if (!task) return { task: null, recurred: false };
-    const settings = settingsRepo.getApp();
+    if (!task) return { task: null, recurred: false, changed: false };
+    const tz = settingsRepo.getApp().tz;
     const now = nowIso();
     const db = getDb();
+    const unchanged = { task, recurred: false, changed: false };
 
     if (done) {
-      if (task.recurrence && !task.parentId && task.dueAt) {
-        const next = nextOccurrence(task.recurrence, new Date(task.dueAt), settings.tz);
-        completionsRepo.log(task.id, task.title, now, localDateKey(now, settings.tz));
-        db.prepare("UPDATE tasks SET due_at=?, notified_at=NULL, updated_at=? WHERE id=?").run(
-          next.toISOString(),
+      if (task.status === "done") return unchanged;
+      if (task.recurrence && !task.parentId) {
+        if (opts.expectedDueAt !== undefined && !sameMoment(opts.expectedDueAt, task.dueAt)) {
+          return unchanged;
+        }
+        const next = nextDueAfterDone(task.recurrence, task.dueAt, task.allDay, new Date(now), tz);
+        const rule = JSON.stringify(next.rule);
+        db.transaction(() => {
+          completionsRepo.log(task.id, task.title, now, localDateKey(now, tz), opts.by);
+          db.prepare(
+            "UPDATE tasks SET due_at=?, all_day=?, notified_at=NULL, updated_at=? WHERE id=?"
+          ).run(next.dueAt, next.allDay ? 1 : 0, now, id);
+          // Keep the pinned anchor day, so the next tick reads the true day
+          // back rather than a short month's clamped one.
+          if (rule !== JSON.stringify(task.recurrence)) {
+            db.prepare("UPDATE tasks SET recurrence=? WHERE id=?").run(rule, id);
+          }
+        })();
+        return { task: this.get(id), recurred: true, changed: true };
+      }
+      db.transaction(() => {
+        completionsRepo.log(task.id, task.title, now, localDateKey(now, tz), opts.by);
+        db.prepare("UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?").run(
+          now,
           now,
           id
         );
-        return { task: this.get(id), recurred: true };
-      }
-      completionsRepo.log(task.id, task.title, now, localDateKey(now, settings.tz));
-      db.prepare("UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?").run(
-        now,
+      })();
+      return { task: this.get(id), recurred: false, changed: true };
+    }
+
+    // Only a done task has a tick to take back. A repeat stays open, so its
+    // Logbook entries come out one at a time through unlog() instead.
+    if (task.status !== "done") return unchanged;
+    db.transaction(() => {
+      completionsRepo.removeLatestForTask(id);
+      db.prepare("UPDATE tasks SET status='open', completed_at=NULL, updated_at=? WHERE id=?").run(
         now,
         id
       );
-      return { task: this.get(id), recurred: false };
-    }
+    })();
+    return { task: this.get(id), recurred: false, changed: true };
+  },
 
-    completionsRepo.removeLatestForTask(id);
-    db.prepare("UPDATE tasks SET status='open', completed_at=NULL, updated_at=? WHERE id=?").run(
-      now,
-      id
-    );
-    return { task: this.get(id), recurred: false };
+  /**
+   * Take one entry back out of the Logbook. A task that this entry left done
+   * goes back on the open list; a repeat keeps its next date. Null when the
+   * entry is already gone; `task` is null when the task itself no longer
+   * exists, and then nothing is removed.
+   */
+  unlog(completionId: string): { task: Task | null; removed: boolean; reopened: boolean } | null {
+    const entry = completionsRepo.get(completionId);
+    if (!entry) return null;
+    const task = this.get(entry.taskId);
+    if (!task) return { task: null, removed: false, reopened: false };
+    const db = getDb();
+    let reopened = false;
+    db.transaction(() => {
+      completionsRepo.remove(entry.id);
+      const later = db
+        .prepare("SELECT 1 FROM completions WHERE task_id=? AND completed_at>=? LIMIT 1")
+        .get(task.id, entry.completedAt);
+      if (task.status === "done" && !later) {
+        db.prepare("UPDATE tasks SET status='open', completed_at=NULL, updated_at=? WHERE id=?").run(
+          nowIso(),
+          task.id
+        );
+        reopened = true;
+      }
+    })();
+    return { task: this.get(task.id), removed: true, reopened };
   },
 
   reorder(ids: string[]): void {
@@ -540,6 +744,15 @@ function isoStartOfLocalDay(dateKey: string, tz: string): string {
   return isoFromLocal(dateKey, "00:00", tz);
 }
 
+/** Which list a task is on, or null when there is no such task. */
+function spaceOf(id: string): "personal" | "joint" | null {
+  const row = getDb().prepare("SELECT space FROM tasks WHERE id=?").get(id) as
+    | { space: string }
+    | undefined;
+  if (!row) return null;
+  return row.space === "joint" ? "joint" : "personal";
+}
+
 // ── Completions / stats ────────────────────────────────────────────────────
 
 /** Every AI call's token cost, so the Usage screen can add it up. */
@@ -624,13 +837,30 @@ export const usageRepo = {
   },
 };
 
+// The owner-facing figures below (stats, streak, Logbook, weekly review) count
+// only the owner's own ticks, never the partner's on the shared list.
 export const completionsRepo = {
-  log(taskId: string, title: string, completedAt: string, dateLocal: string): void {
+  log(
+    taskId: string,
+    title: string,
+    completedAt: string,
+    dateLocal: string,
+    completedBy: SessionRole = "owner"
+  ): void {
     getDb()
       .prepare(
-        "INSERT INTO completions(id, task_id, title, completed_at, date_local) VALUES(?,?,?,?,?)"
+        "INSERT INTO completions(id, task_id, title, completed_at, date_local, completed_by) VALUES(?,?,?,?,?,?)"
       )
-      .run(newId(), taskId, title, completedAt, dateLocal);
+      .run(newId(), taskId, title, completedAt, dateLocal, completedBy === "partner" ? "partner" : "owner");
+  },
+  get(id: string): { id: string; taskId: string; completedAt: string } | null {
+    const row = getDb()
+      .prepare("SELECT id, task_id, completed_at FROM completions WHERE id=?")
+      .get(id) as { id: string; task_id: string; completed_at: string } | undefined;
+    return row ? { id: row.id, taskId: row.task_id, completedAt: row.completed_at } : null;
+  },
+  remove(id: string): void {
+    getDb().prepare("DELETE FROM completions WHERE id=?").run(id);
   },
   removeLatestForTask(taskId: string): void {
     getDb()
@@ -642,31 +872,34 @@ export const completionsRepo = {
   countsByDay(fromKey: string, toKey: string): Map<string, number> {
     const rows = getDb()
       .prepare(
-        "SELECT date_local, COUNT(*) c FROM completions WHERE date_local >= ? AND date_local <= ? GROUP BY date_local"
+        "SELECT date_local, COUNT(*) c FROM completions WHERE date_local >= ? AND date_local <= ? AND completed_by='owner' GROUP BY date_local"
       )
       .all(fromKey, toKey) as { date_local: string; c: number }[];
     return new Map(rows.map((r) => [r.date_local, r.c]));
   },
   countRange(fromKey: string, toKey: string): number {
     const row = getDb()
-      .prepare("SELECT COUNT(*) c FROM completions WHERE date_local >= ? AND date_local <= ?")
+      .prepare(
+        "SELECT COUNT(*) c FROM completions WHERE date_local >= ? AND date_local <= ? AND completed_by='owner'"
+      )
       .get(fromKey, toKey) as { c: number };
     return row.c;
   },
   /** Completed entries grouped newest-day-first for the Logbook. */
-  logbook(fromKey: string, toKey: string): { dateLocal: string; entries: { taskId: string; title: string; completedAt: string }[] }[] {
+  logbook(fromKey: string, toKey: string): { dateLocal: string; entries: { id: string; taskId: string; title: string; completedAt: string }[] }[] {
     const rows = getDb()
       .prepare(
-        `SELECT c.task_id, c.title, c.completed_at, c.date_local
+        `SELECT c.id, c.task_id, c.title, c.completed_at, c.date_local
          FROM completions c LEFT JOIN tasks t ON t.id = c.task_id
-         WHERE c.date_local >= ? AND c.date_local <= ? AND t.project_id IS NULL AND (t.space IS NULL OR t.space='personal')
+         WHERE c.date_local >= ? AND c.date_local <= ? AND c.completed_by='owner'
+           AND t.project_id IS NULL AND (t.space IS NULL OR t.space='personal')
          ORDER BY c.completed_at DESC LIMIT 500`
       )
-      .all(fromKey, toKey) as { task_id: string; title: string; completed_at: string; date_local: string }[];
-    const byDay = new Map<string, { taskId: string; title: string; completedAt: string }[]>();
+      .all(fromKey, toKey) as { id: string; task_id: string; title: string; completed_at: string; date_local: string }[];
+    const byDay = new Map<string, { id: string; taskId: string; title: string; completedAt: string }[]>();
     for (const r of rows) {
       const list = byDay.get(r.date_local) ?? [];
-      list.push({ taskId: r.task_id, title: r.title, completedAt: r.completed_at });
+      list.push({ id: r.id, taskId: r.task_id, title: r.title, completedAt: r.completed_at });
       byDay.set(r.date_local, list);
     }
     return [...byDay.entries()]
@@ -677,7 +910,7 @@ export const completionsRepo = {
   listRange(fromKey: string, toKey: string): { title: string; dateLocal: string }[] {
     const rows = getDb()
       .prepare(
-        "SELECT title, date_local FROM completions WHERE date_local >= ? AND date_local <= ? ORDER BY completed_at ASC"
+        "SELECT title, date_local FROM completions WHERE date_local >= ? AND date_local <= ? AND completed_by='owner' ORDER BY completed_at ASC"
       )
       .all(fromKey, toKey) as { title: string; date_local: string }[];
     return rows.map((r) => ({ title: r.title, dateLocal: r.date_local }));
@@ -765,11 +998,21 @@ export const projectsRepo = {
       createdAt: r.created_at,
     };
   },
-  findByName(name: string): Project | null {
+  /**
+   * A project by name, a live one first. An archived match is restored, since
+   * filing something into it means it is wanted again (and creating another
+   * would leave two of the same name); pass `{ restore: false }` for a lookup
+   * that must not change anything, which returns it still archived.
+   */
+  findByName(name: string, opts: { restore?: boolean } = {}): Project | null {
     const r = getDb()
-      .prepare("SELECT * FROM projects WHERE lower(name)=lower(?) AND archived=0")
+      .prepare(
+        "SELECT * FROM projects WHERE lower(name)=lower(?) ORDER BY archived ASC, sort ASC, created_at ASC"
+      )
       .get(name.trim()) as ProjectRow | undefined;
-    return r ? this.get(r.id) : null;
+    if (!r) return null;
+    if (r.archived && opts.restore !== false) return this.update(r.id, { archived: false });
+    return this.get(r.id);
   },
   create(input: { name: string; color?: string; icon?: string }): Project {
     const id = newId();
@@ -834,8 +1077,15 @@ export const notesRepo = {
     const where: string[] = [`archived=${opts.archived ? 1 : 0}`];
     const params: unknown[] = [];
     if (opts.q) {
-      where.push("(title LIKE ? OR content LIKE ? OR items LIKE ?)");
-      params.push(`%${opts.q}%`, `%${opts.q}%`, `%${opts.q}%`);
+      // Checklist items are matched on their text only, never the JSON
+      // around it ("done", "text", ids), and the query is taken literally.
+      where.push(
+        `(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' OR EXISTS (
+           SELECT 1 FROM json_tree(CASE WHEN json_valid(items) THEN items ELSE '[]' END) j
+           WHERE j.key = 'text' AND j.type = 'text' AND j.value LIKE ? ESCAPE '\\'))`
+      );
+      const pattern = likeContains(opts.q);
+      params.push(pattern, pattern, pattern);
     }
     const rows = getDb()
       .prepare(
@@ -929,7 +1179,16 @@ export const inboxRepo = {
     const status = opts.status ?? "new";
     const rows = (
       status === "all"
-        ? getDb().prepare("SELECT * FROM inbox_items ORDER BY received_at DESC LIMIT 100").all()
+        ? // Every unresolved item, plus the latest 100 of history: a burst of
+          // auto-dismissed mail must never push something still waiting out.
+          getDb()
+            .prepare(
+              `SELECT * FROM inbox_items WHERE status='new'
+               UNION ALL
+               SELECT * FROM (SELECT * FROM inbox_items WHERE status<>'new' ORDER BY received_at DESC LIMIT 100)
+               ORDER BY received_at DESC`
+            )
+            .all()
         : getDb()
             .prepare("SELECT * FROM inbox_items WHERE status=? ORDER BY received_at DESC LIMIT 100")
             .all(status)
@@ -1138,7 +1397,9 @@ export const conversationsRepo = {
   messages(conversationId: string, limit = 60): ChatMessageRecord[] {
     const rows = getDb()
       .prepare(
-        "SELECT * FROM (SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+        // Insertion order breaks same-millisecond ties (a message and an
+        // instant reply), so they never come back reversed.
+        "SELECT * FROM (SELECT *, rowid AS seq FROM messages WHERE conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at ASC, seq ASC"
       )
       .all(conversationId, limit) as {
       id: string;
@@ -1162,16 +1423,30 @@ export const conversationsRepo = {
 // ── Push subscriptions ─────────────────────────────────────────────────────
 
 export const pushRepo = {
+  /**
+   * Upserts a device's subscription under the role (and, when given, the
+   * session) that posted it. The session link is stored inside the JSON, as
+   * a hash, so ending a session can drop the devices it registered
+   * (pruneSignedOut) without a schema change.
+   */
   add(
     subscription: { endpoint: string } & Record<string, unknown>,
-    role: "owner" | "partner" = "owner"
+    role: "owner" | "partner" = "owner",
+    sessionToken?: string
   ): void {
+    const stored = sessionToken
+      ? { ...subscription, _session: pushRepo.sessionRef(sessionToken) }
+      : subscription;
     getDb()
       .prepare(
         `INSERT INTO push_subscriptions(endpoint,subscription,created_at,role) VALUES(?,?,?,?)
          ON CONFLICT(endpoint) DO UPDATE SET subscription=excluded.subscription, role=excluded.role`
       )
-      .run(subscription.endpoint, JSON.stringify(subscription), nowIso(), role);
+      .run(subscription.endpoint, JSON.stringify(stored), nowIso(), role);
+  },
+  /** One-way reference to a session token, so this table never holds a usable one. */
+  sessionRef(token: string): string {
+    return crypto.createHash("sha256").update(token).digest("hex").slice(0, 32);
   },
   list(roles?: ("owner" | "partner")[]): {
     endpoint: string;
@@ -1185,7 +1460,37 @@ export const pushRepo = {
     const wanted = roles ?? ["owner", "partner"];
     return all
       .filter((r) => wanted.includes(r.role === "partner" ? "partner" : "owner"))
-      .map((r) => ({ endpoint: r.endpoint, subscription: JSON.parse(r.subscription) }));
+      .map((r) => {
+        const subscription = JSON.parse(r.subscription) as Record<string, unknown>;
+        delete subscription._session;
+        return { endpoint: r.endpoint, subscription };
+      });
+  },
+  /** Drops every subscription of one role. */
+  removeRole(role: "owner" | "partner"): void {
+    getDb().prepare("DELETE FROM push_subscriptions WHERE role=?").run(role);
+  },
+  /**
+   * Drops subscriptions whose session has ended (signed out, revoked or
+   * expired). Rows saved before subscriptions were linked to a session carry
+   * no link and are kept; the app re-posts them, linked, on its next load.
+   */
+  pruneSignedOut(): void {
+    const live = new Set(sessionsRepo.liveTokens().map((t) => pushRepo.sessionRef(t)));
+    const rows = getDb().prepare("SELECT endpoint, subscription FROM push_subscriptions").all() as {
+      endpoint: string;
+      subscription: string;
+    }[];
+    const drop = getDb().prepare("DELETE FROM push_subscriptions WHERE endpoint=?");
+    for (const r of rows) {
+      let ref: unknown;
+      try {
+        ref = (JSON.parse(r.subscription) as { _session?: unknown })._session;
+      } catch {
+        continue;
+      }
+      if (typeof ref === "string" && !live.has(ref)) drop.run(r.endpoint);
+    }
   },
   remove(endpoint: string): void {
     getDb().prepare("DELETE FROM push_subscriptions WHERE endpoint=?").run(endpoint);
@@ -1248,24 +1553,138 @@ export function exportAll(): Record<string, unknown> {
   };
 }
 
-export function importAll(data: Record<string, unknown>): { imported: number } {
+/** A file that can't be imported; the message says why, for the person importing it. */
+export class ImportError extends Error {}
+
+/** The real columns of a table, so names from a file never reach SQL unchecked. */
+export function tableColumns(table: string): Set<string> {
+  return new Set(
+    (getDb().pragma(`table_info(${table})`) as { name: string }[]).map((c) => c.name)
+  );
+}
+
+/** What exportAll writes, by file key and table, and the columns holding JSON. */
+const isRecord = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v);
+const isInt = (v: unknown, min: number, max: number): boolean =>
+  Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+const isRule = (v: unknown): boolean => {
+  if (!isRecord(v)) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    ["daily", "weekly", "monthly", "yearly"].includes(r.freq as string) &&
+    (r.interval === undefined || isInt(r.interval, 1, 1000)) &&
+    (r.byWeekday === undefined ||
+      (Array.isArray(r.byWeekday) && r.byWeekday.every((d) => isInt(d, 0, 6)))) &&
+    (r.byMonthDay === undefined || isInt(r.byMonthDay, 1, 31))
+  );
+};
+
+/**
+ * What exportAll writes, by file key and table. `json` columns must hold the
+ * shape the app reads back, and `oneOf` columns one of the values it knows;
+ * anything else would break or hide rows after the import.
+ */
+const IMPORT_TABLES: {
+  key: string;
+  table: string;
+  json: Record<string, (v: unknown) => boolean>;
+  oneOf: Record<string, string[]>;
+}[] = [
+  { key: "projects", table: "projects", json: {}, oneOf: {} },
+  {
+    key: "tasks",
+    table: "tasks",
+    json: {
+      tags: (v) => Array.isArray(v) && v.every((t) => typeof t === "string"),
+      recurrence: (v) => v === null || isRule(v),
+      location: (v) => v === null || isRecord(v),
+    },
+    oneOf: { status: ["open", "done"], space: ["personal", "joint"] },
+  },
+  { key: "notes", table: "notes", json: { items: (v) => Array.isArray(v) }, oneOf: {} },
+  { key: "completions", table: "completions", json: {}, oneOf: { completed_by: ["owner", "partner"] } },
+  {
+    key: "inbox",
+    table: "inbox_items",
+    json: { suggestion: (v) => v === null || isRecord(v) },
+    oneOf: { status: ["new", "resolved", "dismissed"] },
+  },
+];
+
+export function importAll(data: Record<string, unknown>): {
+  imported: number;
+  counts: Record<string, number>;
+} {
   const db = getDb();
+  const counts: Record<string, number> = {};
   let imported = 0;
-  const insertRows = (table: string, rows: unknown[]) => {
-    for (const row of rows as Record<string, unknown>[]) {
-      const cols = Object.keys(row);
-      const stmt = db.prepare(
-        `INSERT OR REPLACE INTO ${table}(${cols.join(",")}) VALUES(${cols.map(() => "?").join(",")})`
-      );
-      stmt.run(...cols.map((c) => row[c]));
-      imported++;
-    }
+
+  const insertRows = (spec: (typeof IMPORT_TABLES)[number], rows: unknown[]) => {
+    // Unknown keys (a newer build's columns, or anything crafted) are dropped.
+    const allowed = tableColumns(spec.table);
+    const statements = new Map<string, Database.Statement<unknown[]>>();
+    rows.forEach((raw, i) => {
+      const where = `Row ${i + 1} of ${spec.key}`;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new ImportError(`${where} is not a record`);
+      }
+      const row = raw as Record<string, unknown>;
+      if (!(typeof row.id === "string" && row.id) && typeof row.id !== "number") {
+        throw new ImportError(`${where} has no id`);
+      }
+      const cols = Object.keys(row).filter((c) => allowed.has(c) && row[c] !== undefined);
+      const values = cols.map((c) => {
+        const v = row[c];
+        const shape = spec.json[c];
+        if (shape) {
+          if (v === null) return null;
+          let parsed: unknown = v;
+          if (typeof v === "string") {
+            try {
+              parsed = JSON.parse(v);
+            } catch {
+              throw new ImportError(`${where} has an unreadable ${c}`);
+            }
+          }
+          if (!shape(parsed)) throw new ImportError(`${where} has an unreadable ${c}`);
+          return parsed === null ? null : JSON.stringify(parsed);
+        }
+        const allowedValues = spec.oneOf[c];
+        if (allowedValues && !allowedValues.includes(v as string)) {
+          throw new ImportError(`${where} has an unknown ${c}`);
+        }
+        if (typeof v === "boolean") return v ? 1 : 0;
+        if (v !== null && typeof v === "object") return JSON.stringify(v);
+        return v;
+      });
+      const sig = cols.join(",");
+      let stmt = statements.get(sig);
+      if (!stmt) {
+        stmt = db.prepare<unknown[]>(
+          `INSERT OR REPLACE INTO ${spec.table}(${cols.map((c) => `"${c}"`).join(",")}) VALUES(${cols.map(() => "?").join(",")})`
+        );
+        statements.set(sig, stmt);
+      }
+      try {
+        stmt.run(...values);
+      } catch (err) {
+        throw new ImportError(`${where} could not be imported: ${(err as Error).message}`);
+      }
+    });
+    counts[spec.key] = rows.length;
+    imported += rows.length;
   };
+
   const tx = db.transaction(() => {
-    for (const table of ["tasks", "projects", "notes", "completions"]) {
-      if (Array.isArray(data[table])) insertRows(table, data[table] as unknown[]);
+    for (const spec of IMPORT_TABLES) {
+      const rows = data[spec.key];
+      if (rows === undefined || rows === null) continue;
+      if (!Array.isArray(rows)) throw new ImportError(`“${spec.key}” in that file is not a list`);
+      insertRows(spec, rows);
     }
+    // An older file can carry personal subtasks under joint tasks back in.
+    alignSubtaskSpaces(db);
   });
   tx();
-  return { imported };
+  return { imported, counts };
 }

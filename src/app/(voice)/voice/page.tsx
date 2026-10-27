@@ -97,7 +97,10 @@ export default function VoicePage() {
     onError: (message) => toast.error(message),
   });
 
-  useWakeLock(active);
+  // Keep the screen on only while something is listening, thinking or
+  // speaking. The hook ends sessions on its own (silence, a mic error, a reply
+  // with hands-free off), and an idle page in a pocket shouldn't hold the lock.
+  useWakeLock(active && voice.phase !== "idle");
 
   const recent = useMemo(() => voice.turns.slice(-5, -1), [voice.turns]);
 
@@ -132,9 +135,13 @@ export default function VoicePage() {
     router.push("/assistant");
   };
 
+  // One request at a time: a second send while the first is still thinking
+  // would start a second conversation before the first one's id comes back.
+  const thinking = voice.phase === "thinking";
+
   const sendText = () => {
     const text = textDraft.trim();
-    if (!text) return;
+    if (!text || thinking) return;
     setTextDraft("");
     setActive(true);
     voice.sendText(text);
@@ -262,7 +269,7 @@ export default function VoicePage() {
                 type="button"
                 aria-label="Send"
                 onClick={sendText}
-                disabled={!textDraft.trim()}
+                disabled={!textDraft.trim() || thinking}
                 className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-sunrise text-on-accent disabled:opacity-40"
               >
                 <IconSend className="h-[18px] w-[18px]" />

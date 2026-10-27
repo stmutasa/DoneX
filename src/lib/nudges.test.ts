@@ -220,3 +220,61 @@ describe("waitingLines", () => {
     expect(waitingLines([], "Annette")).toBe("");
   });
 });
+
+describe("in the user's timezone", () => {
+  // vitest runs in UTC here, like the server. The user is in New York.
+  const TZ = "America/New_York";
+  // An all-day task due Tue 2026-10-27, stored as local midnight (EDT).
+  const dueTuesday = () =>
+    task({ title: "pay the sitter", dueAt: "2026-10-27T04:00:00.000Z", allDay: true });
+
+  it("gives an all-day task the whole local day, past 8 PM when UTC has moved on", () => {
+    expect(pastDue(dueTuesday(), new Date("2026-10-27T22:00:00Z"), TZ)).toBe(false); // 6 PM EDT
+    expect(pastDue(dueTuesday(), new Date("2026-10-28T00:30:00Z"), TZ)).toBe(false); // 8:30 PM EDT
+    expect(pastDue(dueTuesday(), new Date("2026-10-28T04:30:00Z"), TZ)).toBe(true); // 12:30 AM Wed
+  });
+
+  it("doesn't nudge at 6 PM on the day itself, and says 'yesterday' the next evening", () => {
+    const t = dueTuesday();
+    const sameEvening = new Date("2026-10-27T22:00:00Z"); // Tue 6 PM EDT
+    const args = { tasks: [t], role: "partner" as const, tz: TZ, nudgedDueAt: never };
+    expect(nudgesFor({ ...args, now: sameEvening })).toEqual([]);
+
+    const nextEvening = new Date("2026-10-28T22:00:00Z"); // Wed 6 PM EDT
+    const items = nudgesFor({ ...args, now: nextEvening });
+    expect(items.map((i) => i.daysLate)).toEqual([1]);
+    expect(nudgeText(items, "Sam").body).toContain("it was due yesterday");
+  });
+
+  it("keeps the day whole across the end of daylight time", () => {
+    // Sunday 2026-11-01 starts at 04:00Z (EDT) and ends at 05:00Z Monday (EST).
+    const sunday = task({ dueAt: "2026-11-01T04:00:00.000Z", allDay: true });
+    expect(pastDue(sunday, new Date("2026-11-02T04:30:00Z"), TZ)).toBe(false); // 11:30 PM EST Sun
+    expect(pastDue(sunday, new Date("2026-11-02T05:30:00Z"), TZ)).toBe(true); // 12:30 AM EST Mon
+  });
+
+  it("shows the asker the same local-day answer in the digest", () => {
+    expect(waitingOn([dueTuesday()], "owner", new Date("2026-10-28T00:30:00Z"), TZ)).toEqual([]);
+    expect(waitingOn([dueTuesday()], "owner", new Date("2026-10-28T11:00:00Z"), TZ).length).toBe(1);
+  });
+});
+
+describe("daysLate counts calendar days", () => {
+  const TZ = "America/New_York";
+
+  it("calls a deadline from yesterday evening yesterday, though it is under 24 hours old", () => {
+    // Due Mon 7:00 PM EDT; checked Tue 6:00 PM EDT, 23 hours later.
+    expect(daysLate("2026-10-26T23:00:00.000Z", new Date("2026-10-27T22:00:00Z"), TZ)).toBe(1);
+    // Due Mon 9:00 PM EDT; read in Tuesday's 7:00 AM digest.
+    expect(daysLate("2026-10-27T01:00:00.000Z", new Date("2026-10-27T11:00:00Z"), TZ)).toBe(1);
+  });
+
+  it("says earlier today only for today's deadlines", () => {
+    expect(daysLate("2026-10-27T13:00:00.000Z", new Date("2026-10-27T22:00:00Z"), TZ)).toBe(0);
+  });
+
+  it("counts days, not hours, across the end of daylight time", () => {
+    // Sat 2026-10-31 6:00 PM EDT to Mon 2026-11-02 6:00 PM EST is 49 hours and 2 days.
+    expect(daysLate("2026-10-31T22:00:00.000Z", new Date("2026-11-02T23:00:00Z"), TZ)).toBe(2);
+  });
+});

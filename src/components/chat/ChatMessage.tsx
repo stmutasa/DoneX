@@ -65,12 +65,15 @@ export function ChatBubble({
   tools = [],
   pending,
   error,
+  stopped,
 }: {
   role: ChatRole;
   text: string;
   tools?: ToolChipState[];
   pending?: boolean;
   error?: string;
+  /** the user stopped the reply before it finished */
+  stopped?: boolean;
 }) {
   const isUser = role === "user";
   return (
@@ -90,8 +93,10 @@ export function ChatBubble({
               : "rounded-bl-md border border-stroke bg-elev text-ink shadow-soft",
           )}
         >
-          {text || (pending ? <TypingDots /> : null)}
+          {text ||
+            (pending ? <TypingDots /> : stopped ? <span className="text-faint">Stopped</span> : null)}
         </div>
+        {stopped && text ? <p className="mt-1 text-[12px] text-faint">Stopped</p> : null}
         {!isUser ? <ToolChips tools={tools} /> : null}
         {error ? (
           <p className="mt-1.5 rounded-xl border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[12.5px] text-danger">

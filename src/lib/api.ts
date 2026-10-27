@@ -35,7 +35,15 @@ import type {
   WeeklyReview,
 } from "@/lib/types";
 
-import { applyOutboxOverlay, enqueueFailedRequest } from "@/lib/offline";
+import {
+  FROM_CACHE_HEADER,
+  applyOutboxOverlay,
+  enqueueFailedRequest,
+  forgetSessionRole,
+  noteAppZone,
+  noteCachedSessionRole,
+  noteSessionRole,
+} from "@/lib/offline";
 
 export class ApiError extends Error {
   status: number;
@@ -69,6 +77,26 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 }
 
 type RequestInitEx = RequestInit & { timeoutMs?: number };
+
+const ME_URL = "/api/auth/me";
+
+/** The outbox replays queued changes only under the role that made them, so
+ *  it hears what every answer about the session says. A copy the service
+ *  worker kept from earlier (`live` false) only tags new offline ops. Resolves
+ *  once any purge of the last person's cached reads is done, ~2s at most. */
+function noteSessionFrom(data: unknown, live: boolean): Promise<void> {
+  const d = data && typeof data === "object" ? (data as { role?: unknown; tz?: unknown }) : {};
+  if (typeof d.tz === "string") noteAppZone(d.tz);
+  if (d.role !== "owner" && d.role !== "partner") return Promise.resolve();
+  if (!live) {
+    noteCachedSessionRole(d.role);
+    return Promise.resolve();
+  }
+  return Promise.race([
+    noteSessionRole(d.role),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+}
 
 async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
   const hasBody = init?.body !== undefined;
@@ -121,6 +149,7 @@ async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
+    if (res.status === 401 && (url === ME_URL || !url.startsWith("/api/auth/"))) forgetSessionRole();
     if (res.status === 401 && typeof window !== "undefined" && !url.startsWith("/api/auth/")) {
       const path = window.location.pathname;
       if (path !== "/login" && path !== "/setup") window.location.href = "/login";
@@ -131,7 +160,9 @@ async function request<T>(url: string, init?: RequestInitEx): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  const data = JSON.parse(text) as T;
+  if (method === "GET" && url === ME_URL) void noteSessionFrom(data, !res.headers.get(FROM_CACHE_HEADER));
+  return data;
 }
 
 /** Generic SWR fetcher: `useSWR<{tasks: Task[]}>(keys.tasks(f), fetcher)`.
@@ -164,7 +195,7 @@ export const keys = {
   review: (refresh?: boolean) => `/api/assistant/review${query({ refresh })}`,
   stats: () => "/api/stats",
   settings: () => "/api/settings",
-  me: () => "/api/auth/me",
+  me: () => ME_URL,
   models: (provider: AISettings["provider"]) => `/api/settings/models${query({ provider })}`,
   googleStatus: () => "/api/google/status",
   calendarToday: () => "/api/calendar/today",
@@ -189,6 +220,11 @@ export const authApi = {
     request<{ ok: true; role: "owner" | "partner" }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ pin }),
+    }).then(async (res) => {
+      // A different person signing in drops the last one's cached reads;
+      // wait for that, as LoginForm navigates away as soon as this resolves.
+      await noteSessionFrom(res, true);
+      return res;
     }),
   me: () =>
     request<{
@@ -198,8 +234,14 @@ export const authApi = {
       partnerName: string;
       ownerColor: string;
       partnerColor: string;
-    }>("/api/auth/me"),
-  logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
+      /** settings.tz: all-day dates are midnight here */
+      tz?: string;
+    }>(ME_URL),
+  logout: () =>
+    request<{ ok: true }>("/api/auth/logout", { method: "POST" }).then((res) => {
+      forgetSessionRole();
+      return res;
+    }),
   changePin: (pin: string) =>
     request<{ ok: true }>("/api/auth/change-pin", {
       method: "POST",
@@ -230,10 +272,12 @@ export const tasksApi = {
   update: (id: string, patch: TaskPatch) =>
     request<{ task: Task }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   remove: (id: string) => request<{ ok: true }>(`/api/tasks/${id}`, { method: "DELETE" }),
-  complete: (id: string, done: boolean) =>
-    request<{ task: Task; recurred: boolean }>(`/api/tasks/${id}/complete`, {
+  /** `expectedDueAt` is the due the caller was looking at: a repeat whose
+   *  due has moved on since (another device ticked it) is left alone. */
+  complete: (id: string, done: boolean, expectedDueAt?: string | null) =>
+    request<{ task: Task; recurred: boolean; changed: boolean }>(`/api/tasks/${id}/complete`, {
       method: "POST",
-      body: JSON.stringify({ done }),
+      body: JSON.stringify(expectedDueAt !== undefined ? { done, expectedDueAt } : { done }),
     }),
   reorder: (ids: string[]) =>
     request<{ ok: true }>("/api/tasks/reorder", { method: "POST", body: JSON.stringify({ ids }) }),
@@ -309,7 +353,14 @@ export const inboxApi = {
       body: JSON.stringify({ id }),
     }),
   triage: (id?: string) =>
-    request<{ items: InboxItem[]; kept?: number; dismissed?: number; updated?: number }>(
+    request<{
+      items: InboxItem[];
+      kept?: number;
+      dismissed?: number;
+      updated?: number;
+      failed?: number;
+      failure?: string;
+    }>(
       "/api/inbox/triage",
       {
         method: "POST",
@@ -356,7 +407,7 @@ export interface ChatStreamCallbacks {
   onToken?: (text: string) => void;
   onTool?: (label: string, status: "start" | "ok" | "error") => void;
   onDone?: (payload: ChatStreamDone) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, conversationId?: string) => void;
 }
 
 function isAbort(err: unknown): boolean {
@@ -433,7 +484,7 @@ export async function postChatStream(
         });
         break;
       case "error":
-        callbacks.onError?.(event.message);
+        callbacks.onError?.(event.message, event.conversationId);
         break;
     }
   };
@@ -559,9 +610,11 @@ export const jointApi = {
 };
 
 export const tripsApi = {
-  packing: () =>
+  /** `start` names the exact trip the card shows; without it the server picks the same way. */
+  packing: (start?: string) =>
     request<{ ok: true; noteId: string; added: number }>("/api/trips/packing", {
       method: "POST",
+      body: JSON.stringify(start ? { start } : {}),
       timeoutMs: 60_000,
     }),
 };
@@ -639,7 +692,7 @@ export const pushApi = {
       method: "POST",
       body: JSON.stringify({ subscription }),
     }),
-  test: () => request<{ ok: true }>("/api/push/test", { method: "POST" }),
+  test: () => request<{ ok: true; sent: number }>("/api/push/test", { method: "POST" }),
 };
 
 // ── Google / calendar ─────────────────────────────────────────────────────
@@ -681,4 +734,9 @@ export const nearbyApi = {
 
 export const logbookApi = {
   list: (days = 30) => request<{ days: LogbookDay[] }>(`/api/logbook${query({ days })}`),
+  remove: (id: string) =>
+    request<{ removed: boolean; task: Task | null; reopened: boolean }>(
+      `/api/logbook?id=${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
 };

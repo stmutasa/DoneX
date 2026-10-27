@@ -11,6 +11,8 @@ import {
   startOfISOWeek,
 } from "date-fns";
 import type { RecurrenceRule } from "@/lib/types";
+import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE } from "@/lib/quickTokens";
+import { localDateKey, localTimeKey } from "@/lib/utils";
 
 export function toDate(value: string | Date): Date {
   return typeof value === "string" ? new Date(value) : value;
@@ -23,6 +25,68 @@ export function isValidDate(d: Date): boolean {
 /** local "YYYY-MM-DD" */
 export function dateKey(value: string | Date = new Date()): string {
   return format(toDate(value), "yyyy-MM-dd");
+}
+
+// ── All-day dates ─────────────────────────────────────────────────────────
+// An all-day task is stored at midnight in the user's zone (settings.tz). Read
+// in a device zone west of that, the instant falls on the evening before, so
+// "today" shows as overdue. With a display zone set, all-day dates are read
+// as a day in that zone and compared with today there. Unset (the server, or
+// before the app knows the zone), everything reads in the device's zone.
+
+let displayTz: string | null = null;
+
+/** Set the zone all-day dates are read in, or null for the device's own. */
+export function setDisplayTimeZone(tz: string | null): void {
+  let next = tz || null;
+  if (next) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: next });
+    } catch {
+      next = null; // not a zone this runtime knows
+    }
+  }
+  displayTz = next;
+}
+
+/** Midnight in the display zone: how an all-day date is stored. */
+function isDisplayMidnight(d: Date): boolean {
+  return !!displayTz && localTimeKey(d, displayTz) === "00:00";
+}
+
+/**
+ * The calendar day ("YYYY-MM-DD") an all-day due date names. Stored values
+ * are midnight in the display zone; a value at this device's midnight (an
+ * older one, or a date built here) keeps the device's day.
+ */
+export function allDayKey(value: string | Date): string {
+  const d = toDate(value);
+  if (!displayTz || !isValidDate(d)) return dateKey(d);
+  if (isDisplayMidnight(d)) return localDateKey(d, displayTz);
+  if (d.getHours() === 0 && d.getMinutes() === 0) return dateKey(d);
+  return localDateKey(d, displayTz);
+}
+
+/** Today, in the zone all-day dates are read in. */
+function todayKeyForAllDay(): string {
+  return displayTz ? localDateKey(new Date(), displayTz) : dateKey();
+}
+
+/** Calendar days from today to an all-day date; negative once it has passed. */
+function allDayDiff(d: Date): number {
+  return differenceInCalendarDays(keyToDate(allDayKey(d)), keyToDate(todayKeyForAllDay()));
+}
+
+/** "Today" · "Tomorrow" · "Mon" · "Mon, Aug 12" · "Overdue · 2d" for a whole day. */
+function allDayLabel(d: Date): string {
+  const day = keyToDate(allDayKey(d));
+  const today = keyToDate(todayKeyForAllDay());
+  const diff = differenceInCalendarDays(day, today);
+  if (diff < 0) return `Overdue · ${-diff}d`;
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff < 7) return format(day, "EEE");
+  return isSameYear(day, today) ? format(day, "EEE, MMM d") : format(day, "MMM d, yyyy");
 }
 
 /** "3:00 PM" */
@@ -45,7 +109,7 @@ export function isOverdue(dueAt: string | null, allDay = false): boolean {
   if (!dueAt) return false;
   const d = toDate(dueAt);
   if (!isValidDate(d)) return false;
-  if (allDay) return differenceInCalendarDays(d, new Date()) < 0;
+  if (allDay) return allDayDiff(d) < 0;
   return d.getTime() < Date.now();
 }
 
@@ -56,10 +120,11 @@ export function dueLabel(dueAt: string | null, allDay = false): string {
   if (!dueAt) return "";
   const d = toDate(dueAt);
   if (!isValidDate(d)) return "";
+  if (allDay) return allDayLabel(d);
   const now = new Date();
   const dayDiff = differenceInCalendarDays(d, now);
 
-  if (isOverdue(dueAt, allDay)) {
+  if (isOverdue(dueAt)) {
     const behind = -dayDiff;
     if (behind >= 1) return `Overdue · ${behind}d`;
     const hours = Math.floor((now.getTime() - d.getTime()) / 3_600_000);
@@ -67,25 +132,30 @@ export function dueLabel(dueAt: string | null, allDay = false): string {
     return "Overdue";
   }
 
-  const time = allDay ? "" : ` ${timeLabel(d)}`;
+  const time = ` ${timeLabel(d)}`;
   if (dayDiff === 0) return `Today${time}`;
   if (dayDiff === 1) return `Tomorrow${time}`;
   if (dayDiff > 1 && dayDiff < 7) return `${format(d, "EEE")}${time}`;
   const base = isSameYear(d, now) ? format(d, "EEE, MMM d") : format(d, "MMM d, yyyy");
-  return `${base}${allDay ? "" : ` · ${timeLabel(d)}`}`;
+  return `${base} · ${timeLabel(d)}`;
 }
 
-/** "By Fri · 3d left" — chip for a live deadline (dueKind "by") task. */
-export function deadlineChip(dueAt: string | null): string {
+/**
+ * "By Fri · 3d left" — chip for a live deadline (dueKind "by") task. Without
+ * `allDay`, a value at midnight in the display zone counts as a whole day.
+ */
+export function deadlineChip(dueAt: string | null, allDay?: boolean): string {
   if (!dueAt) return "";
   const d = toDate(dueAt);
   if (!isValidDate(d)) return "";
-  const days = differenceInCalendarDays(d, new Date());
+  const whole = allDay ?? isDisplayMidnight(d);
+  const day = whole ? keyToDate(allDayKey(d)) : d;
+  const days = whole ? allDayDiff(d) : differenceInCalendarDays(d, new Date());
   if (days < 0) return `Overdue · ${-days}d`;
   if (days === 0) return "By today";
   if (days === 1) return "By tomorrow";
-  if (days < 7) return `By ${format(d, "EEE")} · ${days}d left`;
-  return `By ${format(d, "MMM d")} · ${days}d left`;
+  if (days < 7) return `By ${format(day, "EEE")} · ${days}d left`;
+  return `By ${format(day, "MMM d")} · ${days}d left`;
 }
 
 /** Section heading for a local date key: "Today" · "Tomorrow" · "Wed, Aug 13" */
@@ -245,24 +315,26 @@ const WHEN_PATTERNS: [RegExp, string][] = [
   [/\b(at\s*)?\d{1,2}(:\d{2})?\s?(am|pm)\b/i, "Timed"],
 ];
 
-/** Lightweight, display-only. The server does the real parsing. */
-export function parseQuickPreview(input: string): QuickPreview {
+/** Lightweight, display-only. The server does the real parsing, with the
+ *  same token grammar (quickTokens.ts), so the chips match what is saved. */
+export function parseQuickPreview(raw: string): QuickPreview {
+  const input = raw.normalize("NFC");
   const tags: string[] = [];
   let project: string | null = null;
   let priority: QuickPreview["priority"] = null;
 
   let title = input
-    .replace(/(^|\s)#([\p{L}\p{N}_-]+)/gu, (_m, _s, name: string) => {
-      project = name;
-      return " ";
-    })
-    .replace(/(^|\s)@([\p{L}\p{N}_-]+)/gu, (_m, _s, name: string) => {
+    .replace(TAG_RE, (_m, _s, name: string) => {
       tags.push(name);
       return " ";
     })
-    .replace(/(^|\s)!(p?)([1-3])\b/gi, (_m, _s, _p, level: string) => {
-      const n = Number(level);
-      priority = (n === 1 ? 3 : n === 2 ? 2 : 1) as QuickPreview["priority"];
+    .replace(PROJECT_RE, (_m, _s, quoted: string | undefined, word: string | undefined) => {
+      const name = (quoted ?? word ?? "").trim();
+      if (name && project === null) project = name;
+      return " ";
+    })
+    .replace(PRIORITY_RE, (_m, _s, token: string) => {
+      if (priority === null) priority = PRIORITY_MAP[token.toLowerCase()] ?? null;
       return " ";
     })
     .replace(/\s+/g, " ")

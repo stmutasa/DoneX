@@ -11,7 +11,7 @@ import { rotatingSample, rotationSlot } from "@/lib/rotate";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, SkeletonRows } from "@/components/ui/Misc";
-import { IconPlus } from "@/components/ui/icons";
+import { IconPlus, IconRefresh } from "@/components/ui/icons";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
@@ -22,11 +22,15 @@ import { TripCard } from "@/components/today/TripCard";
 const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export default function TodayPage() {
-  const { data, isLoading } = useSWR<{ tasks: Task[] }>(
+  const { data, error, isLoading, mutate } = useSWR<{ tasks: Task[] }>(
     keys.tasks({ view: "today", includeDone: true }),
     fetcher,
   );
-  const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
+  const {
+    data: anytimeData,
+    error: anytimeError,
+    mutate: mutateAnytime,
+  } = useSWR<{ tasks: Task[] }>(
     keys.tasks({ view: "anytime", excludeProjects: true }),
     fetcher,
   );
@@ -40,9 +44,22 @@ export default function TodayPage() {
 
   useEffect(() => setNow(new Date()), []);
 
-  // Advance the Anytime rotation while the app sits open on the home screen.
+  // Advance the Anytime rotation while the app sits open on the home screen,
+  // and keep the clock with it: the greeting, the date line, the briefing
+  // order and which project tasks count as urgent all read `now`. Within the
+  // same hour the old Date is kept, so a tick doesn't re-render the list.
   useEffect(() => {
-    const tick = () => setSlot(rotationSlot());
+    const tick = () => {
+      setSlot(rotationSlot());
+      setNow((prev) => {
+        const next = new Date();
+        return prev &&
+          prev.getHours() === next.getHours() &&
+          prev.toDateString() === next.toDateString()
+          ? prev
+          : next;
+      });
+    };
     const id = window.setInterval(tick, 60_000);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener("focus", tick);
@@ -86,6 +103,10 @@ export default function TodayPage() {
 
   const streak = stats?.streakDays ?? 0;
   const empty = !isLoading && overdue.length === 0 && today.length === 0;
+  // A failed load is not an empty day. A failed Anytime list alone only
+  // matters when it would otherwise read as "Nothing on today".
+  const failed =
+    (!!error && !data) || (!!anytimeError && !anytimeData && empty && done.length === 0);
 
   // The top of the page belongs to whatever is useful right now: the briefing
   // and the plan lead in the morning, then step aside for the list itself.
@@ -118,6 +139,23 @@ export default function TodayPage() {
 
       {isLoading ? (
         <SkeletonRows rows={4} />
+      ) : failed ? (
+        <EmptyState
+          emoji="📡"
+          title="Could not load your tasks"
+          message="Check your connection and try again."
+          action={
+            <Button
+              icon={<IconRefresh className="h-4 w-4" />}
+              onClick={() => {
+                void mutate();
+                void mutateAnytime();
+              }}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : empty && done.length === 0 && anytime.length === 0 ? (
         <EmptyState
           emoji="🌤️"

@@ -25,7 +25,9 @@ export function NoteEditor({
 }: {
   note: Note | null;
   open: boolean;
-  onClose: () => void;
+  /** Gets the note as the server last confirmed it, or null when that is
+   *  unknown (a failed save was discarded) or the note was deleted. */
+  onClose: (saved: Note | null) => void;
   onChanged: () => void;
 }) {
   const confirm = useConfirm();
@@ -41,6 +43,8 @@ export function NoteEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const savedRef = useRef<Note | null>(null);
+  const closingRef = useRef(false);
 
   useAutoGrow(contentRef, content, 420);
 
@@ -54,6 +58,7 @@ export function NoteEditor({
     setItemDraft("");
     setDirty(false);
     setSavedAt(note.updatedAt);
+    savedRef.current = note;
   }, [note, open]);
 
   /** Returns true only when the note actually reached the server. */
@@ -70,6 +75,7 @@ export function NoteEditor({
       });
       setSavedAt(saved.updatedAt);
       setDirty(false);
+      savedRef.current = saved;
       onChanged();
       toast.success("Note saved");
       return true;
@@ -84,17 +90,34 @@ export function NoteEditor({
   // Save puts the note away. A failed write keeps the editor open so what you
   // typed is still there to retry, rather than vanishing with the sheet.
   const saveAndClose = async () => {
-    if (await persist()) onClose();
+    if (await persist()) onClose(savedRef.current);
   };
 
   const touch = () => setDirty(true);
 
   // Deliberately no autosave-while-typing: a note only writes to the server
   // when you tap Save, or when you close it (so backing out never silently
-  // discards what you typed).
+  // discards what you typed). If that save fails, the sheet stays open unless
+  // you choose to throw the changes away.
   const close = async () => {
-    if (dirty) await persist();
-    onClose();
+    if (closingRef.current) return;
+    closingRef.current = true;
+    try {
+      if (dirty && !(await persist())) {
+        const discard = await confirm({
+          title: "Close without saving?",
+          message: "This note could not be saved. If you close it now, your changes are lost.",
+          confirmLabel: "Discard changes",
+          cancelLabel: "Keep editing",
+          destructive: true,
+        });
+        if (discard) onClose(null);
+        return;
+      }
+      onClose(savedRef.current);
+    } finally {
+      closingRef.current = false;
+    }
   };
 
   const addItem = () => {
@@ -108,10 +131,16 @@ export function NoteEditor({
   const onArchive = async () => {
     if (!note) return;
     try {
-      await notesApi.update(note.id, { archived: !note.archived });
+      // Unsaved edits travel with the archive, so archiving never drops them.
+      const { note: saved } = await notesApi.update(note.id, {
+        ...(dirty ? { title, content, items, color, pinned } : {}),
+        archived: !note.archived,
+      });
+      setDirty(false);
+      savedRef.current = saved;
       toast.success(note.archived ? "Note restored" : "Note archived");
       onChanged();
-      onClose();
+      onClose(saved);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not archive");
     }
@@ -130,7 +159,7 @@ export function NoteEditor({
       await notesApi.remove(note.id);
       toast.success("Note deleted");
       onChanged();
-      onClose();
+      onClose(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not delete");
     }
@@ -141,7 +170,7 @@ export function NoteEditor({
       open={open}
       onClose={close}
       size="lg"
-      title={note?.kind === "checklist" ? "Checklist" : "Note"}
+      title={`${note?.kind === "checklist" ? "Checklist" : "Note"}${note?.archived ? " · Archived" : ""}`}
       subtitle={
         saving
           ? "Saving…"
@@ -164,7 +193,7 @@ export function NoteEditor({
           >
             <IconPin className="h-[18px] w-[18px]" />
           </IconButton>
-          <IconButton label="Archive note" size="sm" onClick={onArchive}>
+          <IconButton label={note?.archived ? "Restore note" : "Archive note"} size="sm" onClick={onArchive}>
             <IconArchive className="h-[18px] w-[18px]" />
           </IconButton>
           <IconButton label="Delete note" size="sm" className="text-danger" onClick={onDelete}>

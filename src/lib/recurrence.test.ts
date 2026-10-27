@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { describeRecurrence, nextOccurrence } from "@/lib/recurrence";
-import { isoFromLocal, localTimeKey } from "@/lib/utils";
+import type { RecurrenceRule } from "@/lib/types";
+
+// The server runs in UTC, and the every-N-weeks bug only shows when the
+// process zone differs from the user's, so pin it before loading the code.
+process.env.TZ = "UTC";
+const { anchorRule, describeRecurrence, nextOccurrence } = await import("@/lib/recurrence");
+const { isoFromLocal, localDateKey, localTimeKey } = await import("@/lib/utils");
 
 const TZ = "America/New_York";
 
@@ -83,6 +88,135 @@ describe("nextOccurrence", () => {
     expect(localTimeKey(next, TZ)).toBe("09:00");
     const naive48h = new Date(from.getTime() + 48 * 3600_000);
     expect(next.toISOString()).not.toBe(naive48h.toISOString());
+  });
+});
+
+/** Follow a rule for `count` steps and return each local date. */
+function series(rule: RecurrenceRule, fromIso: string, count: number, tz = TZ): string[] {
+  const out: string[] = [];
+  let at = new Date(fromIso);
+  for (let i = 0; i < count; i++) {
+    at = nextOccurrence(rule, at, tz);
+    out.push(localDateKey(at, tz));
+  }
+  return out;
+}
+
+describe("monthly and yearly anchor day", () => {
+  it("returns to the 31st after a 30-day month", () => {
+    const rule: RecurrenceRule = { freq: "monthly", byMonthDay: 31 };
+    expect(series(rule, iso("2026-03-31", "09:00"), 3)).toEqual(["2026-04-30", "2026-05-31", "2026-06-30"]);
+  });
+
+  it("returns to the 31st after February", () => {
+    const rule = anchorRule({ freq: "monthly" }, new Date(iso("2026-01-31", "09:00")), TZ);
+    expect(rule).toEqual({ freq: "monthly", byMonthDay: 31 });
+    expect(series(rule, iso("2026-01-31", "09:00"), 4)).toEqual([
+      "2026-02-28",
+      "2026-03-31",
+      "2026-04-30",
+      "2026-05-31",
+    ]);
+  });
+
+  it("keeps a quarterly rule on the anchor day", () => {
+    const rule = anchorRule({ freq: "monthly", interval: 3 }, new Date(iso("2026-01-31", "09:00")), TZ);
+    expect(series(rule, iso("2026-01-31", "09:00"), 3)).toEqual(["2026-04-30", "2026-07-31", "2026-10-31"]);
+  });
+
+  it("keeps the time of day while it clamps", () => {
+    const rule: RecurrenceRule = { freq: "monthly", byMonthDay: 31 };
+    const next = nextOccurrence(rule, new Date(iso("2026-02-28", "21:15")), TZ);
+    expect(next.toISOString()).toBe(new Date(iso("2026-03-31", "21:15")).toISOString());
+  });
+
+  it("brings a Feb 29 yearly rule back to the 29th in the next leap year", () => {
+    const rule = anchorRule({ freq: "yearly" }, new Date(iso("2028-02-29", "08:00")), TZ);
+    expect(rule).toEqual({ freq: "yearly", byMonthDay: 29 });
+    expect(series(rule, iso("2028-02-29", "08:00"), 4)).toEqual([
+      "2029-02-28",
+      "2030-02-28",
+      "2031-02-28",
+      "2032-02-29",
+    ]);
+  });
+
+  it("lets a yearly date moved by hand win over a stale stored day", () => {
+    const rule: RecurrenceRule = { freq: "yearly", byMonthDay: 29 };
+    expect(series(rule, iso("2027-03-05", "08:00"), 1)).toEqual(["2028-03-05"]);
+    expect(anchorRule(rule, new Date(iso("2027-03-05", "08:00")), TZ)).toEqual({
+      freq: "yearly",
+      byMonthDay: 5,
+    });
+  });
+
+  it("treats only a stored 29 as clamped onto Feb 28", () => {
+    // A day of 31 on Feb 28 means the date was moved there by hand.
+    const moved: RecurrenceRule = { freq: "yearly", byMonthDay: 31 };
+    expect(series(moved, iso("2027-02-28", "08:00"), 2)).toEqual(["2028-02-28", "2029-02-28"]);
+    expect(anchorRule(moved, new Date(iso("2027-02-28", "08:00")), TZ).byMonthDay).toBe(28);
+    // Feb 28 in a leap year is a real choice too, not a clamp.
+    const leap: RecurrenceRule = { freq: "yearly", byMonthDay: 29 };
+    expect(series(leap, iso("2028-02-28", "08:00"), 1)).toEqual(["2029-02-28"]);
+  });
+
+  it("reads the anchor day in the user's zone", () => {
+    // 11:30 PM on Jan 31 in New York is already Feb 1 in UTC.
+    const rule = anchorRule({ freq: "monthly" }, new Date(iso("2026-01-31", "23:30")), TZ);
+    expect(rule.byMonthDay).toBe(31);
+  });
+
+  it("leaves rules with nothing to pin untouched", () => {
+    const from = new Date(iso("2026-01-31", "09:00"));
+    const daily: RecurrenceRule = { freq: "daily" };
+    const weekly: RecurrenceRule = { freq: "weekly", byWeekday: [1] };
+    const monthly: RecurrenceRule = { freq: "monthly", byMonthDay: 15 };
+    const yearly: RecurrenceRule = { freq: "yearly", byMonthDay: 31 };
+    expect(anchorRule(daily, from, TZ)).toBe(daily);
+    expect(anchorRule(weekly, from, TZ)).toBe(weekly);
+    expect(anchorRule(monthly, from, TZ)).toBe(monthly);
+    expect(anchorRule(yearly, from, TZ)).toBe(yearly);
+  });
+});
+
+describe("every-N-weeks rules count weeks in the user's zone", () => {
+  // The server runs in UTC. These evening times fall on the next UTC day.
+  it("skips the off week for a Saturday evening start", () => {
+    const rule: RecurrenceRule = { freq: "weekly", interval: 2, byWeekday: [0, 6] };
+    const next = nextOccurrence(rule, new Date(iso("2026-10-24", "21:00")), TZ);
+    expect(next.toISOString()).toBe(new Date(iso("2026-11-01", "21:00")).toISOString());
+  });
+
+  it("keeps a two-week gap across the end of DST", () => {
+    const rule: RecurrenceRule = { freq: "weekly", interval: 2, byWeekday: [6] };
+    const next = nextOccurrence(rule, new Date(iso("2026-10-24", "19:30")), TZ);
+    expect(next.toISOString()).toBe(new Date(iso("2026-11-07", "19:30")).toISOString());
+  });
+
+  it("keeps a two-week gap across the start of DST", () => {
+    const rule: RecurrenceRule = { freq: "weekly", interval: 2, byWeekday: [6] };
+    const next = nextOccurrence(rule, new Date(iso("2026-03-07", "19:30")), TZ);
+    expect(next.toISOString()).toBe(new Date(iso("2026-03-21", "19:30")).toISOString());
+  });
+
+  it("stays in the on week for the next day", () => {
+    const rule: RecurrenceRule = { freq: "weekly", interval: 2, byWeekday: [5, 6] };
+    expect(series(rule, iso("2026-10-02", "21:00"), 4)).toEqual([
+      "2026-10-03",
+      "2026-10-16",
+      "2026-10-17",
+      "2026-10-30",
+    ]);
+  });
+
+  it("works for zones ahead of UTC", () => {
+    // 8 AM Sunday in Tokyo is still Saturday in UTC.
+    const tokyo = "Asia/Tokyo";
+    const rule: RecurrenceRule = { freq: "weekly", interval: 2, byWeekday: [0, 1] };
+    const from = new Date(isoFromLocal("2026-10-25", "08:00", tokyo));
+    const next = nextOccurrence(rule, from, tokyo);
+    expect(next.toISOString()).toBe(new Date(isoFromLocal("2026-10-26", "08:00", tokyo)).toISOString());
+    expect(series(rule, from.toISOString(), 3, tokyo)).toEqual(["2026-10-26", "2026-11-08", "2026-11-09"]);
   });
 });
 

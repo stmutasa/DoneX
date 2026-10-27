@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "crypto";
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { sessionsRepo, settingsRepo } from "@/lib/db/repos";
+import { pushRepo, sessionsRepo, settingsRepo } from "@/lib/db/repos";
 
 export const SESSION_COOKIE = "donex_session";
 
@@ -28,17 +28,169 @@ export function verifyPin(pin: string, stored: string): boolean {
 }
 
 // ── Login rate limiting (in-memory; single-process app) ────────────────────
+//
+// Only wrong PINs count. Each miss counts against:
+//  - its client: five free misses, then a lockout that doubles with every
+//    further miss (1 min, 2, 4 … up to an hour). Only the owner's PIN clears
+//    the streak, since the partner's must not buy more guesses at the
+//    owner's; otherwise it fades after a day without misses;
+//  - everyone except the owner's known devices, together: at most 20 misses
+//    in any 24 hours, so spreading guesses over many addresses buys nothing.
+// A browser that has signed in as the owner carries a signed device cookie
+// and is held only to its own limit, so a stranger working through PINs
+// can't lock the owner out of a device they already use.
 
-const attempts: number[] = [];
+const FREE_MISSES = 5;
+const FIRST_LOCK_MS = 60_000;
+const MAX_LOCK_MS = 60 * 60_000;
+const STRANGER_MISSES_PER_DAY = 20;
+const DAY_MS = 24 * 60 * 60_000;
 
-export function loginRateLimited(): boolean {
-  const now = Date.now();
-  while (attempts.length && now - attempts[0] > 60_000) attempts.shift();
-  return attempts.length >= 8;
+/** Who is trying to sign in: one of the owner's devices, or else an address. */
+export interface LoginClient {
+  key: string;
+  /** a browser that has signed in as the owner */
+  trusted: boolean;
 }
 
-export function recordLoginAttempt(): void {
-  attempts.push(Date.now());
+export type LoginAttempt =
+  | { retryAfter: number }
+  | {
+      /** Records who the PIN signed in as (null for a miss). True when the
+       *  owner should hear about it: this miss just closed sign-in to all
+       *  but the owner's known devices. */
+      settle: (signedInAs: "owner" | "partner" | null) => boolean;
+    };
+
+const misses = new Map<string, { count: number; lastAt: number }>();
+let strangerMisses: number[] = [];
+let lastStrangerAlertAt = -Infinity;
+
+function lockMs(count: number): number {
+  if (count < FREE_MISSES) return 0;
+  return Math.min(FIRST_LOCK_MS * 2 ** (count - FREE_MISSES), MAX_LOCK_MS);
+}
+
+/**
+ * Claims one PIN check for `client`, or says how many seconds to wait. The
+ * check and the count are one synchronous step: the attempt counts as a miss
+ * straight away and a right PIN takes it back in `settle`, so a burst of
+ * parallel requests can't all pass on the same stale count.
+ */
+export function claimLoginAttempt(client: LoginClient, now = Date.now()): LoginAttempt {
+  strangerMisses = strangerMisses.filter((t) => now - t < DAY_MS);
+  if (misses.size > 500) {
+    for (const [key, m] of misses) if (now - m.lastAt >= DAY_MS) misses.delete(key);
+  }
+
+  // A day without a miss forgives the streak.
+  const prev = misses.get(client.key);
+  const count = prev && now - prev.lastAt < DAY_MS ? prev.count : 0;
+  let until = prev && count ? prev.lastAt + lockMs(count) : 0;
+  if (!client.trusted && strangerMisses.length >= STRANGER_MISSES_PER_DAY) {
+    until = Math.max(until, strangerMisses[0] + DAY_MS);
+  }
+  if (until > now) return { retryAfter: Math.ceil((until - now) / 1000) };
+
+  misses.set(client.key, { count: count + 1, lastAt: now });
+  if (!client.trusted) strangerMisses.push(now);
+  const closesStrangers = !client.trusted && strangerMisses.length >= STRANGER_MISSES_PER_DAY;
+
+  return {
+    settle(signedInAs) {
+      if (signedInAs) {
+        // A right PIN isn't a miss, but only the owner's wipes earlier ones.
+        if (signedInAs === "owner" || !prev || count === 0) misses.delete(client.key);
+        else misses.set(client.key, { count, lastAt: prev.lastAt });
+        if (!client.trusted) {
+          const i = strangerMisses.lastIndexOf(now);
+          if (i >= 0) strangerMisses.splice(i, 1);
+        }
+        return false;
+      }
+      if (!closesStrangers || now - lastStrangerAlertAt < DAY_MS) return false;
+      lastStrangerAlertAt = now;
+      return true;
+    },
+  };
+}
+
+// Test seam: forget every recorded miss.
+export function __resetLoginLimiterForTests(): void {
+  misses.clear();
+  strangerMisses = [];
+  lastStrangerAlertAt = -Infinity;
+}
+
+// ── The owner's devices ────────────────────────────────────────────────────
+
+/** Marks a browser that has signed in as the owner (see the login limiter). */
+export const DEVICE_COOKIE = "donex_device";
+const DEVICE_SECRET_KEY = "auth.deviceSecret";
+
+/** Signs device cookies. Random, made once and kept, so a PIN change doesn't
+ *  turn the owner's own signed-out devices into strangers. */
+function deviceSecret(): string {
+  let secret = settingsRepo.getKV(DEVICE_SECRET_KEY);
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString("hex");
+    settingsRepo.setKV(DEVICE_SECRET_KEY, secret);
+  }
+  return secret;
+}
+
+function signDevice(payload: string): string {
+  return crypto.createHmac("sha256", deviceSecret()).update(payload).digest("hex");
+}
+
+/** A fresh cookie value for one of the owner's devices: `id.owner.signature`. */
+export function mintOwnerDeviceCookie(): string {
+  const id = crypto.randomBytes(16).toString("hex");
+  return `${id}.owner.${signDevice(`${id}.owner`)}`;
+}
+
+/** The id inside a genuine owner-device cookie, else null. */
+function ownerDeviceId(value: string | undefined): string | null {
+  const [id, role, sig, ...rest] = (value ?? "").split(".");
+  if (!id || role !== "owner" || !sig || rest.length) return null;
+  const expected = Buffer.from(signDevice(`${id}.${role}`));
+  const given = Buffer.from(sig);
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given) ? id : null;
+}
+
+/**
+ * Who is trying to sign in. Railway's edge drops any X-Forwarded-For a client
+ * sends and puts the client's address first, so the address is X-Real-IP when
+ * set, else the leftmost forwarded entry. A host that passes forged headers
+ * through only hands out fresh per-client streaks; the shared cap still holds.
+ */
+export function loginClient(
+  deviceCookie: string | undefined,
+  forwardedFor: string | null,
+  realIp: string | null = null,
+): LoginClient {
+  const id = ownerDeviceId(deviceCookie);
+  if (id) return { key: `device:${id}`, trusted: true };
+  const first = (forwardedFor ?? "").split(",")[0]?.trim();
+  return { key: `ip:${realIp?.trim() || first || "unknown"}`, trusted: false };
+}
+
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    maxAge: Math.floor(sessionsRepo.maxAgeMs / 1000),
+    path: "/",
+  };
+}
+
+/** Marks this browser as one of the owner's; a no-op when it already is.
+ *  Only ever for an owner session. */
+export async function rememberOwnerDevice(): Promise<void> {
+  const jar = await cookies();
+  if (ownerDeviceId(jar.get(DEVICE_COOKIE)?.value)) return;
+  jar.set(DEVICE_COOKIE, mintOwnerDeviceCookie(), cookieOptions());
 }
 
 // ── Session helpers ────────────────────────────────────────────────────────
@@ -47,20 +199,40 @@ export async function createSession(role: "owner" | "partner" = "owner"): Promis
   const h = await headers();
   const token = sessionsRepo.create(h.get("user-agent") ?? "", role);
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 60 * 60 * 24 * 400,
-    path: "/",
-  });
+  jar.set(SESSION_COOKIE, token, cookieOptions());
+  // Only the owner's sign-in makes a known device. The partner's makes this
+  // browser a stranger again, so her guesses at the owner's PIN share the cap.
+  if (role === "owner") await rememberOwnerDevice();
+  else jar.delete(DEVICE_COOKIE);
 }
 
+/** Ends this browser's session, and pushes to the device it signed up. */
 export async function destroySession(): Promise<void> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  if (token) sessionsRepo.destroy(token);
+  if (token) {
+    sessionsRepo.destroy(token);
+    pushRepo.pruneSignedOut();
+  }
   jar.delete(SESSION_COOKIE);
+}
+
+/**
+ * Signs out every session of `role` except `keepToken`, and stops pushes to
+ * the devices those sessions signed up. A PIN change uses it so that whoever
+ * knew the old PIN is locked out at once.
+ */
+export function endSessions(role: "owner" | "partner", keepToken?: string): void {
+  sessionsRepo.destroyRole(role, keepToken);
+  pushRepo.pruneSignedOut();
+}
+
+/** The signed-in session's token and role, or null when signed out. */
+export async function currentSession(): Promise<{ token: string; role: "owner" | "partner" } | null> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  const role = token ? sessionsRepo.roleOf(token) : null;
+  return token && role ? { token, role } : null;
 }
 
 export async function isAuthed(): Promise<boolean> {

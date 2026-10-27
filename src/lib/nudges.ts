@@ -11,6 +11,7 @@
  * Pure and client-safe.
  */
 import type { SessionRole, Task } from "@/lib/types";
+import { calendarDaysUntil, runtimeZone } from "@/lib/tzLabels";
 
 /** At most this many named in one nudge; the rest become "and N more". */
 const NAMED = 2;
@@ -28,24 +29,29 @@ export interface NudgeItem {
   daysLate: number;
 }
 
-/** Past its moment — for an all-day task, past the end of that day. */
-export function pastDue(task: Task, now: Date): boolean {
+/**
+ * Past its moment — for an all-day task, past the end of that day in `tz`.
+ * The server runs in UTC, so the zone has to be the user's, not the
+ * process's; without one, the process's zone is used.
+ */
+export function pastDue(task: Task, now: Date, tz: string = runtimeZone()): boolean {
   if (!task.dueAt) return false;
   const due = new Date(task.dueAt);
   if (Number.isNaN(due.getTime())) return false;
   if (task.allDay) {
     // An all-day task is late once the calendar day it names has ended.
-    const endOfDay = new Date(due);
-    endOfDay.setHours(23, 59, 59, 999);
-    return endOfDay.getTime() < now.getTime();
+    return calendarDaysUntil(due, tz, now) < 0;
   }
   return due.getTime() < now.getTime();
 }
 
-/** Whole days between the deadline and now, floored; 0 means later today. */
-export function daysLate(dueAt: string, now: Date): number {
-  const gap = now.getTime() - new Date(dueAt).getTime();
-  return gap <= 0 ? 0 : Math.floor(gap / 86_400_000);
+/**
+ * Calendar days, in `tz`, from the deadline's day to today; 0 means it was
+ * due earlier today, 1 yesterday. Never negative.
+ */
+export function daysLate(dueAt: string, now: Date, tz: string = runtimeZone()): number {
+  if (Number.isNaN(new Date(dueAt).getTime())) return 0;
+  return Math.max(0, -calendarDaysUntil(dueAt, tz, now));
 }
 
 /** Genuinely handed to someone else — tagging yourself is just a note. */
@@ -59,14 +65,14 @@ function delegated(task: Task): boolean {
   );
 }
 
-function toItem(task: Task, now: Date): NudgeItem {
+function toItem(task: Task, now: Date, tz: string): NudgeItem {
   return {
     id: task.id,
     title: task.title,
     dueAt: task.dueAt as string,
     assignedTo: task.assignedTo as SessionRole,
     createdBy: task.createdBy,
-    daysLate: daysLate(task.dueAt as string, now),
+    daysLate: daysLate(task.dueAt as string, now, tz),
   };
 }
 
@@ -81,17 +87,19 @@ export function nudgesFor(args: {
   now: Date;
   /** the deadline each task was last nudged about, by task id */
   nudgedDueAt: (id: string) => string | null;
+  /** the user's zone (settings.tz), which decides when a day has ended */
+  tz?: string;
 }): NudgeItem[] {
-  const { tasks, role, now, nudgedDueAt } = args;
+  const { tasks, role, now, nudgedDueAt, tz = runtimeZone() } = args;
   return tasks
     .filter(
       (t) =>
         delegated(t) &&
         t.assignedTo === role &&
-        pastDue(t, now) &&
+        pastDue(t, now, tz) &&
         nudgedDueAt(t.id) !== t.dueAt,
     )
-    .map((t) => toItem(t, now))
+    .map((t) => toItem(t, now, tz))
     .filter((i) => i.daysLate <= STALE_AFTER_DAYS)
     .sort((a, b) => b.daysLate - a.daysLate);
 }
@@ -103,10 +111,15 @@ export function nudgesFor(args: {
  * — everything listed here is something the other person has actually been
  * told about once, which is what makes it fair to mention.
  */
-export function waitingOn(tasks: Task[], role: SessionRole, now: Date): NudgeItem[] {
+export function waitingOn(
+  tasks: Task[],
+  role: SessionRole,
+  now: Date,
+  tz: string = runtimeZone(),
+): NudgeItem[] {
   return tasks
-    .filter((t) => delegated(t) && t.createdBy === role && pastDue(t, now))
-    .map((t) => toItem(t, now))
+    .filter((t) => delegated(t) && t.createdBy === role && pastDue(t, now, tz))
+    .map((t) => toItem(t, now, tz))
     .filter((i) => i.daysLate <= STALE_AFTER_DAYS)
     .sort((a, b) => b.daysLate - a.daysLate);
 }

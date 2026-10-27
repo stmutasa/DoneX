@@ -138,6 +138,8 @@ export function useSpeechRecognition(): SpeechRecognitionApi {
   const start = useCallback(() => {
     const rec = recRef.current;
     if (!rec || activeRef.current) return;
+    // Each attempt starts clean; an old network blip mustn't fail this one.
+    setError(null);
     try {
       rec.start();
       activeRef.current = true;

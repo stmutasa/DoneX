@@ -41,6 +41,35 @@ function unlockScroll() {
   if (lockCount === 0) document.body.style.overflow = "";
 }
 
+// Escape closes only the topmost sheet: cancelling a Confirm must not also
+// close the TaskEditor beneath it. Open sheets join a stack in the order they
+// opened, and one shared listener closes the top one. When the top one goes,
+// focus moves to the sheet now on top instead of dropping to the page behind.
+interface StackEntry {
+  close: { current: () => void };
+  panel: { current: HTMLElement | null };
+}
+const sheetStack: StackEntry[] = [];
+function onEscapeKey(e: KeyboardEvent) {
+  if (e.key !== "Escape" || e.defaultPrevented) return;
+  sheetStack[sheetStack.length - 1]?.close.current();
+}
+function pushSheet(entry: StackEntry) {
+  if (sheetStack.length === 0) document.addEventListener("keydown", onEscapeKey);
+  sheetStack.push(entry);
+}
+function popSheet(entry: StackEntry) {
+  const i = sheetStack.lastIndexOf(entry);
+  if (i < 0) return;
+  const wasTop = i === sheetStack.length - 1;
+  sheetStack.splice(i, 1);
+  if (sheetStack.length === 0) {
+    document.removeEventListener("keydown", onEscapeKey);
+  } else if (wasTop) {
+    sheetStack[sheetStack.length - 1].panel.current?.focus({ preventScroll: true });
+  }
+}
+
 /** How long the close animation is given before the node is torn out. */
 const EXIT_MS = 320;
 
@@ -81,14 +110,12 @@ export function Sheet({
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCloseRef.current();
-    };
-    document.addEventListener("keydown", onKey);
+    const entry: StackEntry = { close: onCloseRef, panel: panelRef };
+    pushSheet(entry);
     lockScroll();
     const t = window.setTimeout(() => panelRef.current?.focus(), 40);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      popSheet(entry);
       unlockScroll();
       window.clearTimeout(t);
     };

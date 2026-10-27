@@ -184,6 +184,7 @@ async function stream({
       id: b.id || `toolu_${index}`,
       name: b.name,
       args: b.json || "{}",
+      origin: cfg.kind,
     }));
 
   return { text, toolCalls };

@@ -12,10 +12,13 @@
  */
 import "server-only";
 import { explainFeedFailure } from "@/lib/calendarLinks";
+import { settingsRepo } from "@/lib/db/repos";
 import { GoogleCalendarError, listEventsRange } from "@/lib/google/calendar";
 import { IcsFetchError, icsEventsBetween } from "@/lib/ics";
 import { isGoogleConnected } from "@/lib/google/oauth";
-import type { CalendarEvent, JointSettings } from "@/lib/types";
+import { detectTrips, type Trip } from "@/lib/trips";
+import type { AppSettings, CalendarEvent, JointSettings } from "@/lib/types";
+import { addDaysToDateKey, isoFromLocal, localDateKey } from "@/lib/utils";
 
 export type FeedSource = "ics" | "google-shared" | "google-own" | "none";
 
@@ -29,13 +32,20 @@ export interface FeedResult {
 interface Window {
   fromIso: string;
   toIso: string;
+  /** the account's zone, which bounds all-day events; read from settings when omitted */
+  tz?: string;
 }
 
 const EMPTY: FeedResult = { events: [], source: "none", warning: null };
 
-async function fromIcs(url: string, who: string, { fromIso, toIso }: Window): Promise<FeedResult> {
+async function fromIcs(url: string, who: string, { fromIso, toIso, tz }: Window): Promise<FeedResult> {
   try {
-    const events = await icsEventsBetween({ url, from: new Date(fromIso), to: new Date(toIso) });
+    const events = await icsEventsBetween({
+      url,
+      from: new Date(fromIso),
+      to: new Date(toIso),
+      tz: tz ?? settingsRepo.getApp().tz,
+    });
     return { events, source: "ics", warning: null };
   } catch (err) {
     const status = err instanceof IcsFetchError ? err.status : 0;
@@ -93,4 +103,27 @@ export async function partnerEvents(joint: JointSettings, window: Window): Promi
   if (joint.partnerIcsUrl) return fromIcs(joint.partnerIcsUrl, who, window);
   if (joint.partnerGoogleId) return fromSharedGoogle(joint.partnerGoogleId, who, window);
   return EMPTY;
+}
+
+/** Far enough back that a long trip still starts at its outbound flight. */
+const TRIP_LOOKBACK_DAYS = 30;
+const TRIP_LOOKAHEAD_DAYS = 45;
+
+/**
+ * The owner's trips over one window and one reading of the calendar. Every
+ * reader of the owner's travel should come through here, so the Today card,
+ * the partner's banner and the packing list agree on where you are.
+ */
+export async function ownerTrips(
+  settings: AppSettings,
+  now: Date = new Date(),
+): Promise<{ trips: Trip[]; warning: string | null }> {
+  const tz = settings.tz;
+  const todayKey = localDateKey(now, tz);
+  const { events, warning } = await ownerEvents(settings.joint, {
+    fromIso: isoFromLocal(addDaysToDateKey(todayKey, -TRIP_LOOKBACK_DAYS), "00:00", tz),
+    toIso: isoFromLocal(addDaysToDateKey(todayKey, TRIP_LOOKAHEAD_DAYS), "00:00", tz),
+    tz,
+  });
+  return { trips: detectTrips(events, { tz, now }), warning };
 }

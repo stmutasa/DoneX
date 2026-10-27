@@ -8,6 +8,9 @@ import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { ConfirmProvider } from "@/components/ui/Confirm";
 import { ThemeProvider } from "./ThemeProvider";
 import { UpdateBanner } from "./UpdateBanner";
+// Capture the install prompt app-wide: browsers fire it once per page load,
+// usually long before Settings (where the Install button lives) is opened.
+import "@/hooks/useInstallPrompt";
 
 /** Quietly expected statuses that pages handle with their own inline UI.
  *  403 = a partner session touching an owner surface — by design, not news. */

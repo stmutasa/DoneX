@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { motion } from "framer-motion";
 import { ApiError, assistantApi, fetcher, keys } from "@/lib/api";
@@ -15,13 +16,19 @@ import { StreakRing } from "@/components/review/StreakRing";
 import { WeekChart } from "@/components/review/WeekChart";
 
 export default function ReviewPage() {
+  // The weekly push names the week it was about, which by the time it is
+  // tapped may no longer be this one.
+  const weekParam = useSearchParams()?.get("week") ?? "";
+  const linkedWeek = /^\d{4}-W\d{2}$/.test(weekParam) ? weekParam : null;
+  const reviewKey = linkedWeek ? `${keys.review()}?week=${linkedWeek}` : keys.review();
+
   const { data: stats, isLoading: statsLoading } = useSWR<StatsSummary>(keys.stats(), fetcher);
   const {
     data: reviewData,
     error: reviewError,
     isLoading: reviewLoading,
     mutate: mutateReview,
-  } = useSWR<{ review: WeeklyReview }>(keys.review(), fetcher);
+  } = useSWR<{ review: WeeklyReview }>(reviewKey, fetcher);
 
   const [dismissed, setDismissed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,7 +41,9 @@ export default function ReviewPage() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const next = await assistantApi.review(true);
+      const next = linkedWeek
+        ? await fetcher<{ review: WeeklyReview }>(`${keys.review(true)}&week=${linkedWeek}`)
+        : await assistantApi.review(true);
       await mutateReview(next, { revalidate: false });
     } catch {
       await mutateReview();

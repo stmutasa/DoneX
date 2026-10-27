@@ -12,6 +12,8 @@ export const CALL_TIMEOUT_MS = 90_000;
 
 export const NOT_CONFIGURED = "No AI provider configured — add its API key in Railway → Variables.";
 export const NO_MODEL = "No model selected — choose one in Settings.";
+/** An empty reply cut off at the token cap: the budget went on thinking. */
+export const OUT_OF_TOKENS = "The model ran out of tokens before it answered.";
 
 export interface ProviderConfig {
   kind: AIProviderKind;
@@ -93,6 +95,14 @@ export interface LlmToolCall {
   name: string;
   /** raw JSON argument string as streamed by the provider */
   args: string;
+  /**
+   * Provider data that has to go back with the call on the next request —
+   * Gemini's thought signature, sent as `extra_content`. Opaque; echoed as is,
+   * and only to `origin`.
+   */
+  extraContent?: Record<string, unknown>;
+  /** the provider that made this call */
+  origin?: AIProviderKind;
 }
 
 export interface LlmToolResult {
@@ -162,6 +172,8 @@ export function cleanProviderMessage(status: number, raw: string): string {
 }
 
 function pickMessage(value: unknown): string | null {
+  // Gemini's OpenAI-compatible endpoint wraps its error in a one-item array.
+  if (Array.isArray(value)) return value.length > 0 ? pickMessage(value[0]) : null;
   const rec = asRecord(value);
   if (!rec) return null;
   const err = rec.error;

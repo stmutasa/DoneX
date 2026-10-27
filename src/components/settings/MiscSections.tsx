@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { authApi, dataApi } from "@/lib/api";
+import { signOutThisDevice } from "@/lib/signOut";
 import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
@@ -22,7 +22,6 @@ import { SettingsCard, Divider, useSettingsPatch, type SectionProps } from "./co
 
 export function ProfileSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
-  const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
   const [detected, setDetected] = useState("");
@@ -48,7 +47,7 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
     setSavingPin(true);
     try {
       await authApi.changePin(pin);
-      toast.success("PIN updated — use it on every device from now on");
+      toast.success("PIN updated — your other devices are signed out");
       setPin("");
       setPinConfirm("");
       setPinOpen(false);
@@ -67,9 +66,7 @@ export function ProfileSection({ settings, mutate }: SectionProps) {
     });
     if (!ok) return;
     try {
-      await authApi.logout();
-      router.push("/login");
-      router.refresh();
+      await signOutThisDevice();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not sign out");
     }
@@ -199,6 +196,9 @@ export function DataSection() {
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
+    // Clear the picker now, not after the import: a cancelled confirm would
+    // otherwise leave it set, and picking the same file again fires nothing.
+    if (fileRef.current) fileRef.current.value = "";
     const ok = await confirm({
       title: "Import this backup?",
       message: "Existing items with the same ids will be overwritten.",
@@ -214,7 +214,6 @@ export function DataSection() {
       toast.error(err instanceof Error ? err.message : "Import failed");
     } finally {
       setImporting(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
   };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_HORIZON_DAYS,
+  normalizeLocalDue,
   readBasis,
   settleDeadline,
   settlePriority,
@@ -33,6 +34,57 @@ describe("settleDeadline — a date the sender gave", () => {
 
   it("is kept even when it is months away", () => {
     expect(settle({ dueAtLocal: "2027-03-01", basis: "stated" }).dueAtLocal).toBe("2027-03-01");
+  });
+
+  it("reads a 12-hour time instead of dropping its am or pm", () => {
+    const stated = (dueAtLocal: string) => settle({ dueAtLocal, basis: "stated" }).dueAtLocal;
+    expect(stated("2026-10-30 5:00 PM")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 5pm")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 at 9:30 a.m.")).toBe("2026-10-30 09:30");
+    expect(stated("2026-10-30 12am")).toBe("2026-10-30 00:00");
+    expect(stated("2026-10-30 12:15 pm")).toBe("2026-10-30 12:15");
+    expect(stated("2026-10-30 5:00:00 PM")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 05:00:00 pm")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 5:00 in the afternoon")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 7 in the morning")).toBe("2026-10-30 07:00");
+  });
+
+  it("reads a time after 'by', 'at' or '@', and noon", () => {
+    const stated = (dueAtLocal: string) => settle({ dueAtLocal, basis: "stated" }).dueAtLocal;
+    expect(stated("2026-10-30 by 5pm")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 before 9:30")).toBe("2026-10-30 09:30");
+    expect(stated("2026-10-30 @ 5pm")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30 at noon")).toBe("2026-10-30 12:00");
+  });
+
+  it("comes out in the one shape the task parser reads", () => {
+    const stated = (dueAtLocal: string) => settle({ dueAtLocal, basis: "stated" }).dueAtLocal;
+    expect(stated("2026-10-30T17:00")).toBe("2026-10-30 17:00");
+    expect(stated("2026-10-30T07:05:00")).toBe("2026-10-30 07:05");
+    expect(stated(" 2026-10-30 9:00 ")).toBe("2026-10-30 09:00");
+  });
+
+  it("keeps just the date when what follows is not a time", () => {
+    const stated = (dueAtLocal: string) => settle({ dueAtLocal, basis: "stated" });
+    expect(stated("2026-10-30 EOD").dueAtLocal).toBe("2026-10-30");
+    expect(stated("2026-10-30 (Fri)").dueAtLocal).toBe("2026-10-30");
+    expect(stated("2026-10-30 25:00").dueAtLocal).toBe("2026-10-30");
+    expect(stated("2026-10-30 2 May").dueAtLocal).toBe("2026-10-30");
+    expect(stated("2026-10-30 123").dueAtLocal).toBe("2026-10-30");
+    expect(stated("2026-10-30 EOD").inferred).toBe(false);
+  });
+});
+
+describe("normalizeLocalDue", () => {
+  it("is null without a real date at the start", () => {
+    expect(normalizeLocalDue("")).toBeNull();
+    expect(normalizeLocalDue("Friday 5pm")).toBeNull();
+    expect(normalizeLocalDue("2026-02-31 10:00")).toBeNull();
+  });
+
+  it("passes the asked-for shapes through", () => {
+    expect(normalizeLocalDue("2026-10-30")).toBe("2026-10-30");
+    expect(normalizeLocalDue("2026-10-30 14:30")).toBe("2026-10-30 14:30");
   });
 });
 

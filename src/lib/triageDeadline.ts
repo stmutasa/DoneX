@@ -28,6 +28,51 @@ export interface SettledDeadline {
   why: string;
 }
 
+// What may sit between the date and its time: "T", or a space with an
+// optional "at" / "by" / "before" / "until" / "@".
+const TIME_LEAD = String.raw`^(?:\s*T\s*|,?\s+(?:(?:at|by|before|until)\s+|@\s*)?)`;
+// "5", "5:00", "17:00:00", "07:05:00.000" …
+const CLOCK_RE = new RegExp(String.raw`${TIME_LEAD}(\d{1,2})(?::(\d{2}))?(?::\d{2}(?:\.\d+)?)?`, "iu");
+// … then perhaps "pm", "a.m.", "in the afternoon".
+const MERIDIEM_RE = /^\s*(?:([ap])\.?\s*m\.?(?!\p{L})|in\s+the\s+(morning|afternoon|evening)(?!\p{L}))/iu;
+const NOON_RE = new RegExp(String.raw`${TIME_LEAD}noon(?!\p{L})`, "iu");
+
+/**
+ * A local due value as exactly "YYYY-MM-DD HH:mm" or "YYYY-MM-DD", or null
+ * when it does not start with a real date. Besides the asked-for shape it
+ * reads the ones a model drifts into ("2026-10-30T17:00", "2026-10-30 5:00 PM",
+ * "2026-10-30 5pm"), and keeps just the date when what follows is not a time
+ * ("2026-10-30 EOD", "2026-10-30 (Fri)"), so the result always parses.
+ */
+export function normalizeLocalDue(raw: string): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})([\s\S]*)$/.exec(raw.trim());
+  if (!m || !validKey(m[1])) return null;
+  const time = readTime(m[2]);
+  return time ? `${m[1]} ${time}` : m[1];
+}
+
+function readTime(rest: string): string | null {
+  if (NOON_RE.test(rest)) return "12:00";
+  const clock = CLOCK_RE.exec(rest);
+  if (!clock) return null;
+  const after = rest.slice(clock[0].length);
+  if (/^\d/.test(after)) return null;
+  let hour = Number(clock[1]);
+  const minute = clock[2] ? Number(clock[2]) : 0;
+  const meridiem = MERIDIEM_RE.exec(after);
+  if (meridiem) {
+    const pm = meridiem[1]
+      ? meridiem[1].toLowerCase() === "p"
+      : meridiem[2].toLowerCase() !== "morning";
+    if (hour >= 1 && hour <= 12) hour = (hour % 12) + (pm ? 12 : 0);
+    else if (!(pm && hour <= 23)) return null; // "17:00 PM" is still 17:00
+  } else if (!clock[2]) {
+    return null; // a bare number is not a time
+  }
+  if (hour > 23 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /** The model's word on where the date came from; anything unclear counts as a guess. */
 export function readBasis(raw: unknown): DeadlineBasis {
   return typeof raw === "string" && raw.trim().toLowerCase() === "stated" ? "stated" : "inferred";
@@ -48,11 +93,10 @@ export function settleDeadline(input: {
   dueKind: "on" | "by";
   todayKey: string;
 }): SettledDeadline {
-  const raw = (input.dueAtLocal ?? "").trim();
-  const dateKey = /^(\d{4}-\d{2}-\d{2})/.exec(raw)?.[1] ?? null;
+  const local = normalizeLocalDue(input.dueAtLocal ?? "");
   const why = input.why.trim().replace(/\s+/g, " ").slice(0, 100);
 
-  if (!dateKey || !validKey(dateKey)) {
+  if (!local) {
     return {
       dueAtLocal: addDaysToDateKey(input.todayKey, DEFAULT_HORIZON_DAYS),
       dueKind: "by",
@@ -62,13 +106,13 @@ export function settleDeadline(input: {
   }
 
   if (input.basis === "stated") {
-    return { dueAtLocal: raw, dueKind: input.dueKind, inferred: false, why: "" };
+    return { dueAtLocal: local, dueKind: input.dueKind, inferred: false, why: "" };
   }
 
   // A guessed time of day is false precision, and a guessed date is a target
   // to finish by rather than a moment something happens.
   const latest = addDaysToDateKey(input.todayKey, MAX_INFERRED_DAYS);
-  let key = dateKey;
+  let key = local.slice(0, 10);
   if (key < input.todayKey) key = input.todayKey;
   if (key > latest) key = latest;
   return {

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  CATCH_UP_MINUTES,
   clockLabel,
+  digestLines,
   fallbackDigest,
   isValidTime,
   normalizeTime,
+  openSlot,
   shouldSendDigest,
+  slotOpen,
   splitForDigest,
   tasksForPerson,
 } from "@/lib/jointDigest";
@@ -93,9 +97,19 @@ describe("shouldSendDigest", () => {
     expect(shouldSendDigest(base)).toBe(true);
   });
 
-  it("stays quiet at any other minute", () => {
-    expect(shouldSendDigest({ ...base, nowTime: "07:01" })).toBe(false);
+  it("still sends on a late or skipped tick inside the catch-up window", () => {
+    expect(shouldSendDigest({ ...base, nowTime: "07:01" })).toBe(true);
+    expect(shouldSendDigest({ ...base, nowTime: "08:59" })).toBe(true);
+  });
+
+  it("stays quiet before its minute and once the window has passed", () => {
+    expect(shouldSendDigest({ ...base, nowTime: "06:59" })).toBe(false);
+    expect(shouldSendDigest({ ...base, nowTime: "09:00" })).toBe(false);
     expect(shouldSendDigest({ ...base, nowTime: "10:00" })).toBe(false);
+  });
+
+  it("doesn't send twice when a late tick finds today already claimed", () => {
+    expect(shouldSendDigest({ ...base, nowTime: "07:30", lastSent: "2026-09-14" })).toBe(false);
   });
 
   it("never sends on a Sunday", () => {
@@ -175,5 +189,103 @@ describe("time helpers", () => {
     expect(clockLabel("10:00")).toBe("10:00 AM");
     expect(clockLabel("00:30")).toBe("12:30 AM");
     expect(clockLabel("13:05")).toBe("1:05 PM");
+  });
+});
+
+describe("slotOpen", () => {
+  it("opens at the minute and stays open for the catch-up window", () => {
+    expect(CATCH_UP_MINUTES).toBe(120);
+    expect(slotOpen("18:00", "18:00")).toBe(true);
+    expect(slotOpen("19:59", "18:00")).toBe(true);
+    expect(slotOpen("20:00", "18:00")).toBe(false);
+    expect(slotOpen("17:59", "18:00")).toBe(false);
+  });
+
+  it("gives a late-evening slot its whole window, past midnight, as the day before's", () => {
+    expect(openSlot("23:59", "23:30")).toEqual({ minutesIn: 29, dayOffset: 0 });
+    expect(openSlot("00:10", "23:30")).toEqual({ minutesIn: 40, dayOffset: -1 });
+    expect(openSlot("01:30", "23:30")).toBeNull();
+    // An early slot never reaches back to the evening before.
+    expect(openSlot("06:59", "07:00")).toBeNull();
+  });
+
+  it("says how long ago the slot opened", () => {
+    expect(openSlot("08:10", "07:00")).toEqual({ minutesIn: 70, dayOffset: 0 });
+  });
+
+  it("catches a slot the clocks skip at the start of daylight time", () => {
+    // 02:30 never happens on the spring-forward morning; 03:00 is the next minute.
+    expect(slotOpen("03:00", "02:30")).toBe(true);
+  });
+
+  it("reads loose input and refuses nonsense", () => {
+    expect(slotOpen("07:05", "7:0")).toBe(true);
+    expect(slotOpen("00:05", "nonsense")).toBe(false);
+    expect(slotOpen("00:05", "")).toBe(false);
+  });
+});
+
+describe("digestLines in the user's timezone", () => {
+  // vitest runs in UTC here, like the server. The user is in New York.
+  const TZ = "America/New_York";
+  const MORNING = new Date("2026-10-27T11:00:00Z"); // Tue 7:00 AM EDT
+  const EVENING = new Date("2026-10-27T22:00:00Z"); // Tue 6:00 PM EDT
+
+  it("writes due times on the user's clock, not the server's", () => {
+    const lines = digestLines(
+      [
+        task({ title: "pick up the cake", dueAt: "2026-10-27T19:00:00.000Z" }), // 3:00 PM EDT
+        task({ title: "call grandma", dueAt: "2026-10-28T01:00:00.000Z" }), // 9:00 PM EDT
+      ],
+      TZ,
+      MORNING,
+    );
+    expect(lines).toEqual(["- pick up the cake (Today 3:00 PM)", "- call grandma (Today 9:00 PM)"]);
+  });
+
+  it("calls tomorrow evening tomorrow, even though it is the day after in UTC", () => {
+    const [line] = digestLines(
+      [task({ title: "dinner", dueAt: "2026-10-29T01:00:00.000Z" })], // Wed 9:00 PM EDT
+      TZ,
+      MORNING,
+    );
+    expect(line).toBe("- dinner (Tomorrow 9:00 PM)");
+  });
+
+  it("doesn't mark today's all-day task overdue once UTC has rolled over", () => {
+    // Stored as local midnight: 2026-10-27 00:00 EDT.
+    const today = task({ title: "recycling out", dueAt: "2026-10-27T04:00:00.000Z", allDay: true });
+    const lateEvening = new Date("2026-10-28T00:30:00Z"); // 8:30 PM EDT, already Wednesday in UTC
+    expect(digestLines([today], TZ, lateEvening)).toEqual(["- recycling out (Today)"]);
+    expect(digestLines([today], TZ, EVENING)).toEqual(["- recycling out (Today)"]);
+  });
+
+  it("does mark yesterday's all-day task overdue", () => {
+    const yesterday = task({ title: "rsvp", dueAt: "2026-10-26T04:00:00.000Z", allDay: true });
+    expect(digestLines([yesterday], TZ, MORNING)).toEqual(["- rsvp (OVERDUE · Overdue · 1d)"]);
+  });
+
+  it("keeps the day whole across the end of daylight time", () => {
+    // Sunday 2026-11-01: midnight EDT is 04:00Z; the day ends at midnight EST, 05:00Z.
+    const sunday = task({ title: "clocks back", dueAt: "2026-11-01T04:00:00.000Z", allDay: true });
+    const lateSunday = new Date("2026-11-02T04:30:00Z"); // 11:30 PM EST, still Sunday
+    expect(digestLines([sunday], TZ, lateSunday)).toEqual(["- clocks back (Today)"]);
+    const monday = new Date("2026-11-02T05:30:00Z"); // 12:30 AM EST Monday
+    expect(digestLines([sunday], TZ, monday)[0]).toContain("OVERDUE");
+  });
+});
+
+describe("fallbackDigest in the user's timezone", () => {
+  it("counts an all-day task due today as not yet overdue in the evening", () => {
+    const text = fallbackDigest({
+      mine: [
+        task({ title: "bins", assignedTo: "owner", dueAt: "2026-10-27T04:00:00.000Z", allDay: true }),
+      ],
+      ours: [],
+      partnerName: "Annette",
+      tz: "America/New_York",
+      now: new Date("2026-10-28T00:30:00Z"), // 8:30 PM EDT
+    });
+    expect(text).not.toContain("overdue");
   });
 });

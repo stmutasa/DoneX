@@ -9,6 +9,7 @@ import { FieldLabel, SwitchRow } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
 import { useToast } from "@/components/ui/Toast";
 import { IconBell } from "@/components/ui/icons";
+import { DraftTimeInput } from "./DraftTimeInput";
 
 interface Digest {
   role: "owner" | "partner";
@@ -24,21 +25,19 @@ export function DigestRow() {
   const toast = useToast();
   const { data, mutate } = useSWR<Digest>("/api/joint/digest", fetcher);
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [preview, setPreview] = useState("");
 
   if (!data) return null;
 
-  const save = async (patch: { enabled?: boolean; time?: string }) => {
-    setSaving(true);
+  const save = async (patch: { enabled?: boolean; time?: string }): Promise<boolean> => {
     try {
       const next = await jointApi.setDigest(patch);
       await mutate(next, { revalidate: false });
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save that");
-    } finally {
-      setSaving(false);
+      return false;
     }
   };
 
@@ -94,11 +93,10 @@ export function DigestRow() {
 
           <div>
             <FieldLabel>Time</FieldLabel>
-            <input
-              type="time"
+            <DraftTimeInput
               value={data.time}
-              disabled={!data.enabled || saving}
-              onChange={(e) => void save({ time: e.target.value })}
+              disabled={!data.enabled}
+              onSave={(time) => save({ time })}
               className="min-h-[44px] w-full rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none focus:border-stroke-strong disabled:opacity-50"
             />
           </div>

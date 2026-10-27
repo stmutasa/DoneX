@@ -15,17 +15,30 @@ export function mapsConfigured(): boolean {
   return !!settingsRepo.getApp().google.mapsApiKey.trim();
 }
 
-/** Turns Google's error wording into the actual fix. */
-function explainPlacesError(status: number, body: string): string {
+/**
+ * Turns Google's error wording into the actual fix. Every key-restriction
+ * refusal also says PERMISSION_DENIED, so the restriction checks run before
+ * the generic "enable the API" one.
+ */
+export function explainPlacesError(status: number, body: string): string {
   const lower = body.toLowerCase();
   if (lower.includes("api_key_invalid") || lower.includes("api key not valid")) {
     return "Google rejected the Maps API key — re-copy it from Google Cloud → Credentials";
   }
+  if (lower.includes("api_key_service_blocked")) {
+    return "The Maps key's API restrictions leave out the “Places API (New)” — add it to the key in Google Cloud → Credentials";
+  }
+  if (
+    lower.includes("referer") ||
+    lower.includes("referrer") ||
+    lower.includes("_blocked") ||
+    lower.includes("restriction") ||
+    lower.includes("restricted")
+  ) {
+    return "The Maps key's restrictions block this server — in Google Cloud, set the key's application restriction to “None” (or IP-based)";
+  }
   if (lower.includes("permission_denied") || lower.includes("has not been used") || lower.includes("is disabled")) {
     return "Enable the “Places API (New)” for your project in Google Cloud, then try again";
-  }
-  if (lower.includes("referer") || lower.includes("restricted")) {
-    return "The Maps key's restrictions block this server — in Google Cloud, set the key's application restriction to “None” (or IP-based)";
   }
   return `Place search failed (${status})`;
 }

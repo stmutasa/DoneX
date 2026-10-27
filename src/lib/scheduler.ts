@@ -5,6 +5,7 @@
 import "server-only";
 import { setInterval as setNodeInterval, setTimeout as setNodeTimeout } from "node:timers";
 import {
+  briefingsRepo,
   completionsRepo,
   googleRepo,
   inboxRepo,
@@ -26,8 +27,6 @@ import { hasPushSubscriptions, sendPushToAll } from "@/lib/push";
 import { MAX_INBOX_ALERTS_PER_DAY, readAlertBudget } from "@/lib/alertbudget";
 import {
   addDaysToDateKey,
-  isoFromLocal,
-  isoWeekKey,
   isQuietTime,
   localDateKey,
   localTimeKey,
@@ -35,26 +34,42 @@ import {
   nowIso,
 } from "@/lib/utils";
 import { runBackup } from "@/lib/backup";
-import { ownerEvents } from "@/lib/jointFeeds";
-import { activeTrip, detectTrips, wallClockAt, type Trip } from "@/lib/trips";
-import { shouldSendDigest, type DigestSchedule } from "@/lib/jointDigest";
-import { shouldSendWeekAhead, type WeekAheadSchedule } from "@/lib/weekAhead";
+import { ownerTrips } from "@/lib/jointFeeds";
+import { activeTrip, wallClockAt, type Trip } from "@/lib/trips";
+import {
+  CATCH_UP_MINUTES,
+  openSlot,
+  shouldSendDigest,
+  type DigestSchedule,
+} from "@/lib/jointDigest";
+import {
+  normalizeWeekTime,
+  shouldSendWeekAhead,
+  type WeekAheadSchedule,
+} from "@/lib/weekAhead";
 import { nudgeText, nudgesFor } from "@/lib/nudges";
+import { reviewedWeek, weekKeyOfDay } from "@/lib/reviewWeek";
 import { buildWeekAhead, kvLastWeekAheadWeek } from "@/lib/weekAheadStore";
-import type { AppSettings, Briefing, SessionRole, WeeklyReview } from "@/lib/types";
+import type { AppSettings, Briefing, SessionRole, Task, WeeklyReview } from "@/lib/types";
 
 const TICK_MS = 60_000;
 const FIRST_TICK_DELAY_MS = 5_000;
 const GMAIL_SCAN_INTERVAL_MS = 60 * 60 * 1000;
 
 const KV_LAST_BRIEFING_DAY = "sched.lastBriefingDay";
+/** Before reviews covered the week just gone, this held the week the send fell in. */
 const KV_LAST_REVIEW_WEEK = "sched.lastReviewWeek";
+/** The week the last review was about. */
+const KV_LAST_REVIEWED_WEEK = "sched.lastReviewedWeek";
 const KV_LAST_GMAIL_SCAN = "sched.lastGmailScan";
 const KV_LAST_TRIAGE_SLOT = "sched.lastTriageSlot";
 const KV_INBOX_ALERTS = "sched.inboxAlerts";
 const KV_LAST_BACKUP_WEEK = "sched.lastBackupWeek";
 /** Per person, so a nudge is a once-a-day check rather than every tick. */
 const kvLastNudgeDay = (role: SessionRole) => `sched.lastNudge.${role}`;
+/** A nudge that reached no device is tried again this often, this many times a day. */
+const NUDGE_RETRY_MS = 30 * 60 * 1000;
+const NUDGE_MAX_TRIES = 3;
 /** Sunday evening, after the week-ahead hour and clear of the digests. */
 const BACKUP_DAY = 0;
 const BACKUP_TIME = "21:00";
@@ -64,24 +79,57 @@ const kvLastDigestDay = (role: SessionRole) => `sched.lastJointDigest.${role}`;
 /** Fixed inbox-triage times (local, user's tz): morning, midday, evening. */
 const TRIAGE_TIMES = ["06:00", "14:00", "20:00"];
 
+/** A reminder later than this isn't one any more: it is let go without a buzz. */
+const REMINDER_STALE_MS = CATCH_UP_MINUTES * 60 * 1000;
+/** A briefing someone opened this long before the morning send is made again for it. */
+const BRIEFING_FRESH_MS = 60 * 60 * 1000;
+
+/**
+ * Where the owner is: on a trip, at home (null), or "unknown" — the calendar
+ * hasn't been read once since this process started.
+ */
+type Whereabouts = Trip | null | "unknown";
+
 /** Where you are right now, re-read hourly — shifts move week to week, so
  *  this never assumes yesterday's answer still holds. */
-let awayCache: { at: number; trip: Trip | null } = { at: 0, trip: null };
+let awayCache: { at: number; ttl: number; trip: Whereabouts } = { at: 0, ttl: 0, trip: null };
 const AWAY_TTL_MS = 60 * 60 * 1000;
+/** After a failed calendar read: try again soon, and don't decide anything on it. */
+const AWAY_RETRY_MS = 5 * 60 * 1000;
+/** With no good read since start, the owner's jobs wait this long before falling back to home time. */
+const TRIP_UNKNOWN_MAX_MS = 30 * 60 * 1000;
+let tripEverRead = false;
+let tripFailingSince: number | null = null;
 
-async function currentTrip(settings: AppSettings, now: Date): Promise<Trip | null> {
-  if (now.getTime() - awayCache.at < AWAY_TTL_MS) return awayCache.trip;
+async function currentTrip(settings: AppSettings, now: Date): Promise<Whereabouts> {
+  if (now.getTime() - awayCache.at < awayCache.ttl) return awayCache.trip;
+  // A calendar that couldn't be read says nothing about where you are. Keep
+  // the last answer (while that trip is still on) rather than calling you
+  // home, which would send the morning jobs on home time and claim the day.
+  // With no answer yet, say so: the owner's jobs wait, and their catch-up
+  // window sends them once a read works.
+  const failed = (): Whereabouts => {
+    if (tripEverRead) {
+      const last = awayCache.trip;
+      return activeTrip(last && last !== "unknown" ? [last] : [], now);
+    }
+    tripFailingSince ??= now.getTime();
+    return now.getTime() - tripFailingSince < TRIP_UNKNOWN_MAX_MS ? "unknown" : null;
+  };
   try {
-    const tz = settings.tz;
-    const todayKey = localDateKey(now, tz);
-    const { events } = await ownerEvents(settings.joint, {
-      fromIso: isoFromLocal(addDaysToDateKey(todayKey, -1), "00:00", tz),
-      toIso: isoFromLocal(addDaysToDateKey(todayKey, 30), "00:00", tz),
-    });
-    awayCache = { at: now.getTime(), trip: activeTrip(detectTrips(events), now) };
+    // The same reading of the calendar the Today card uses.
+    const { trips, warning } = await ownerTrips(settings, now);
+    if (warning) {
+      console.error("[scheduler] trip lookup", warning);
+      awayCache = { at: now.getTime(), ttl: AWAY_RETRY_MS, trip: failed() };
+    } else {
+      tripEverRead = true;
+      tripFailingSince = null;
+      awayCache = { at: now.getTime(), ttl: AWAY_TTL_MS, trip: activeTrip(trips, now) };
+    }
   } catch (err) {
     console.error("[scheduler] trip lookup", err);
-    awayCache = { at: now.getTime(), trip: null };
+    awayCache = { at: now.getTime(), ttl: AWAY_RETRY_MS, trip: failed() };
   }
   return awayCache.trip;
 }
@@ -92,6 +140,16 @@ async function currentTrip(settings: AppSettings, now: Date): Promise<Trip | nul
  * rather than firing at 4am local.
  */
 function clockFor(settings: AppSettings, now: Date, trip: Trip | null) {
+  if (trip?.timeZone) {
+    // A named zone follows its own DST, which a fixed offset can't.
+    const dateKey = localDateKey(now, trip.timeZone);
+    return {
+      time: localTimeKey(now, trip.timeZone),
+      dateKey,
+      weekday: localWeekday(dateKey),
+      away: true,
+    };
+  }
   if (trip && trip.offsetMinutes !== null) {
     const wall = wallClockAt(now, trip.offsetMinutes);
     return { time: wall.time, dateKey: wall.dateKey, weekday: wall.weekday, away: true };
@@ -105,8 +163,31 @@ function clockFor(settings: AppSettings, now: Date, trip: Trip | null) {
   };
 }
 
+type Clock = ReturnType<typeof clockFor>;
+
+/** The owner's clock, or null while where they are is still unknown. */
+function ownerClock(settings: AppSettings, now: Date, trip: Whereabouts): Clock | null {
+  return trip === "unknown" ? null : clockFor(settings, now, trip);
+}
+
+/**
+ * The slot open on this clock, if any: the date and weekday it belongs to
+ * (the evening before, for a late slot still open past midnight) — the ones
+ * to decide and claim on — and how many minutes ago it opened.
+ */
+function openSlotOn(
+  clock: Clock,
+  slot: string,
+): { dateKey: string; weekday: number; minutesIn: number } | null {
+  const open = openSlot(clock.time, slot);
+  if (!open) return null;
+  const dateKey = open.dayOffset === 0 ? clock.dateKey : addDaysToDateKey(clock.dateKey, -1);
+  return { dateKey, weekday: localWeekday(dateKey), minutesIn: open.minutesIn };
+}
+
 const globalForScheduler = globalThis as unknown as { __donexSchedulerStarted?: boolean };
 let ticking = false;
+let inboxBusy = false;
 
 export function startScheduler(): void {
   if (globalForScheduler.__donexSchedulerStarted) return;
@@ -117,18 +198,30 @@ export function startScheduler(): void {
   console.log("[scheduler] started");
 }
 
-async function tick(): Promise<void> {
+/**
+ * One pass of the loop (exported for tests). A tick that arrives while the
+ * last one is still running is dropped, so every timed job is due-based:
+ * it goes out at its minute or on the first tick inside its catch-up window,
+ * and the per-day or per-week key it claims — stored in the database, so it
+ * survives a restart — is what stops a second send.
+ *
+ * Inbox work (a Gmail scan, an AI triage batch) can run for minutes, so it
+ * has a lane of its own and never holds up a reminder or a scheduled send.
+ */
+export async function tick(): Promise<void> {
+  await Promise.all([runTimedJobs(), runInboxJobs()]);
+}
+
+async function runTimedJobs(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
     const settings = settingsRepo.getApp();
     const now = new Date();
-    const trip = await currentTrip(settings, now);
     await runReminders(settings);
+    const trip = await currentTrip(settings, now);
     await runMorningBriefing(settings, now, trip);
     await runWeeklyReview(settings, now);
-    await runGmailScan(settings);
-    await runScheduledTriage(settings, now);
     await runJointDigests(settings, now, trip);
     await runWeekAhead(settings, now, trip);
     await runNudges(settings, now, trip);
@@ -138,6 +231,20 @@ async function tick(): Promise<void> {
     console.error("[scheduler] tick", err);
   } finally {
     ticking = false;
+  }
+}
+
+async function runInboxJobs(): Promise<void> {
+  if (inboxBusy) return;
+  inboxBusy = true;
+  try {
+    const settings = settingsRepo.getApp();
+    await runGmailScan(settings);
+    await runScheduledTriage(settings, new Date());
+  } catch (err) {
+    console.error("[scheduler] inbox", err);
+  } finally {
+    inboxBusy = false;
   }
 }
 
@@ -188,16 +295,36 @@ async function runReminders(settings: AppSettings): Promise<void> {
     if (!settings.notifications.remindersEnabled) return;
     if (!hasPushSubscriptions()) return;
 
-    const due = tasksRepo.dueForReminder(nowIso());
+    const at = nowIso();
+    // Anything long past is let go without a buzz — a backlog built up while
+    // push was off, or brought back by a restore — a page at a time, oldest
+    // first, so it never queues ahead of what is due now.
+    const cutoff = Date.now() - REMINDER_STALE_MS;
+    const stale = (t: Task) => Date.parse(t.dueAt ?? "") < cutoff;
+    let due = tasksRepo.dueForReminder(at);
+    for (let page = 0; page < 50 && due.some(stale); page++) {
+      for (const t of due) if (stale(t)) tasksRepo.markNotified(t.id);
+      due = tasksRepo.dueForReminder(at);
+    }
+    due = due.filter((t) => !stale(t));
     if (due.length === 0) return;
 
     const projectNames = new Map(projectsRepo.list(true).map((p) => [p.id, p.name]));
-    for (const task of due) {
+    for (const { id, dueAt } of due) {
+      // Re-read and claimed right before its own send, never across an await:
+      // a task rescheduled, completed or rolled to its next occurrence while
+      // an earlier push was in flight is left alone, and anything not reached
+      // yet (a restart, an error) is still unclaimed for the next tick.
+      const task = tasksRepo.get(id);
+      if (!task || task.status !== "open" || !sameInstant(task.dueAt, dueAt)) continue;
+      tasksRepo.markNotified(id);
+
+      const joint = task.space === "joint";
       const parts: string[] = [];
       if (task.dueAt) parts.push(`Due at ${formatLocalTime(task.dueAt, settings.tz)}`);
-      const project = task.projectId ? projectNames.get(task.projectId) : undefined;
+      // Projects are the owner's own; a joint reminder also reaches the partner.
+      const project = !joint && task.projectId ? projectNames.get(task.projectId) : undefined;
       if (project) parts.push(project);
-      const joint = task.space === "joint";
       await sendPushToAll(
         {
           title: `⏰ ${task.title}`,
@@ -205,9 +332,9 @@ async function runReminders(settings: AppSettings): Promise<void> {
           url: joint ? "/joint" : "/today",
           tag: `task-${task.id}`,
         },
-        joint ? undefined : ["owner"],
+        // A joint task reaches the partner only while partner access is on.
+        joint && settings.joint.partnerPinHash ? undefined : ["owner"],
       );
-      tasksRepo.markNotified(task.id);
     }
   } catch (err) {
     console.error("[scheduler] reminders", err);
@@ -219,24 +346,36 @@ async function runReminders(settings: AppSettings): Promise<void> {
 async function runMorningBriefing(
   settings: AppSettings,
   now: Date,
-  trip: Trip | null,
+  trip: Whereabouts,
 ): Promise<void> {
   try {
     if (!settings.notifications.briefingEnabled) return;
+    // Where you are decides the hour; until that is known, wait.
+    if (trip === "unknown") return;
 
     const clock = clockFor(settings, now, trip);
-    if (clock.time !== normalizeTime(settings.notifications.briefingTime)) return;
+    const slot = openSlotOn(clock, settings.notifications.briefingTime);
+    if (!slot) return;
 
     // The day key follows the same clock, so a trip can't send two briefings
     // in one local day or skip one crossing a date line.
-    const dateLocal = clock.dateKey;
+    const dateLocal = slot.dateKey;
     if (settingsRepo.getKV(KV_LAST_BRIEFING_DAY) === dateLocal) return;
     settingsRepo.setKV(KV_LAST_BRIEFING_DAY, dateLocal); // claim the slot first
 
     let briefing: Briefing | null = null;
     if (aiConfigured()) {
       try {
-        briefing = await generateBriefing(dateLocal);
+        // One made more than an hour before the slot (Today opened in the
+        // small hours) is made again for the morning; one made since is what
+        // the user has just read, however late this tick is.
+        const cached = briefingsRepo.get(dateLocal);
+        const slotAt = now.getTime() - slot.minutesIn * 60_000;
+        const force = !!cached && Date.parse(cached.generatedAt) < slotAt - BRIEFING_FRESH_MS;
+        briefing = await generateBriefing(dateLocal, {
+          force,
+          awayOffsetMinutes: clock.away ? (trip?.offsetMinutes ?? null) : null,
+        });
       } catch (err) {
         console.error("[scheduler] briefing generation", err);
       }
@@ -266,11 +405,11 @@ async function runMorningBriefing(
 async function runJointDigests(
   settings: AppSettings,
   now: Date,
-  trip: Trip | null,
+  trip: Whereabouts,
 ): Promise<void> {
   const joint = settings.joint;
   // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
-  const mine = clockFor(settings, now, trip);
+  const mine = ownerClock(settings, now, trip);
   const home = clockFor(settings, now, null);
 
   const people: { role: SessionRole; schedule: DigestSchedule }[] = [
@@ -295,26 +434,29 @@ async function runJointDigests(
   for (const { role, schedule } of people) {
     try {
       const clock = role === "owner" ? mine : home;
+      if (!clock) continue; // where you are is still unknown
+      const slot = openSlotOn(clock, schedule.time);
+      if (!slot) continue;
       const key = kvLastDigestDay(role);
       if (
         !shouldSendDigest({
           schedule,
           nowTime: clock.time,
-          weekday: clock.weekday,
-          today: clock.dateKey,
+          weekday: slot.weekday,
+          today: slot.dateKey,
           lastSent: settingsRepo.getKV(key),
         })
       ) {
         continue;
       }
-      settingsRepo.setKV(key, clock.dateKey); // claim the slot before the slow part
+      settingsRepo.setKV(key, slot.dateKey); // claim the slot before the slow part
 
       const digest = await generateJointDigest(role);
       // An empty digest means an empty list — no reason to buzz anyone.
       if (!digest) continue;
 
       await sendPushToAll(
-        { title: "Ours — this morning", body: digest, url: "/joint", tag: `joint-digest-${clock.dateKey}` },
+        { title: "Ours — this morning", body: digest, url: "/joint", tag: `joint-digest-${slot.dateKey}` },
         [role],
       );
     } catch (err) {
@@ -331,10 +473,10 @@ async function runJointDigests(
  * unclaimed ones, plus both calendars — which you already share — and a bare
  * count of what the other one is carrying.
  */
-async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null): Promise<void> {
+async function runWeekAhead(settings: AppSettings, now: Date, trip: Whereabouts): Promise<void> {
   const joint = settings.joint;
   // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
-  const mine = clockFor(settings, now, trip);
+  const mine = ownerClock(settings, now, trip);
   const home = clockFor(settings, now, null);
 
   const people: { role: SessionRole; schedule: WeekAheadSchedule }[] = [
@@ -359,13 +501,18 @@ async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null)
   for (const { role, schedule } of people) {
     try {
       const clock = role === "owner" ? mine : home;
-      const weekKey = isoWeekKey(now, settings.tz);
+      if (!clock) continue; // where you are is still unknown
+      const slot = openSlotOn(clock, normalizeWeekTime(schedule.time));
+      if (!slot) continue;
+      // The week of the clock that decides the send: Sunday evening on a trip
+      // can already be Monday at home, which is next week's key.
+      const weekKey = weekKeyOfDay(slot.dateKey);
       const key = kvLastWeekAheadWeek(role);
       if (
         !shouldSendWeekAhead({
           schedule,
           nowTime: clock.time,
-          weekday: clock.weekday,
+          weekday: slot.weekday,
           weekKey,
           lastSent: settingsRepo.getKV(key),
         })
@@ -374,7 +521,7 @@ async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null)
       }
       settingsRepo.setKV(key, weekKey); // claim the slot before the slow part
 
-      const { text } = await buildWeekAhead(role, clock.dateKey);
+      const { text } = await buildWeekAhead(role, slot.dateKey);
       // A quiet week for this person is not worth a Sunday evening buzz.
       if (!text) continue;
 
@@ -397,18 +544,19 @@ async function runWeekAhead(settings: AppSettings, now: Date, trip: Trip | null)
  * morning digest instead, which is what lets this stay a single word rather
  * than a daily one.
  */
-async function runNudges(settings: AppSettings, now: Date, trip: Trip | null): Promise<void> {
+async function runNudges(settings: AppSettings, now: Date, trip: Whereabouts): Promise<void> {
   try {
     const joint = settings.joint;
     if (!joint.nudgeEnabled || !joint.partnerPinHash) return;
 
-    const wanted = normalizeTime(joint.nudgeTime);
-    // Yours follows you; hers stays on home time, since she hasn't gone anywhere.
-    const clocks: Record<SessionRole, ReturnType<typeof clockFor>> = {
-      owner: clockFor(settings, now, trip),
-      partner: clockFor(settings, now, null),
+    // Yours follows you (and waits while that is unknown); hers stays on home
+    // time, since she hasn't gone anywhere.
+    const mine = ownerClock(settings, now, trip);
+    const slots = {
+      owner: mine ? openSlotOn(mine, joint.nudgeTime) : null,
+      partner: openSlotOn(clockFor(settings, now, null), joint.nudgeTime),
     };
-    if (clocks.owner.time !== wanted && clocks.partner.time !== wanted) return;
+    if (!slots.owner && !slots.partner) return;
 
     const tasks = tasksRepo.list({ space: "joint" });
     const state = tasksRepo.nudgeState();
@@ -418,24 +566,43 @@ async function runNudges(settings: AppSettings, now: Date, trip: Trip | null): P
     };
 
     for (const role of ["owner", "partner"] as SessionRole[]) {
-      const clock = clocks[role];
-      if (clock.time !== wanted) continue;
+      const slot = slots[role];
+      if (!slot) continue;
 
       const key = kvLastNudgeDay(role);
-      if (settingsRepo.getKV(key) === clock.dateKey) continue;
-      settingsRepo.setKV(key, clock.dateKey); // claim the slot first
+      const last = settingsRepo.getKV(key);
+      if (last === slot.dateKey) continue;
+      // A send today that reached nobody: try again now and then, not every tick.
+      const tried = failedNudge(last, slot.dateKey);
+      if (tried && (tried.count >= NUDGE_MAX_TRIES || now.getTime() - tried.at < NUDGE_RETRY_MS)) {
+        continue;
+      }
+      settingsRepo.setKV(key, slot.dateKey); // claim the slot first
 
       const items = nudgesFor({
         tasks,
         role,
         now,
+        // All-day deadlines end at midnight where they were set: home.
+        tz: settings.tz,
         nudgedDueAt: (id) => state.get(id) ?? null,
       });
       if (items.length === 0) continue;
 
       const asker = role === "owner" ? names.partner : names.owner;
       const { title, body } = nudgeText(items, asker);
-      await sendPushToAll({ title, body, url: "/joint", tag: `nudge-${clock.dateKey}` }, [role]);
+      const sent = await sendPushToAll(
+        { title, body, url: "/joint", tag: `nudge-${slot.dateKey}` },
+        [role],
+      );
+      if (sent === 0) {
+        // Nothing reached them (no device, or every delivery failed): mark
+        // nothing, and note the try so a later tick in the window — at most a
+        // few times — or tomorrow's run tries again.
+        const count = (tried?.count ?? 0) + 1;
+        settingsRepo.setKV(key, `${slot.dateKey}#${count}@${now.getTime()}`);
+        continue;
+      }
 
       // Only after it has actually gone out, so a failed send tries again.
       for (const item of items) tasksRepo.markNudged(item.id, item.dueAt);
@@ -454,12 +621,10 @@ async function runNudges(settings: AppSettings, now: Date, trip: Trip | null): P
  */
 async function runWeeklyBackup(settings: AppSettings, now: Date): Promise<void> {
   try {
-    const tz = settings.tz;
-    const dateLocal = localDateKey(now, tz);
-    if (localWeekday(dateLocal) !== BACKUP_DAY) return;
-    if (localTimeKey(now, tz) !== BACKUP_TIME) return;
+    const slot = openSlotOn(clockFor(settings, now, null), BACKUP_TIME);
+    if (!slot || slot.weekday !== BACKUP_DAY) return;
 
-    const weekKey = isoWeekKey(now, tz);
+    const weekKey = weekKeyOfDay(slot.dateKey);
     if (settingsRepo.getKV(KV_LAST_BACKUP_WEEK) === weekKey) return;
     settingsRepo.setKV(KV_LAST_BACKUP_WEEK, weekKey);
 
@@ -468,7 +633,7 @@ async function runWeeklyBackup(settings: AppSettings, now: Date): Promise<void> 
       {
         title: "Weekly backup ready",
         body: `${Math.max(1, Math.round(snap.bytes / 1024))} KB saved. Tap to keep a copy off the server.`,
-        url: "/settings/data",
+        url: "/settings/backups",
         tag: "backup-weekly",
       },
       ["owner"],
@@ -484,32 +649,41 @@ async function runWeeklyReview(settings: AppSettings, now: Date): Promise<void> 
   try {
     if (!settings.notifications.weeklyReviewEnabled) return;
 
-    const tz = settings.tz;
-    const dateLocal = localDateKey(now, tz);
-    if (localWeekday(dateLocal) !== settings.notifications.weeklyDay) return;
-    if (localTimeKey(now, tz) !== normalizeTime(settings.notifications.weeklyTime)) return;
+    const weeklyDay = settings.notifications.weeklyDay;
+    const slot = openSlotOn(clockFor(settings, now, null), settings.notifications.weeklyTime);
+    if (!slot || slot.weekday !== weeklyDay) return;
+    const dateLocal = slot.dateKey;
 
-    const weekKey = isoWeekKey(now, tz);
-    if (settingsRepo.getKV(KV_LAST_REVIEW_WEEK) === weekKey) return;
-    settingsRepo.setKV(KV_LAST_REVIEW_WEEK, weekKey);
+    // Sunday reviews the week ending today; any other day, the last week to
+    // have finished — never the one that has only just begun.
+    const week = reviewedWeek(dateLocal);
+    const weekKey = week.weekKey;
+    // The old key named the week the send fell in, which is the same week
+    // only on a Sunday; any other day it would skip one review on upgrade.
+    const last =
+      settingsRepo.getKV(KV_LAST_REVIEWED_WEEK) ??
+      (weeklyDay === 0 ? settingsRepo.getKV(KV_LAST_REVIEW_WEEK) : null);
+    if (last === weekKey) return;
+    settingsRepo.setKV(KV_LAST_REVIEWED_WEEK, weekKey);
 
     let review: WeeklyReview | null = null;
     if (aiConfigured()) {
       try {
-        review = await generateWeeklyReview(weekKey);
+        // Always fresh: a visit to the Review page earlier in the week saves
+        // a review of the days so far, which is not the week's review.
+        review = await generateWeeklyReview(weekKey, { force: true });
       } catch (err) {
         console.error("[scheduler] review generation", err);
       }
     }
 
-    const completed =
-      review?.completedCount ??
-      completionsRepo.countRange(addDaysToDateKey(dateLocal, -6), dateLocal);
+    const completed = review?.completedCount ?? completionsRepo.countRange(week.from, week.to);
+    const span = week.to === dateLocal ? "this week" : "last week";
     await sendPushToAll(
       {
         title: "Your week in review",
-        body: firstSentence(review?.narrative) || `${completed} task(s) completed this week.`,
-        url: "/review",
+        body: firstSentence(review?.narrative) || `${completed} task(s) completed ${span}.`,
+        url: `/review?week=${weekKey}`,
       },
       ["owner"],
     );
@@ -564,10 +738,13 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
     if (!aiConfigured()) return;
 
     const tz = settings.tz;
-    const slot = TRIAGE_TIMES.find((t) => t === localTimeKey(now, tz));
-    if (!slot) return;
+    // The latest slot still inside its catch-up window, if any.
+    const home = clockFor(settings, now, null);
+    const slot = [...TRIAGE_TIMES].reverse().find((t) => openSlotOn(home, t));
+    const open = slot ? openSlotOn(home, slot) : null;
+    if (!slot || !open) return;
 
-    const slotKey = `${localDateKey(now, tz)}@${slot}`;
+    const slotKey = `${open.dateKey}@${slot}`;
     if (settingsRepo.getKV(KV_LAST_TRIAGE_SLOT) === slotKey) return;
     settingsRepo.setKV(KV_LAST_TRIAGE_SLOT, slotKey); // claim before the slow work
 
@@ -600,8 +777,10 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
     for (const before of pending) {
       const after = inboxRepo.get(before.id);
       if (!after || after.status === "new") continue;
-      if (after.status === "resolved") updated += 1;
-      else dismissed += 1;
+      // Credit triage only with what it did itself; the user may have settled
+      // an item while the model was thinking.
+      if (after.status === "resolved" && after.suggestion?.updatedTaskTitle) updated += 1;
+      else if (after.status === "dismissed" && after.suggestion?.autoDismissed) dismissed += 1;
     }
 
     const freshKept = inboxRepo
@@ -625,10 +804,19 @@ async function runScheduledTriage(settings: AppSettings, now: Date): Promise<voi
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/** "7:00" → "07:00" so comparisons against localTimeKey() are exact. */
-function normalizeTime(value: string): string {
-  const [hh = "", mm = ""] = value.trim().split(":");
-  return `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}`;
+/** Same moment, whatever ISO form each was written in. */
+function sameInstant(a: string | null, b: string | null): boolean {
+  if (!a || !b) return !a && !b;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return Number.isNaN(ta) || Number.isNaN(tb) ? a === b : ta === tb;
+}
+
+/** A nudge slot noted as tried without reaching anyone: "YYYY-MM-DD#<tries>@<epoch ms>". */
+function failedNudge(stored: string | null, dateKey: string): { count: number; at: number } | null {
+  const m = /^(\d{4}-\d{2}-\d{2})#(\d+)@(\d+)$/.exec(stored ?? "");
+  if (!m || m[1] !== dateKey) return null;
+  return { count: Number(m[2]), at: Number(m[3]) };
 }
 
 function formatLocalTime(iso: string, tz: string): string {

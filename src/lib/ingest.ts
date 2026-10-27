@@ -19,6 +19,9 @@ export interface IngestPayload {
 const TEMPLATE_RE =
   /^\s*\{\s*"from"\s*:\s*"([\s\S]*?)"\s*,\s*"body"\s*:\s*"([\s\S]*)"\s*\}\s*$/;
 
+/** Where a JSON payload may carry the message, in order of preference. */
+const MESSAGE_KEYS = ["body", "message", "text"] as const;
+
 function clean(value: string | null | undefined): string | undefined {
   const trimmed = (value ?? "").trim();
   return trimmed ? trimmed : undefined;
@@ -53,18 +56,26 @@ export function parseIngestPayload(
         receivedAt: clean(form.get("receivedAt")),
       };
     }
+    // The form has a message field, but it is empty.
+    if (form.has("body")) return {};
   }
 
   try {
     const parsed: unknown = JSON.parse(text);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const rec = parsed as Record<string, unknown>;
-      const body = clean(typeof rec.body === "string" ? rec.body : undefined);
-      if (body) {
+      const str = (v: unknown) => clean(typeof v === "string" ? v : undefined);
+      // Our template says "body"; other phone apps' say "message" or "text".
+      const key = MESSAGE_KEYS.find((k) => k in rec);
+      if (key) {
+        const body = str(rec[key]);
+        // An empty message (a picture text, say) has nothing to capture; it
+        // must not become an item whose text is the raw JSON.
+        if (!body) return {};
         return {
-          from: clean(typeof rec.from === "string" ? rec.from : undefined) ?? "SMS",
+          from: str(rec.from) ?? str(rec.sender) ?? "SMS",
           body,
-          receivedAt: clean(typeof rec.receivedAt === "string" ? rec.receivedAt : undefined),
+          receivedAt: str(rec.receivedAt),
         };
       }
     }
@@ -73,7 +84,7 @@ export function parseIngestPayload(
     const salvaged = TEMPLATE_RE.exec(text);
     if (salvaged) {
       const body = clean(salvaged[2]);
-      if (body) return { from: clean(salvaged[1]) ?? "SMS", body };
+      return body ? { from: clean(salvaged[1]) ?? "SMS", body } : {};
     }
   }
 

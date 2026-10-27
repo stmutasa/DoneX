@@ -2,23 +2,63 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { AnimatePresence, motion } from "framer-motion";
-import { fetcher, keys } from "@/lib/api";
+import { fetcher, keys, matchKey } from "@/lib/api";
 import type { Project, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Page } from "@/components/shell/Page";
 import { EmptyState, PageHeader, SectionLabel, SkeletonRows } from "@/components/ui/Misc";
 import { Button } from "@/components/ui/Button";
-import { IconChevronRight, IconPlus, IconX } from "@/components/ui/icons";
+import { IconChevronDown, IconChevronRight, IconPlus, IconX } from "@/components/ui/icons";
 import { ProjectSheet } from "@/components/projects/ProjectSheet";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskList } from "@/components/tasks/TaskList";
 
+/** Archived projects included, so they can be found again and restored. */
+const PROJECTS_KEY = `${keys.projects()}?includeArchived=1`;
+
+function ProjectRow({ project }: { project: Project }) {
+  return (
+    <Link
+      href={`/projects/${project.id}`}
+      className={cn(
+        "flex min-h-[64px] items-center gap-3 overflow-hidden rounded-2xl border border-stroke pr-3 transition-colors hover:border-stroke-strong",
+        project.archived ? "bg-elev/60" : "bg-elev",
+      )}
+    >
+      <span
+        className="h-full w-1.5 self-stretch"
+        style={{ background: project.color }}
+        aria-hidden="true"
+      />
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-sunken text-lg">
+        {project.icon}
+      </span>
+      <span className="min-w-0 flex-1 py-3">
+        <span
+          className={cn(
+            "block truncate text-[15px] font-medium",
+            project.archived ? "text-muted" : "text-ink",
+          )}
+        >
+          {project.name}
+        </span>
+        <span className="block text-[13px] text-muted">
+          {project.openCount ?? 0} open{project.archived ? " · Archived" : ""}
+        </span>
+      </span>
+      <IconChevronRight className="h-4 w-4 shrink-0 text-faint" />
+    </Link>
+  );
+}
+
 export default function ProjectsPage() {
-  const { data, isLoading, mutate } = useSWR<{ projects: Project[] }>(keys.projects(), fetcher);
+  const { mutate: globalMutate } = useSWRConfig();
+  const { data, isLoading } = useSWR<{ projects: Project[] }>(PROJECTS_KEY, fetcher);
   const { data: tagData } = useSWR<{ tags: string[] }>(keys.tags(), fetcher);
   const [creating, setCreating] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [tag, setTag] = useState<string | null>(null);
   const [editing, setEditing] = useState<Task | null>(null);
 
@@ -38,7 +78,9 @@ export default function ProjectsPage() {
     fetcher,
   );
 
-  const projects = (data?.projects ?? []).filter((p) => !p.archived);
+  const allProjects = data?.projects ?? [];
+  const projects = allProjects.filter((p) => !p.archived);
+  const archived = allProjects.filter((p) => p.archived);
   const tags = tagData?.tags ?? [];
 
   return (
@@ -77,33 +119,37 @@ export default function ProjectsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
               >
-                <Link
-                  href={`/projects/${project.id}`}
-                  className="flex min-h-[64px] items-center gap-3 overflow-hidden rounded-2xl border border-stroke bg-elev pr-3 transition-colors hover:border-stroke-strong"
-                >
-                  <span
-                    className="h-full w-1.5 self-stretch"
-                    style={{ background: project.color }}
-                    aria-hidden="true"
-                  />
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-sunken text-lg">
-                    {project.icon}
-                  </span>
-                  <span className="min-w-0 flex-1 py-3">
-                    <span className="block truncate text-[15px] font-medium text-ink">
-                      {project.name}
-                    </span>
-                    <span className="block text-[13px] text-muted">
-                      {project.openCount ?? 0} open
-                    </span>
-                  </span>
-                  <IconChevronRight className="h-4 w-4 shrink-0 text-faint" />
-                </Link>
+                <ProjectRow project={project} />
               </motion.li>
             ))}
           </AnimatePresence>
         </ul>
       )}
+
+      {!isLoading && archived.length ? (
+        <section className="mt-6">
+          <button
+            type="button"
+            onClick={() => setArchivedOpen((o) => !o)}
+            aria-expanded={archivedOpen}
+            className="flex min-h-[44px] w-full items-center gap-2 rounded-2xl border border-stroke bg-elev px-4 text-left"
+          >
+            <span className="flex-1 text-[14px] text-muted">Archived · {archived.length}</span>
+            <IconChevronDown
+              className={`h-4 w-4 text-faint transition-transform ${archivedOpen ? "" : "-rotate-90"}`}
+            />
+          </button>
+          {archivedOpen ? (
+            <ul className="mt-2 space-y-2">
+              {archived.map((project) => (
+                <li key={project.id}>
+                  <ProjectRow project={project} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       {tags.length ? (
         <section className="mt-8">
@@ -149,7 +195,7 @@ export default function ProjectsPage() {
               ) : (
                 <TaskList
                   tasks={(tagTasks?.tasks ?? []).filter((t) => !t.parentId)}
-                  projects={projects}
+                  projects={allProjects}
                   onOpen={setEditing}
                 />
               )}
@@ -161,7 +207,7 @@ export default function ProjectsPage() {
       <ProjectSheet
         open={creating}
         onClose={() => setCreating(false)}
-        onSaved={() => void mutate()}
+        onSaved={() => void globalMutate(matchKey("/api/projects"))}
       />
       <TaskEditor open={!!editing} task={editing} onClose={() => setEditing(null)} />
     </Page>

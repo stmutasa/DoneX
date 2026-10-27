@@ -26,10 +26,9 @@ export function nextOccurrence(rule: RecurrenceRule, from: Date, tz: string): Da
       for (let i = 0; i < 800; i++) {
         if (days.includes(cursor.getDay())) {
           if (interval === 1) return new Date(cursor.getTime());
-          // For interval > 1: count full weeks elapsed since `start`'s week.
-          const weeksApart = Math.floor(
-            (startOfWeekMs(cursor) - startOfWeekMs(start)) / (7 * 86400_000)
-          );
+          // For interval > 1: count full weeks elapsed since `start`'s week,
+          // with weeks starting on Sunday in `tz`.
+          const weeksApart = Math.round((weekStartDay(cursor) - weekStartDay(start)) / 7);
           if (weeksApart % interval === 0) return new Date(cursor.getTime());
         }
         cursor = addDays(cursor, 1);
@@ -37,23 +36,57 @@ export function nextOccurrence(rule: RecurrenceRule, from: Date, tz: string): Da
       return new Date(addDays(start, 7 * interval).getTime());
     }
 
-    case "monthly": {
-      let next = addMonths(start, interval);
-      const wantDay = rule.byMonthDay ?? getDate(start);
-      const maxDay = getDate(lastDayOfMonth(next));
-      next = setDate(next, Math.min(wantDay, maxDay));
-      return new Date(next.getTime());
-    }
+    case "monthly":
+      return new Date(onDay(addMonths(start, interval), rule.byMonthDay ?? getDate(start)).getTime());
 
     case "yearly":
-      return new Date(addYears(start, interval).getTime());
+      return new Date(onDay(addYears(start, interval), yearlyDay(rule, start)).getTime());
   }
 }
 
-function startOfWeekMs(d: Date): number {
-  const copy = new Date(d.getTime());
-  copy.setHours(0, 0, 0, 0);
-  return copy.getTime() - copy.getDay() * 86400_000;
+/**
+ * Pin the anchor day of a monthly or yearly rule from the occurrence at
+ * `from`, so clamping to a short month (Jan 31 → Feb 28) never feeds back
+ * into later repeats. Callers store the result with the task. Returns the
+ * same rule when there is nothing to pin.
+ */
+export function anchorRule(rule: RecurrenceRule, from: Date, tz: string): RecurrenceRule {
+  const start = new TZDate(from, tz);
+  if (rule.freq === "monthly") {
+    return rule.byMonthDay ? rule : { ...rule, byMonthDay: getDate(start) };
+  }
+  if (rule.freq === "yearly") {
+    const day = yearlyDay(rule, start);
+    return day === rule.byMonthDay ? rule : { ...rule, byMonthDay: day };
+  }
+  return rule;
+}
+
+/** The anchor day in `next`'s month, clamped to the month's length. */
+function onDay(next: TZDate, wantDay: number): TZDate {
+  return setDate(next, Math.min(wantDay, getDate(lastDayOfMonth(next))));
+}
+
+/**
+ * Yearly rules keep their stored day only while `start` still sits on it, or
+ * on Feb 28 for a Feb 29 rule in a common year (the one clamp a yearly rule
+ * can hit). The editor never shows that day, so once the date is moved by
+ * hand the new day wins.
+ */
+function yearlyDay(rule: RecurrenceRule, start: TZDate): number {
+  const day = getDate(start);
+  const want = rule.byMonthDay;
+  if (want === day) return want;
+  if (want === 29 && start.getMonth() === 1 && day === getDate(lastDayOfMonth(start))) return want;
+  return day;
+}
+
+/**
+ * Day number of the Sunday that starts `d`'s week, read in `d`'s own zone.
+ * Calendar fields only, so DST and the server's zone never shift the count.
+ */
+function weekStartDay(d: TZDate): number {
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400_000 - d.getDay();
 }
 
 export function describeRecurrence(rule: RecurrenceRule | null): string {

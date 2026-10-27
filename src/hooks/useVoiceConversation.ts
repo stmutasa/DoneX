@@ -47,6 +47,9 @@ export function useVoiceConversation(
 ): VoiceConversationApi {
   const rec = useSpeechRecognition();
   const tts = useTTS();
+  // Both hooks return a fresh object every render; their functions are stable.
+  const { start: recStart, stop: recStop, onFinal: recOnFinal } = rec;
+  const { speak: ttsSpeak, cancel: ttsCancel } = tts;
 
   const [phase, setPhaseState] = useState<VoicePhase>("idle");
   const [lastReply, setLastReply] = useState("");
@@ -69,8 +72,8 @@ export function useVoiceConversation(
   const beginListening = useCallback(() => {
     if (!sessionRef.current) return;
     setPhase("listening");
-    rec.start();
-  }, [rec, setPhase]);
+    recStart();
+  }, [recStart, setPhase]);
 
   const runTurn = useCallback(
     async (text: string) => {
@@ -79,7 +82,11 @@ export function useVoiceConversation(
         if (sessionRef.current) beginListening();
         return;
       }
-      rec.stop();
+      // A new turn replaces whatever is still going: the earlier request (so
+      // Stop can reach it) and the earlier reply (whose end would reopen the mic).
+      abortRef.current?.abort();
+      ttsCancel();
+      recStop();
       setPhase("thinking");
       setLastReply("");
       setTurns((prev) => [...prev, { id: nextTurnId(), role: "user", text: message }]);
@@ -107,8 +114,11 @@ export function useVoiceConversation(
             finalText = payload.text || streamed;
             optsRef.current.onConversationId?.(payload.conversationId);
           },
-          onError: (msg) => {
+          onError: (msg: string, conversationId?: string) => {
             failure = msg;
+            // A failed first turn may still have created the conversation;
+            // adopt it so the next turn continues it instead of orphaning it.
+            if (conversationId) optsRef.current.onConversationId?.(conversationId);
           },
         },
         controller.signal,
@@ -131,7 +141,7 @@ export function useVoiceConversation(
       setLastReply(reply);
       setTurns((prev) => [...prev, { id: nextTurnId(), role: "assistant", text: reply }]);
       setPhase("speaking");
-      tts.speak(reply, {
+      ttsSpeak(reply, {
         voiceURI: optsRef.current.voiceURI,
         rate: optsRef.current.rate,
         onAllEnd: () => {
@@ -144,28 +154,37 @@ export function useVoiceConversation(
         },
       });
     },
-    [beginListening, rec, setPhase, tts],
+    [beginListening, recStop, setPhase, ttsCancel, ttsSpeak],
   );
 
   const runTurnRef = useRef(runTurn);
   runTurnRef.current = runTurn;
 
   useEffect(() => {
-    rec.onFinal((text) => {
+    recOnFinal((text) => {
       silentCyclesRef.current = 0;
       void runTurnRef.current(text);
     });
-  }, [rec]);
+  }, [recOnFinal]);
 
   // Recognition ended without a result. While a hands-free session is live,
   // quietly restart listening so pauses on a walk don't end the conversation;
   // give up after ~8 empty cycles (≈ a minute of silence) or on a mic error.
+  // Only a real listening → stopped transition counts as a cycle: this runs on
+  // changes to `listening` and `error`, not on every render (the orb animates
+  // at frame rate), and the gap between start() and onstart isn't a cycle.
+  const recListening = rec.listening;
+  const recError = rec.error;
+  const wasListeningRef = useRef(false);
   useEffect(() => {
-    if (rec.listening || phaseRef.current !== "listening") return;
-    if (!sessionRef.current || rec.error) {
+    const ended = wasListeningRef.current && !recListening;
+    wasListeningRef.current = recListening;
+    if (recListening || phaseRef.current !== "listening") return;
+    if (!sessionRef.current || recError) {
       setPhase("idle");
       return;
     }
+    if (!ended) return;
     silentCyclesRef.current += 1;
     if (silentCyclesRef.current > 8) {
       sessionRef.current = false;
@@ -173,12 +192,12 @@ export function useVoiceConversation(
       return;
     }
     restartTimerRef.current = window.setTimeout(() => {
-      if (sessionRef.current && phaseRef.current === "listening") rec.start();
+      if (sessionRef.current && phaseRef.current === "listening") recStart();
     }, 250);
     return () => {
       if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
     };
-  }, [rec, rec.listening, rec.error, setPhase]);
+  }, [recListening, recError, recStart, setPhase]);
 
   // Orb "level" while listening — a synthetic breathing pulse that kicks up
   // whenever speech recognition actually reports new interim text. This is
@@ -216,28 +235,28 @@ export function useVoiceConversation(
   const start = useCallback(() => {
     sessionRef.current = true;
     silentCyclesRef.current = 0;
-    tts.cancel();
+    ttsCancel();
     beginListening();
-  }, [beginListening, tts]);
+  }, [beginListening, ttsCancel]);
 
   const stop = useCallback(() => {
     sessionRef.current = false;
     if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
     abortRef.current?.abort();
     abortRef.current = null;
-    tts.cancel();
-    rec.stop();
+    ttsCancel();
+    recStop();
     setPhase("idle");
-  }, [rec, setPhase, tts]);
+  }, [recStop, setPhase, ttsCancel]);
 
   const interrupt = useCallback(() => {
     sessionRef.current = true;
     silentCyclesRef.current = 0;
-    tts.cancel();
+    ttsCancel();
     abortRef.current?.abort();
     abortRef.current = null;
     beginListening();
-  }, [beginListening, tts]);
+  }, [beginListening, ttsCancel]);
 
   const sendText = useCallback((text: string) => {
     sessionRef.current = true;
@@ -247,10 +266,13 @@ export function useVoiceConversation(
   useEffect(
     () => () => {
       sessionRef.current = false;
+      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
       abortRef.current?.abort();
       abortRef.current = null;
+      // Leaving mid-reply must silence the rest of it, not just this chunk.
+      ttsCancel();
     },
-    [],
+    [ttsCancel],
   );
 
   return {

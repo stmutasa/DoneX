@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { InboxItem, InboxSource } from "@/lib/types";
 import { PRIORITY_META } from "@/lib/types";
@@ -31,23 +31,30 @@ export function InboxCard({
   suggesting,
 }: {
   item: InboxItem;
-  onResolve: (payload: InboxResolvePayload) => Promise<void>;
+  onResolve: (payload: InboxResolvePayload) => Promise<unknown>;
   onEdit: (item: InboxItem) => void;
   onSuggest: (item: InboxItem) => void;
   onDismissBecause: (item: InboxItem) => void;
   suggesting?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
 
   const suggestion = item.suggestion;
   const suggestedTask = suggestion?.action === "task" ? suggestion.task : undefined;
+  // One action at a time: a second one on the same item would resolve it twice,
+  // and a running suggestion may resolve it by itself.
+  const locked = busy !== null || !!suggesting;
 
   const run = async (key: string, payload: InboxResolvePayload) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(key);
     try {
       await onResolve(payload);
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   };
@@ -106,7 +113,7 @@ export function InboxCard({
                     {/* The app's own deadline wording — "By today", "By Fri · 3d
                         left", and "Overdue" for a stated date already gone. */}
                     {suggestedTask.dueKind === "by"
-                      ? deadlineChip(suggestedTask.dueAt)
+                      ? deadlineChip(suggestedTask.dueAt, suggestedTask.allDay)
                       : dueLabel(suggestedTask.dueAt, suggestedTask.allDay ?? false)}
                     {suggestion.dueSuggested ? (
                       <span className="text-muted"> · suggested</span>
@@ -138,11 +145,12 @@ export function InboxCard({
               size="sm"
               variant="primary"
               loading={busy === "task"}
+              disabled={locked}
               onClick={() => run("task", { action: "task", task: suggestedTask })}
             >
               Add task
             </Button>
-            <Button size="sm" onClick={() => onEdit(item)}>
+            <Button size="sm" disabled={locked} onClick={() => onEdit(item)}>
               Edit
             </Button>
           </>
@@ -151,6 +159,7 @@ export function InboxCard({
             size="sm"
             variant="primary"
             loading={busy === "task"}
+            disabled={locked}
             onClick={() => run("task", { action: "task", task: { title: item.content.slice(0, 120) } })}
           >
             Make task
@@ -160,6 +169,7 @@ export function InboxCard({
         <Button
           size="sm"
           loading={busy === "note"}
+          disabled={locked}
           onClick={() => run("note", { action: "note", note: noteFromItem() })}
         >
           → Note
@@ -170,6 +180,7 @@ export function InboxCard({
             size="sm"
             variant="ghost"
             loading={suggesting}
+            disabled={locked}
             icon={<IconSparkles className="h-4 w-4" />}
             onClick={() => onSuggest(item)}
           >
@@ -181,12 +192,13 @@ export function InboxCard({
           size="sm"
           variant="ghost"
           loading={busy === "dismiss"}
+          disabled={locked}
           onClick={() => run("dismiss", { action: "dismiss" })}
         >
           Dismiss
         </Button>
 
-        <Button size="sm" variant="ghost" onClick={() => onDismissBecause(item)}>
+        <Button size="sm" variant="ghost" disabled={locked} onClick={() => onDismissBecause(item)}>
           Dismiss because…
         </Button>
       </div>

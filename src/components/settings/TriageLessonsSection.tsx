@@ -4,19 +4,21 @@ import useSWR from "swr";
 import { fetcher, inboxApi } from "@/lib/api";
 import type { TriageFeedback } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
-import { IconButton } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
 import { IconX } from "@/components/ui/icons";
 import { SettingsCard } from "./common";
 
 /** Every rule the user has taught the inbox triage, with the ability to
- *  unlearn one. Rendered only once at least one lesson exists. */
+ *  unlearn one. */
 export function TriageLessonsSection() {
   const toast = useToast();
-  const { data, mutate } = useSWR<{ lessons: TriageFeedback[] }>("/api/inbox/feedback", fetcher);
+  const { data, isLoading, mutate } = useSWR<{ lessons: TriageFeedback[] }>(
+    "/api/inbox/feedback",
+    fetcher,
+  );
   const lessons = data?.lessons ?? [];
-
-  if (lessons.length === 0) return null;
 
   const remove = async (lesson: TriageFeedback) => {
     try {
@@ -34,33 +36,49 @@ export function TriageLessonsSection() {
       title="Triage lessons"
       description="Rules you've taught the inbox triage. It follows these over its defaults."
     >
-      <ul className="space-y-2">
-        {lessons.map((lesson) => (
-          <li
-            key={lesson.id}
-            className="flex items-start gap-2.5 rounded-2xl border border-stroke bg-sunken px-3.5 py-3"
-          >
-            <span
-              className={
-                lesson.kind === "should_have_kept"
-                  ? "mt-1 inline-block rounded-full bg-ok/12 px-2 py-0.5 text-[11px] font-semibold text-ok"
-                  : "mt-1 inline-block rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-accent"
-              }
+      {isLoading && !data ? (
+        <SkeletonRows rows={2} />
+      ) : !data ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] text-muted">Couldn’t load your lessons just now.</p>
+          <Button size="sm" onClick={() => void mutate()}>
+            Try again
+          </Button>
+        </div>
+      ) : lessons.length === 0 ? (
+        <p className="rounded-2xl border border-stroke bg-sunken px-3.5 py-3 text-[13px] leading-relaxed text-muted">
+          No lessons yet. Give a reason when you dismiss or restore an inbox item, and the rule
+          triage learns shows up here.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {lessons.map((lesson) => (
+            <li
+              key={lesson.id}
+              className="flex items-start gap-2.5 rounded-2xl border border-stroke bg-sunken px-3.5 py-3"
             >
-              {lesson.kind === "should_have_kept" ? "KEEP" : "DISMISS"}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[14px] leading-snug text-ink">“{lesson.reason}”</span>
-              <span className="mt-0.5 line-clamp-1 block text-[12px] text-faint">
-                about: {lesson.content} · {relativeTime(lesson.createdAt)}
+              <span
+                className={
+                  lesson.kind === "should_have_kept"
+                    ? "mt-1 inline-block rounded-full bg-ok/12 px-2 py-0.5 text-[11px] font-semibold text-ok"
+                    : "mt-1 inline-block rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-accent"
+                }
+              >
+                {lesson.kind === "should_have_kept" ? "KEEP" : "DISMISS"}
               </span>
-            </span>
-            <IconButton label="Forget this lesson" size="sm" onClick={() => remove(lesson)}>
-              <IconX className="h-4 w-4" />
-            </IconButton>
-          </li>
-        ))}
-      </ul>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px] leading-snug text-ink">“{lesson.reason}”</span>
+                <span className="mt-0.5 line-clamp-1 block text-[12px] text-faint">
+                  about: {lesson.content} · {relativeTime(lesson.createdAt)}
+                </span>
+              </span>
+              <IconButton label="Forget this lesson" size="sm" onClick={() => remove(lesson)}>
+                <IconX className="h-4 w-4" />
+              </IconButton>
+            </li>
+          ))}
+        </ul>
+      )}
     </SettingsCard>
   );
 }

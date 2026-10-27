@@ -27,6 +27,8 @@ interface UiMessage {
   tools: ToolChipState[];
   pending?: boolean;
   error?: string;
+  /** the user stopped this reply before it finished */
+  stopped?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -51,13 +53,22 @@ function mergeTool(
   status: ToolChipState["status"],
 ): ToolChipState[] {
   if (status === "start") return [...tools, { label, status }];
-  const idx = tools.findIndex((t) => t.label === label && t.status === "start");
+  // The server runs tools one at a time, so a result always belongs to the
+  // step still spinning, even when the label changed ("Set location · CVS"
+  // comes back as "Pinned … to CVS Pharmacy").
+  const idx = tools.findIndex((t) => t.status === "start");
   if (idx >= 0) {
     const next = tools.slice();
     next[idx] = { label, status };
     return next;
   }
   return [...tools, { label, status }];
+}
+
+/** A stream that ended early never reports on the step in flight; drop its
+ *  spinner rather than leave it turning. The saved turn has the real outcome. */
+function settleTools(tools: ToolChipState[]): ToolChipState[] {
+  return tools.filter((t) => t.status !== "start");
 }
 
 export default function AssistantPage() {
@@ -74,6 +85,12 @@ export default function AssistantPage() {
 
   const streamingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // A stopped turn is saved on the server as far as it got, which can be a
+  // little further than the screen; catch up after the next reply.
+  const behindRef = useRef(false);
+  // History that arrived mid-reply and was held back so it couldn't clobber
+  // the bubbles being streamed.
+  const historyMissedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -89,6 +106,10 @@ export default function AssistantPage() {
     setReady(true);
   }, []);
 
+  // Leaving the page stops the reply: the server stops paying for rounds, and
+  // late callbacks can't toast over whatever page is showing.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const persist = useCallback((id: string) => {
     try {
       localStorage.setItem(STORAGE_KEY, id);
@@ -97,13 +118,43 @@ export default function AssistantPage() {
     }
   }, []);
 
-  const { data: history, isLoading } = useSWR<{
+  const {
+    data: history,
+    isLoading,
+    mutate: refreshHistory,
+  } = useSWR<{
     conversation: Conversation | null;
     messages: ChatMessageRecord[];
   }>(ready ? keys.history(conversationId) : null, fetcher, { revalidateOnFocus: false });
 
+  /** Show another conversation. A reply still streaming is let go: the server
+   *  finishes and saves it in its own conversation, and nothing from it can
+   *  land on the one now on screen. */
+  const switchTo = useCallback(
+    (id: string) => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+        // Cleared here, not when the stream unwinds, so the new conversation's
+        // history is applied the moment it arrives.
+        streamingRef.current = false;
+        setStreaming(false);
+      }
+      behindRef.current = false;
+      historyMissedRef.current = false;
+      setConversationId(id);
+      persist(id);
+      setMessages([]);
+    },
+    [persist],
+  );
+
   useEffect(() => {
-    if (!history || streamingRef.current) return;
+    if (!history) return;
+    if (streamingRef.current) {
+      historyMissedRef.current = true;
+      return;
+    }
     setMessages(history.messages.map(toUi));
     if (history.conversation && history.conversation.id !== conversationId) {
       setConversationId(history.conversation.id);
@@ -143,23 +194,33 @@ export default function AssistantPage() {
     const controller = new AbortController();
     abortRef.current = controller;
     let acc = "";
+    // Whether the server closed the turn itself (with a reply or an error),
+    // and where it saved a reply.
+    const outcome = { settled: false, savedIn: null as string | null };
+    // Once stopped or left behind, this stream no longer speaks for the page.
+    const live = () => !controller.signal.aborted;
 
     await postChatStream(
       { conversationId, message: text, mode: "chat" },
       {
         onToken: (chunk) => {
+          if (!live()) return;
           acc += chunk;
           setMessages((prev) =>
             prev.map((m) => (m.id === asstId ? { ...m, text: acc, pending: false } : m)),
           );
         },
         onTool: (label, status) => {
+          if (!live()) return;
           setMessages((prev) =>
             prev.map((m) => (m.id === asstId ? { ...m, tools: mergeTool(m.tools, label, status) } : m)),
           );
         },
         onDone: (payload) => {
+          if (!live()) return;
+          outcome.settled = true;
           if (payload.conversationId) {
+            outcome.savedIn = payload.conversationId;
             setConversationId(payload.conversationId);
             persist(payload.conversationId);
           }
@@ -176,19 +237,57 @@ export default function AssistantPage() {
             ),
           );
         },
-        onError: (message) => {
+        // The server names the conversation it saved the failed turn in, so a
+        // retry joins it instead of starting another.
+        onError: (message: string, failedIn?: string) => {
+          if (!live()) return;
+          outcome.settled = true;
+          if (failedIn && failedIn !== conversationId) {
+            setConversationId(failedIn);
+            persist(failedIn);
+          }
           toast.error(message);
           setMessages((prev) =>
-            prev.map((m) => (m.id === asstId ? { ...m, pending: false, error: message } : m)),
+            prev.map((m) =>
+              m.id === asstId ? { ...m, pending: false, error: message, tools: settleTools(m.tools) } : m,
+            ),
           );
         },
       },
       controller.signal,
     );
 
-    streamingRef.current = false;
-    setStreaming(false);
-    abortRef.current = null;
+    // A switch to another conversation already handed the page over.
+    const owned = abortRef.current === controller;
+    if (owned) {
+      abortRef.current = null;
+      streamingRef.current = false;
+      setStreaming(false);
+    }
+    if (!outcome.settled) {
+      // Stopped, or the connection dropped before the server finished: either
+      // way the typing dots have to go.
+      const stopped = controller.signal.aborted;
+      if (stopped && owned) behindRef.current = true;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === asstId
+            ? {
+                ...m,
+                pending: false,
+                tools: settleTools(m.tools),
+                ...(stopped ? { stopped: true } : { error: "The reply was cut off. Try again." }),
+              }
+            : m,
+        ),
+      );
+    } else if (owned && outcome.savedIn && (behindRef.current || historyMissedRef.current)) {
+      // The screen holds only part of the transcript (a stopped turn, or
+      // history held back mid-reply): the turn is saved now, so reload it.
+      behindRef.current = false;
+      historyMissedRef.current = false;
+      void globalMutate(keys.history(outcome.savedIn));
+    }
     void globalMutate(
       matchKey("/api/tasks", "/api/stats", "/api/notes", "/api/inbox", "/api/projects", "/api/chat/conversations"),
     );
@@ -197,9 +296,7 @@ export default function AssistantPage() {
   const startNew = async () => {
     try {
       const { conversation } = await chatApi.newConversation();
-      setConversationId(conversation.id);
-      persist(conversation.id);
-      setMessages([]);
+      switchTo(conversation.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not start a chat");
     }
@@ -263,6 +360,7 @@ export default function AssistantPage() {
                 tools={m.tools}
                 pending={m.pending}
                 error={m.error}
+                stopped={m.stopped}
               />
             ))}
           </AnimatePresence>
@@ -311,15 +409,14 @@ export default function AssistantPage() {
         onClose={() => setDrawerOpen(false)}
         activeId={conversationId}
         onSelect={(id) => {
-          setConversationId(id);
-          persist(id);
-          setMessages([]);
+          if (id !== conversationId) {
+            switchTo(id);
+            return;
+          }
+          // Already on screen: keep the transcript, just bring it up to date.
+          if (!streamingRef.current) void refreshHistory();
         }}
-        onNew={(c) => {
-          setConversationId(c.id);
-          persist(c.id);
-          setMessages([]);
-        }}
+        onNew={(c) => switchTo(c.id)}
       />
     </div>
   );

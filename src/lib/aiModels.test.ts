@@ -146,6 +146,75 @@ describe("the backup's own model", () => {
   it("can be cleared back to newest-available on its own", () => {
     expect(after(pinned, { fallbackModelPinned: "" }).fallbackModelPinned).toBe("");
   });
+
+  // Settings always sends the pin, "" meaning auto, so this is the real save.
+  const autoOnOpenAi = ai({
+    provider: "anthropic",
+    model: "claude-x",
+    fallbackProvider: "openai",
+    fallbackModel: "gpt-5-mini",
+    fallbackModelPinned: "",
+  });
+
+  it("drops the old provider's resolved model when the backup moves, even with the pin sent as auto", () => {
+    const s = after(autoOnOpenAi, { fallbackProvider: "gemini", fallbackModelPinned: "" });
+    expect(s.fallbackProvider).toBe("gemini");
+    expect(s.fallbackModel).toBe("");
+    expect(s.fallbackModelPinned).toBe("");
+  });
+
+  it("resolves straight to a pin named with the move", () => {
+    const s = after(autoOnOpenAi, { fallbackProvider: "gemini", fallbackModelPinned: "gemini-3.8-pro" });
+    expect(s.fallbackModelPinned).toBe("gemini-3.8-pro");
+    expect(s.fallbackModel).toBe("gemini-3.8-pro");
+  });
+
+  it("leaves the resolved model alone when the backup provider is re-sent unchanged", () => {
+    const s = after(autoOnOpenAi, { model: "claude-y", fallbackProvider: "openai", fallbackModelPinned: "" });
+    expect(s.fallbackModel).toBe("gpt-5-mini");
+  });
+});
+
+describe("the custom provider's model id", () => {
+  const custom = ai({ provider: "custom", model: "llama-70b", customModel: "llama-70b" });
+
+  it("moves the model with it when the Model id box is edited", () => {
+    const s = after(custom, { customModel: "qwen-72b" });
+    expect(s.customModel).toBe("qwen-72b");
+    expect(s.model).toBe("qwen-72b");
+  });
+
+  it("is not reverted by a later save that re-sends the model", () => {
+    let s = after(custom, { customModel: "qwen-72b" });
+    s = after(s, { model: s.model, fallbackProvider: "openai", fallbackModelPinned: "" });
+    expect(s.customModel).toBe("qwen-72b");
+  });
+
+  it("survives a trip to another provider and back", () => {
+    let s = after(custom, { customModel: "qwen-72b" });
+    s = after(s, { provider: "openai" });
+    s = after(s, { provider: "custom" });
+    expect(s.model).toBe("qwen-72b");
+    expect(s.customModel).toBe("qwen-72b");
+  });
+
+  it("parks the id that was in use when an older version left the two apart", () => {
+    const drifted = ai({ provider: "custom", model: "llama-70b", customModel: "qwen-72b" });
+    const s = after(after(drifted, { provider: "openai" }), { provider: "custom" });
+    expect(s.model).toBe("qwen-72b");
+  });
+
+  it("is only mirrored while custom is the provider", () => {
+    const s = after(ai(), { customModel: "local-llama" });
+    expect(s.model).toBe("gpt-5-mini");
+    expect(s.customModel).toBe("local-llama");
+  });
+
+  it("lets a model named in the same patch win", () => {
+    const s = after(custom, { customModel: "qwen-72b", model: "mixtral" });
+    expect(s.model).toBe("mixtral");
+    expect(s.customModel).toBe("mixtral");
+  });
 });
 
 describe("remember and recall", () => {

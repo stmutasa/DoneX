@@ -130,8 +130,18 @@ const featuresPatchSchema = z.object({
   walkMode: z.boolean().optional(),
 });
 
+/** A zone this server can compute dates in. Saving any other breaks every date in the app. */
+function knownTimeZone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const patchSchema = z.object({
-  tz: z.string().optional(),
+  tz: z.string().refine(knownTimeZone).optional(),
   features: featuresPatchSchema.optional(),
   theme: z.enum(["system", "light", "dark"]).optional(),
   ai: aiPatchSchema.optional(),
@@ -201,7 +211,8 @@ export async function PATCH(req: NextRequest) {
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
+    const badZone = parsed.error.issues.some((issue) => issue.path[0] === "tz");
+    return NextResponse.json({ error: badZone ? "Unknown time zone" : "Invalid settings" }, { status: 400 });
   }
   const data = parsed.data;
   const patch: DeepPartial<AppSettings> = { ...data };

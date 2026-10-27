@@ -113,6 +113,16 @@ export async function safeTodayEvents(): Promise<CalendarEvent[]> {
   }
 }
 
+/** Events overlapping [fromIso, toIso); empty when the calendar can't be read. */
+export async function safeEventsBetween(fromIso: string, toIso: string): Promise<CalendarEvent[]> {
+  try {
+    const { listEventsRange } = await import("@/lib/google/calendar");
+    return await listEventsRange(fromIso, toIso);
+  } catch {
+    return [];
+  }
+}
+
 export async function buildAssistantContext(): Promise<AssistantContext> {
   const tz = settingsRepo.getApp().tz;
   const now = new Date();

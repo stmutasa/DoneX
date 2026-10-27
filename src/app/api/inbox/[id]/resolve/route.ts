@@ -7,6 +7,17 @@ import { newId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+// Same shape as /api/tasks, so a place picked in the inbox editor is kept.
+const locationSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    address: z.string().max(400),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  })
+  .nullable()
+  .optional();
+
 const taskDraftSchema = z.object({
   title: z.string(),
   notes: z.string().optional(),
@@ -26,6 +37,7 @@ const taskDraftSchema = z.object({
     })
     .nullable()
     .optional(),
+  location: locationSchema,
 });
 
 const bodySchema = z.object({
@@ -41,16 +53,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (gate) return gate;
   const { id } = await params;
 
-  const item = inboxRepo.get(id);
-  if (!item) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
   const body = parsed.data;
+
+  // Read after the body so nothing awaits between this check and the write.
+  const item = inboxRepo.get(id);
+  if (!item) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  // Already handled (a second tap, or scheduled triage got there first):
+  // resolving again would make a duplicate task or note. Dismissing a
+  // dismissed item again is harmless, and its reason is still a lesson.
+  const redismiss = body.action === "dismiss" && item.status === "dismissed";
+  if (item.status !== "new" && !redismiss) {
+    return NextResponse.json({ error: "That item was already handled" }, { status: 409 });
+  }
 
   if (body.action === "task") {
     const draft: TaskDraft = body.task ?? item.suggestion?.task ?? { title: item.content.slice(0, 120) };

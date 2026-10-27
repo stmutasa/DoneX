@@ -1,16 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { AnimatePresence, motion } from "framer-motion";
-import { fetcher, inboxApi, keys, matchKey, type InboxResolvePayload } from "@/lib/api";
+import { ApiError, fetcher, inboxApi, keys, matchKey, type InboxResolvePayload } from "@/lib/api";
 import type { InboxItem, TaskDraft } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
 import { Page } from "@/components/shell/Page";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, PageHeader, SkeletonRows } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
-import { IconChevronDown, IconPlus, IconSparkles } from "@/components/ui/icons";
+import { IconChevronDown, IconPlus, IconRefresh, IconSparkles } from "@/components/ui/icons";
 import { InboxCard } from "@/components/inbox/InboxCard";
 import { ReasonSheet, type ReasonMode } from "@/components/inbox/ReasonSheet";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
@@ -19,13 +19,15 @@ export default function InboxPage() {
   const toast = useToast();
   const { mutate: globalMutate } = useSWRConfig();
 
-  const { data, isLoading, mutate } = useSWR<{ items: InboxItem[]; newCount: number }>(
+  const { data, error, isLoading, mutate } = useSWR<{ items: InboxItem[]; newCount: number }>(
     keys.inbox("all"),
     fetcher,
   );
 
   const [capture, setCapture] = useState("");
   const [capturing, setCapturing] = useState(false);
+  // Enter can fire again before the re-render that marks us capturing.
+  const capturingRef = useRef(false);
   const [triaging, setTriaging] = useState(false);
   const [suggestingId, setSuggestingId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -45,7 +47,8 @@ export default function InboxPage() {
 
   const submitCapture = async () => {
     const content = capture.trim();
-    if (!content) return;
+    if (!content || capturingRef.current) return;
+    capturingRef.current = true;
     setCapturing(true);
     try {
       await inboxApi.capture(content);
@@ -54,24 +57,34 @@ export default function InboxPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not capture that");
     } finally {
+      capturingRef.current = false;
       setCapturing(false);
     }
   };
 
-  const resolve = async (item: InboxItem, payload: InboxResolvePayload) => {
+  /** True once the item has left the inbox (including when something else
+   *  already handled it); false when it failed and is still waiting. */
+  const resolve = async (item: InboxItem, payload: InboxResolvePayload): Promise<boolean> => {
     try {
       await inboxApi.resolve(item.id, payload);
-      toast.success(
-        payload.action === "task"
-          ? "Added to your tasks"
-          : payload.action === "note"
-            ? "Saved to notes"
-            : "Dismissed",
-      );
-      await refreshAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not resolve that");
+      if (err instanceof ApiError && err.status === 409) {
+        // Already handled elsewhere: drop the stale card.
+        await refreshAll();
+        return true;
+      }
+      return false;
     }
+    toast.success(
+      payload.action === "task"
+        ? "Added to your tasks"
+        : payload.action === "note"
+          ? "Saved to notes"
+          : "Dismissed",
+    );
+    await refreshAll();
+    return true;
   };
 
   const suggest = async (item: InboxItem) => {
@@ -99,14 +112,17 @@ export default function InboxPage() {
   const triageAll = async () => {
     setTriaging(true);
     try {
-      const { kept, dismissed, updated } = await inboxApi.triage();
+      const { kept, dismissed, updated, failed, failure } = await inboxApi.triage();
       await refreshAll();
       const parts: string[] = [];
       if (typeof kept === "number" && kept > 0) parts.push(`${kept} for you to review`);
       if (typeof updated === "number" && updated > 0)
         parts.push(`${updated} task${updated === 1 ? "" : "s"} updated`);
       if (typeof dismissed === "number" && dismissed > 0) parts.push(`${dismissed} auto-dismissed`);
-      toast.success(parts.length ? parts.join(" · ") : "Nothing needed triaging");
+      if (parts.length || !failed) toast.success(parts.length ? parts.join(" · ") : "Nothing needed triaging");
+      if (typeof failed === "number" && failed > 0) {
+        toast.error(`${failed} couldn't be triaged${failure ? `: ${failure}` : ""}`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not triage");
     } finally {
@@ -116,7 +132,10 @@ export default function InboxPage() {
 
   const submitEdited = async (draft: TaskDraft) => {
     if (!editingItem) return;
-    await resolve(editingItem, { action: "task", task: draft });
+    // Throwing keeps the editor open with your changes, ready to retry.
+    if (!(await resolve(editingItem, { action: "task", task: draft }))) {
+      throw new Error("Could not add the task");
+    }
     setEditingItem(null);
   };
 
@@ -136,6 +155,11 @@ export default function InboxPage() {
       await refreshAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save that");
+      // Already handled elsewhere: nothing left to dismiss, so let the sheet close.
+      if (mode === "dismiss" && err instanceof ApiError && err.status === 409) {
+        await refreshAll();
+        return;
+      }
       throw err;
     }
   };
@@ -164,7 +188,7 @@ export default function InboxPage() {
           value={capture}
           onChange={(e) => setCapture(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void submitCapture();
             }
@@ -186,6 +210,17 @@ export default function InboxPage() {
 
       {isLoading ? (
         <SkeletonRows rows={3} />
+      ) : error && !data ? (
+        <EmptyState
+          emoji="📡"
+          title="Could not load your inbox"
+          message="Check your connection and try again."
+          action={
+            <Button icon={<IconRefresh className="h-4 w-4" />} onClick={() => void mutate()}>
+              Try again
+            </Button>
+          }
+        />
       ) : fresh.length === 0 ? (
         <EmptyState emoji="🍃" title="Inbox zero. Breathe." message="Nothing waiting on you here." />
       ) : (

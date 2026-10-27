@@ -8,7 +8,9 @@
  * being handed their list. Pure and client-safe.
  */
 import type { CalendarEvent, SessionRole, Task } from "@/lib/types";
-import { isOverdue } from "@/lib/format";
+import { slotOpen } from "@/lib/jointDigest";
+import { isOverdueIn, runtimeZone, timeIn } from "@/lib/tzLabels";
+import { isoFromLocal, localDateKey } from "@/lib/utils";
 
 export interface WeekAheadContext {
   /** tagged for the person being written to */
@@ -21,6 +23,8 @@ export interface WeekAheadContext {
   overdueCount: number;
   /** both calendars for the week, in time order */
   events: CalendarEvent[];
+  /** the user's zone, which the dates in contextLines are written in */
+  tz?: string;
 }
 
 /** Open joint tasks that concern this person, plus the other's workload. */
@@ -28,9 +32,21 @@ export function weekAheadContext(args: {
   tasks: Task[];
   events: CalendarEvent[];
   role: SessionRole;
+  /** settings.tz: the server's own clock is UTC */
+  tz?: string;
+  now?: Date;
 }): WeekAheadContext {
-  const { tasks, events, role } = args;
+  const { tasks, events, role, tz = runtimeZone(), now = new Date() } = args;
   const other: SessionRole = role === "owner" ? "partner" : "owner";
+
+  // In time order by instant: timed starts are UTC or offset strings, and an
+  // all-day date starts at local midnight — compared as text, a Friday 9 PM
+  // dinner would sort after Saturday's all-day event.
+  const startOf = (e: CalendarEvent): number => {
+    const iso = /^\d{4}-\d{2}-\d{2}$/.test(e.start) ? isoFromLocal(e.start, "00:00", tz) : e.start;
+    const at = Date.parse(iso);
+    return Number.isNaN(at) ? Number.MAX_SAFE_INTEGER : at;
+  };
 
   const open = tasks.filter((t) => t.space === "joint" && t.status !== "done" && !t.parentId);
   const mine = open.filter((t) => t.assignedTo === role);
@@ -40,16 +56,35 @@ export function weekAheadContext(args: {
     mine,
     ours,
     theirCount: open.filter((t) => t.assignedTo === other).length,
-    overdueCount: [...mine, ...ours].filter((t) => isOverdue(t.dueAt, t.allDay)).length,
-    events: [...events].sort((a, b) => a.start.localeCompare(b.start)),
+    overdueCount: [...mine, ...ours].filter((t) => isOverdueIn(t.dueAt, t.allDay, tz, now)).length,
+    events: [...events].sort((a, b) => startOf(a) - startOf(b)),
+    tz,
   };
 }
 
-/** Lines for the model: titles only, no ids, nothing of the other person's. */
-export function contextLines(ctx: WeekAheadContext): { mine: string; ours: string; events: string } {
-  const task = (t: Task) => `- ${t.title}${t.dueAt ? ` (due ${t.dueAt.slice(0, 10)})` : ""}`;
+/**
+ * Lines for the model: titles only, no ids, nothing of the other person's.
+ * Dates are the user's local ones — stored instants are UTC, and an evening
+ * deadline sliced as UTC lands on the next day.
+ */
+export function contextLines(
+  ctx: WeekAheadContext,
+  tz: string = ctx.tz ?? runtimeZone(),
+): { mine: string; ours: string; events: string } {
+  const local = (iso: string): string => `${localDateKey(iso, tz)} at ${timeIn(iso, tz)}`;
+  const taskDay = (t: Task): string => {
+    const due = t.dueAt as string;
+    if (Number.isNaN(Date.parse(due))) return due.slice(0, 10);
+    // All-day due dates are stored as local midnight in tz, so tz names the day.
+    return t.allDay ? localDateKey(due, tz) : local(due);
+  };
+  // An all-day event's start is a bare date (or that date's midnight), not
+  // an instant in anyone's zone, so it is taken as written.
+  const eventDay = (e: CalendarEvent): string =>
+    e.allDay || Number.isNaN(Date.parse(e.start)) ? e.start.slice(0, 10) : local(e.start);
+  const task = (t: Task) => `- ${t.title}${t.dueAt ? ` (due ${taskDay(t)})` : ""}`;
   const event = (e: CalendarEvent) =>
-    `- ${e.title}${e.allDay ? " (all day)" : ""} on ${e.start.slice(0, 10)}`;
+    `- ${e.title}${e.allDay ? " (all day)" : ""} on ${eventDay(e)}`;
   return {
     mine: ctx.mine.slice(0, 20).map(task).join("\n"),
     ours: ctx.ours.slice(0, 20).map(task).join("\n"),
@@ -89,13 +124,14 @@ export interface WeekAheadSchedule {
 }
 
 /**
- * Sunday evening, at your own hour, once per week. The week key — not the
- * date — is what stops a repeat, so a clock that slips an hour on a trip
- * can't buy a second copy.
+ * Sunday evening, at your own hour (or a late tick inside the catch-up
+ * window), once per week. The week key — not the date — is what stops a
+ * repeat, so a clock that slips an hour on a trip can't buy a second copy.
  */
 export function shouldSendWeekAhead(args: {
   schedule: WeekAheadSchedule;
   nowTime: string;
+  /** weekday and week key of the slot's own day (yesterday for a late slot past midnight) */
   weekday: number;
   weekKey: string;
   lastSent: string | null;
@@ -104,7 +140,7 @@ export function shouldSendWeekAhead(args: {
   if (!schedule.enabled) return false;
   if (weekday !== WEEK_AHEAD_WEEKDAY) return false;
   if (lastSent === weekKey) return false;
-  return nowTime === normalizeWeekTime(schedule.time);
+  return slotOpen(nowTime, normalizeWeekTime(schedule.time));
 }
 
 /** "7:0" → "07:00"; anything unreadable falls back to the evening default. */

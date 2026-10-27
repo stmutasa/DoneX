@@ -1,13 +1,12 @@
 /**
  * Owner-only: set or clear the partner PIN that opens the joint list.
- * Setting a new PIN also signs out existing partner sessions, so a rotated
- * PIN takes effect immediately on the other phone.
+ * Setting a new PIN also signs out existing partner sessions (and stops their
+ * pushes), so a rotated PIN takes effect immediately on the other phone.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { hashPin, requireOwner } from "@/lib/auth";
-import { getDb } from "@/lib/db";
-import { settingsRepo } from "@/lib/db/repos";
+import { endSessions, hashPin, requireOwner } from "@/lib/auth";
+import { pushRepo, settingsRepo } from "@/lib/db/repos";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +40,9 @@ export async function POST(req: Request) {
   settingsRepo.updateApp({
     joint: { partnerPinHash: parsed.data.pin === null ? "" : hashPin(parsed.data.pin) },
   });
-  getDb().prepare("DELETE FROM sessions WHERE role='partner'").run();
+  // Signing her sessions out also stops pushes to the devices they signed up;
+  // turning access off stops every partner push, however it was registered.
+  endSessions("partner");
+  if (parsed.data.pin === null) pushRepo.removeRole("partner");
   return NextResponse.json({ ok: true, enabled: parsed.data.pin !== null });
 }

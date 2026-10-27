@@ -27,6 +27,10 @@ export function NoteCard({
   const visible = items.slice(0, PREVIEW_ITEMS);
   const hidden = Math.max(0, items.length - PREVIEW_ITEMS);
 
+  // Open with the ticks made on this card, not the list copy, which may not
+  // have caught up yet; the editor saves its items back in full.
+  const open = () => onOpen({ ...note, items });
+
   const toggleItem = async (id: string) => {
     const next = items.map((i) => (i.id === id ? { ...i, done: !i.done } : i));
     setItems(next);
@@ -49,7 +53,7 @@ export function NoteCard({
     >
       <button
         type="button"
-        onClick={() => onOpen(note)}
+        onClick={open}
         className="w-full text-left"
         aria-label={`Open note ${note.title || "Untitled"}`}
       >
@@ -102,7 +106,7 @@ export function NoteCard({
           {hidden > 0 ? (
             <button
               type="button"
-              onClick={() => onOpen(note)}
+              onClick={open}
               className="pl-[26px] pt-0.5 text-[12.5px] text-faint"
             >
               + {hidden} more

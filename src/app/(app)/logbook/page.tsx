@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError, logbookApi, tasksApi } from "@/lib/api";
-import type { LogbookDay } from "@/lib/types";
+import { useSWRConfig } from "swr";
+import { ApiError, logbookApi, matchKey, tasksApi } from "@/lib/api";
+import type { LogbookDay, Task } from "@/lib/types";
 import { dayHeading, timeLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Page } from "@/components/shell/Page";
@@ -13,8 +14,29 @@ import { IconCheck } from "@/components/ui/icons";
 /** Entries are keyed by task + moment, since a repeat is logged many times. */
 const entryKey = (taskId: string, completedAt: string) => `${taskId}-${completedAt}`;
 
+type Unlogged = { removed: boolean; task: Task | null; reopened: boolean };
+
+/** Take exactly this entry out of the log on the server. */
+async function unlog(id: string): Promise<Unlogged> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/logbook?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+  } catch {
+    throw new ApiError("You’re offline — this change needs a connection", 0);
+  }
+  const data = (await res.json().catch(() => null)) as (Unlogged & { error?: string }) | null;
+  if (!res.ok || !data) {
+    throw new ApiError(data?.error ?? `Something went wrong (${res.status})`, res.status);
+  }
+  return data;
+}
+
 export default function LogbookPage() {
   const toast = useToast();
+  const { mutate } = useSWRConfig();
   const [days, setDays] = useState<LogbookDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,18 +72,34 @@ export default function LogbookPage() {
         .filter((d) => d.entries.length > 0),
     );
 
-  /** Untick a logged completion: the task goes back on the open list. */
-  const restore = async (taskId: string, title: string, completedAt: string) => {
+  /**
+   * Untick a logged completion. Exactly the tapped entry leaves the log; a
+   * one-off it left done goes back on the open list, a repeat keeps its date.
+   */
+  const restore = async (entry: LogbookDay["entries"][number]) => {
+    const { taskId, title, completedAt } = entry;
     const key = entryKey(taskId, completedAt);
     if (busy) return;
     setBusy(key);
     try {
-      const { task } = await tasksApi.complete(taskId, false);
+      let task: Task | null;
+      let reopened: boolean;
+      if (entry.id) {
+        ({ task, reopened } = await unlog(entry.id));
+      } else {
+        // An entry from an older cached copy of the log names no id.
+        const res = await tasksApi.complete(taskId, false);
+        task = res.task;
+        reopened = res.task.status === "open" && !res.task.recurrence;
+      }
       dropEntry(taskId, completedAt);
+      void mutate(matchKey("/api/tasks", "/api/stats"));
       toast.success(
-        task.recurrence
+        task?.recurrence
           ? `Removed from the log — “${title}” keeps its next date`
-          : `“${title}” is back on your list`,
+          : reopened
+            ? `“${title}” is back on your list`
+            : "Removed from the log",
       );
     } catch (err) {
       // The task itself may have been deleted since; the log entry outlives it.
@@ -119,7 +157,7 @@ export default function LogbookPage() {
                   >
                     <button
                       type="button"
-                      onClick={() => void restore(entry.taskId, entry.title, entry.completedAt)}
+                      onClick={() => void restore(entry)}
                       disabled={busy !== null}
                       aria-label={`Restore “${entry.title}” to your list`}
                       title="Put this back on your list"

@@ -51,7 +51,14 @@ and tell the assistant: *"Add a task to call the dentist tomorrow at 3."*
 
 **Checking things off:** tap the circle. Tap again if you fat-fingered it.
 Repeating tasks show a ↻ — checking them off just rolls them to the next date
-(that's normal, they're not stuck).
+(that's normal, they're not stuck). An overdue repeat rolls to its next date
+*after today*, not just one step on, and a repeat on the 31st comes back to the
+31st after a short month. A second tap while it's saving is ignored, so a
+double tap can't skip an occurrence.
+
+**A date with no time is an all-day task.** Pick a day in the editor without a
+time (or tap Today / Tomorrow) and it sits on that day with no reminder buzz;
+give it a time when you want one.
 
 **Editing:** tap anywhere on a task to open it — change the date, priority,
 project, tags, add subtasks (like "Oat milk / Coffee / Blueberries" under
@@ -128,6 +135,9 @@ Tap **+ Note** or **+ List** up top, pick a color, pin the important ones,
 search finds anything. Notes save when you tap **Save** — which also puts the
 note away, so you're back to the grid in one tap. Backing out without tapping
 Save keeps your typing too: it saves on the way out rather than discarding it.
+If that save fails (no signal), the note stays open and asks before throwing
+anything away. Archived notes aren't gone: **Show archived** at the top of the
+grid lists them, and each one has **Restore note**.
 
 The trick Keep never had: the assistant can write into them. Say *"add
 sunscreen to the groceries list"* from the couch, or mid-jog in Walk Mode.
@@ -277,8 +287,10 @@ for the screen it's on.
 More → **Logbook** is everything you've finished, newest day first. Ticked
 something off by mistake, or a job turned out not to be done? **Tap the green
 tick** and it goes straight back on your list — the entry leaves the log too.
-(For a repeating task, that only removes the log entry; the repeat keeps its
-next date.)
+It's always the exact entry you tapped. (For a repeating task, that only
+removes the log entry; the repeat keeps its next date.) Your streak and the
+week chart count only what you finished yourself — Annette's ticks on Ours
+don't pad your numbers.
 
 ---
 
@@ -348,6 +360,11 @@ DoneX keeps working without a connection:
   means Wednesday, even if it syncs on Wednesday.
 - **Everything else is read-only offline** — notes editing, the inbox, and
   anything AI (chat, walk mode, triage, plans) needs the connection.
+- **Queued changes belong to whoever made them.** If Annette signs in on a
+  device you used offline, your queued personal changes wait for you instead
+  of landing on Ours. Signing out first sends whatever is waiting, and a
+  sign-out that can't reach the server leaves you signed in with the queue
+  intact.
 
 One habit worth keeping: open the app once while online after installing it,
 so it has something cached to show you later.
@@ -374,7 +391,15 @@ Three kinds, all controlled in Settings → Notifications:
 
 If you haven't yet: Settings → Notifications → **Enable**, and allow the
 permission prompt. On your installed home-screen app, they behave like any
-native app's notifications.
+native app's notifications. Annette turns hers on from the bell in her own
+bar on Ours.
+
+Notifications follow whoever is signed in. Signing out turns them off on that
+device (turn them back on after you sign in again), so a handed-over phone
+stops showing your reminders. If the server is busy or restarting at a
+scheduled time, the briefing, digests and reviews still go out up to two hours
+late rather than being skipped; task reminders more than two hours stale are
+dropped quietly instead of arriving in a burst.
 
 ---
 
@@ -384,7 +409,9 @@ native app's notifications.
 with its own icon, color, and task list. **Tags** (`@phone`, `@errand`,
 `@someday`) are loose crumbs you sprinkle for filtering. Don't overthink it:
 projects for areas of life, tags for moods and contexts. Or use neither — the
-assistant copes fine.
+assistant copes fine. An archived project waits under **Archived** at the
+bottom of Projects with a **Restore** button, and quick-adding `#ThatName`
+brings it back rather than making a twin.
 
 ---
 
@@ -559,7 +586,9 @@ The backup takes **two** choices: the provider, and then the model on it.
 Leave that second one on **Auto** and it follows whatever is newest there,
 re-checked daily. Pick one and it is pinned — failover uses exactly that and
 won't move you onto a newer, pricier flagship the day one ships. The **In use
-right now** box says which you're on, `(pinned)` or `(newest)`.
+right now** box says which you're on, `(pinned)` or `(newest)`. A **Custom**
+backup on Auto is the exception: it uses the Model id you set for Custom, since
+a custom host lists everything it serves, embeddings included.
 
 Two rules worth knowing, because both used to cause silent surprises:
 
@@ -588,18 +617,23 @@ work; they just open that row's own page.
   endpoint, any time. The dropdown lists whatever your keys can access.
 - **Backup model** (under AI Models) — pick a second provider and DoneX
   retries there automatically whenever the main one fails: expired key,
-  rate limit, outage, or a model that just won't answer. You don't choose a
-  model: it uses that provider's newest and re-checks daily, so it moves to a
-  newer one on its own when they ship it. It applies everywhere
+  rate limit, outage, or a model that just won't answer. Pin a model for it or
+  leave it on Auto (see *Choosing the model* above). It applies everywhere
   — chat, walk mode, briefings, reviews and inbox triage. When it happens,
   the AI section shows what filled in and what the main provider said, so you
-  find out from the app rather than from silence. It needs an API key stored
-  for that second provider; without one the backup can't run and the section
-  says so.
+  find out from the app rather than from silence. It needs that second
+  provider's API key set in Railway; without one the backup can't run and the
+  section says so. A plain rate limit fails over quietly; only a dead key, an
+  empty balance or a permission problem pings you (once a day).
 - **Test connection** (under AI Models) — the fastest way to find out whether a
   key still works. It reports the provider's own words: "Incorrect API key"
   means expired or revoked, a rate-limit message means quota, anything about
   the model means the model id is wrong.
+- **PINs and sign-in** — after five wrong PINs a device has to wait, and the
+  wait doubles each time; devices DoneX hasn't seen you sign in on share 20
+  wrong tries a day, after which you get one alert. Your own phone keeps
+  working through all of that. Changing your PIN signs out your other
+  devices, and your PIN can't be the same as Annette's.
 - **Voice** — pick the voice it speaks with (try a few with 🔊) and the speed.
 - **Appearance** — dark, light, or follow the system.
 - **Capture** — your SMS webhook token lives here if you ever re-do MacroDroid.

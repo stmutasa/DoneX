@@ -18,8 +18,13 @@ export default function SettingsPage() {
   const { data: google } = useSWR<GoogleStatus>(keys.googleStatus(), fetcher);
 
   // Legacy deep links (/settings#ai from old buttons, bookmarks, docs) land
-  // on the matching sub-page.
+  // on the matching sub-page. So does a Google sign-in result
+  // (?google=connected|error), which only the Google page reads.
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("google")) {
+      router.replace(`/settings/google${window.location.search}`);
+      return;
+    }
     const slug = window.location.hash.slice(1);
     if (slug && findSection(slug)) router.replace(`/settings/${slug}`);
   }, [router]);

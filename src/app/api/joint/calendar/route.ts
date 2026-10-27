@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   const events: JointCalendarEntry[] = [];
   const warnings: string[] = [];
   const joint = settings.joint;
-  const window = { fromIso, toIso };
+  const window = { fromIso, toIso, tz };
 
   const [mine, theirs] = await Promise.all([
     ownerEvents(joint, window),
@@ -47,7 +47,10 @@ export async function GET(req: NextRequest) {
     if (result.warning) warnings.push(result.warning);
   }
 
-  events.sort((a, b) => a.start.localeCompare(b.start));
+  // In time order, not string order: an all-day date starts at local midnight.
+  const at = (e: CalendarEvent) =>
+    Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(e.start) ? isoFromLocal(e.start, "00:00", tz) : e.start);
+  events.sort((a, b) => at(a) - at(b));
 
   // Dated joint tasks ride along so "pick up the cake sat 2pm" shows here too.
   const tasks = tasksRepo
@@ -55,5 +58,6 @@ export async function GET(req: NextRequest) {
     .filter((t) => t.dueAt !== null && t.dueAt >= fromIso && t.dueAt < toIso)
     .slice(0, 50);
 
-  return NextResponse.json({ events, tasks, warnings, days, from: fromIso, to: toIso });
+  // `fromKey` lets the client tell this window's answer from a previous one.
+  return NextResponse.json({ events, tasks, warnings, days, from: fromIso, to: toIso, fromKey: startKey });
 }

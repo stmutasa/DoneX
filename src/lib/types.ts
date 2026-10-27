@@ -235,7 +235,12 @@ export type ChatStreamEvent =
       text: string;
       activity: ToolActivity[];
     }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      /** the conversation the failed turn was saved in, so a retry joins it */
+      conversationId?: string;
+    };
 
 // ── Settings ───────────────────────────────────────────────────────────────
 
@@ -422,6 +427,11 @@ export interface SecretMark {
 
 // ── Google integration ─────────────────────────────────────────────────────
 
+/**
+ * One calendar event, the same shape from every feed. Timed events carry UTC
+ * (Z-form) instants; all-day events carry bare "YYYY-MM-DD" dates with an
+ * exclusive end, which belong to that calendar day wherever they are viewed.
+ */
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -429,6 +439,8 @@ export interface CalendarEvent {
   end: string; // ISO
   allDay: boolean;
   location: string | null;
+  /** IANA zone the event ends in, when the calendar names one (a flight's arrival) */
+  endTimeZone?: string;
 }
 
 export interface GmailScanState {
@@ -486,7 +498,8 @@ export interface NearbyTask {
 /** GET /api/logbook response entry */
 export interface LogbookDay {
   dateLocal: string;
-  entries: { taskId: string; title: string; completedAt: string }[];
+  /** `id` names the completion itself, so one entry can be taken back out */
+  entries: { id?: string; taskId: string; title: string; completedAt: string }[];
 }
 
 // ── Model registry ─────────────────────────────────────────────────────────

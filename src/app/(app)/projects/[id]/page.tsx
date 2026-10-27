@@ -18,6 +18,9 @@ import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
 
+/** Archived projects included, so an archived one still opens here and can be restored. */
+const PROJECTS_KEY = `${keys.projects()}?includeArchived=1`;
+
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
@@ -26,10 +29,7 @@ export default function ProjectDetailPage() {
   const toast = useToast();
   const { mutate: globalMutate } = useSWRConfig();
 
-  const { data: projectData, mutate: mutateProjects } = useSWR<{ projects: Project[] }>(
-    keys.projects(),
-    fetcher,
-  );
+  const { data: projectData } = useSWR<{ projects: Project[] }>(PROJECTS_KEY, fetcher);
   const { data, isLoading } = useSWR<{ tasks: Task[] }>(
     id ? keys.tasks({ projectId: id, includeDone: true }) : null,
     fetcher,
@@ -55,7 +55,8 @@ export default function ProjectDetailPage() {
     if (!project) return;
     try {
       await projectsApi.update(project.id, { archived: !project.archived });
-      await mutateProjects();
+      // Every projects list, including the pickers that leave archived ones out.
+      await globalMutate(matchKey("/api/projects"));
       toast.success(project.archived ? "Project restored" : "Project archived");
       if (!project.archived) router.push("/projects");
     } catch (err) {
@@ -119,6 +120,17 @@ export default function ProjectDetailPage() {
         </div>
       </header>
 
+      {project?.archived ? (
+        <div className="mb-5 flex items-center gap-3 rounded-2xl border border-stroke bg-elev px-4 py-3">
+          <p className="min-w-0 flex-1 text-[13.5px] leading-relaxed text-muted">
+            This project is archived. Restore it to put it back in your projects list.
+          </p>
+          <Button size="sm" icon={<IconArchive className="h-4 w-4" />} onClick={archive}>
+            Restore
+          </Button>
+        </div>
+      ) : null}
+
       <div className="mb-5 flex gap-2">
         <Button
           block
@@ -168,7 +180,7 @@ export default function ProjectDetailPage() {
         open={editingProject}
         project={project}
         onClose={() => setEditingProject(false)}
-        onSaved={() => void mutateProjects()}
+        onSaved={() => void globalMutate(matchKey("/api/projects"))}
       />
       <TaskEditor open={!!editingTask} task={editingTask} onClose={() => setEditingTask(null)} />
       <QuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} projectId={id} />

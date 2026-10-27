@@ -8,29 +8,51 @@ interface InstallPromptEvent extends Event {
 }
 
 let deferred: InstallPromptEvent | null = null;
+let installedNow = false;
+let capturing = false;
+const subscribers = new Set<() => void>();
 
-/** Captures `beforeinstallprompt` so the app can offer an Install row later. */
+const notify = () => subscribers.forEach((fn) => fn());
+
+/**
+ * Starts listening for the browser's install offer; safe to call repeatedly.
+ * Browsers fire `beforeinstallprompt` once per page load, soon after it, and
+ * usually long before Settings opens, so this runs as soon as the module is
+ * first imported rather than when a component mounts.
+ */
+export function captureInstallPrompt(): void {
+  if (capturing || typeof window === "undefined") return;
+  capturing = true;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e as InstallPromptEvent;
+    notify();
+  });
+  window.addEventListener("appinstalled", () => {
+    deferred = null;
+    installedNow = true;
+    notify();
+  });
+}
+
+captureInstallPrompt();
+
+/** Offers the captured `beforeinstallprompt` so the app can show an Install row. */
 export function useInstallPrompt() {
   const [available, setAvailable] = useState(!!deferred);
-  const [installed, setInstalled] = useState(false);
+  const [installed, setInstalled] = useState(installedNow);
 
   useEffect(() => {
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      deferred = e as InstallPromptEvent;
-      setAvailable(true);
+    captureInstallPrompt();
+    const sync = () => {
+      setAvailable(!!deferred);
+      if (installedNow) setInstalled(true);
     };
-    const onInstalled = () => {
-      deferred = null;
-      setAvailable(false);
-      setInstalled(true);
-    };
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
+    subscribers.add(sync);
+    sync();
     if (window.matchMedia?.("(display-mode: standalone)").matches) setInstalled(true);
     return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
+      subscribers.delete(sync);
     };
   }, []);
 
@@ -38,7 +60,7 @@ export function useInstallPrompt() {
     if (!deferred) return false;
     const event = deferred;
     deferred = null;
-    setAvailable(false);
+    notify();
     try {
       await event.prompt();
       const choice = await event.userChoice;

@@ -18,9 +18,60 @@ const PRECACHE = [
 
 // Read endpoints that make the app browsable offline. Everything else on
 // /api (auth, chat streams, health/update checks, exports) stays live-only.
+// auth/me is kept so the shell knows whose app it is offline. All of it is
+// personal: it goes on sign-out, and as soon as the server says the session
+// is gone (see networkFirst).
 const CACHEABLE_API = new RegExp(
-  "^/api/(tasks|tags|projects|notes|inbox$|inbox\\?|stats|logbook|nearby|calendar/today|assistant/(plan|briefing|review)|settings$|google/status)",
+  "^/api/(tasks|tags|projects|notes|inbox$|inbox\\?|stats|logbook|nearby|calendar/today|assistant/(plan|briefing|review)|settings$|google/status|auth/me$)",
 );
+// Set on an API answer served from DATA_CACHE, so the page can tell a stale
+// copy from a live one (src/lib/offline.ts reads it).
+const FROM_CACHE_HEADER = "x-donex-cache";
+
+// Bumped whenever the personal data goes (sign-out, a 401). A fetch that
+// started before the purge must not write its answer back after it.
+let dataEpoch = 0;
+
+function putData(request, response, epoch) {
+  if (epoch !== dataEpoch) return;
+  caches
+    .open(DATA_CACHE)
+    .then((cache) => {
+      if (epoch === dataEpoch) return cache.put(request, response);
+    })
+    .catch(() => undefined);
+}
+
+// Content-hashed bundles and icons hold nothing personal; everything else in
+// DATA_CACHE (API answers, visited pages) belongs to whoever was signed in.
+function isSharedAsset(pathname) {
+  return pathname.startsWith("/_next/static") || pathname.startsWith("/icons");
+}
+
+async function clearPersonalData() {
+  dataEpoch += 1;
+  try {
+    const cache = await caches.open(DATA_CACHE);
+    const entries = await cache.keys();
+    await Promise.all(
+      entries
+        .filter((r) => !isSharedAsset(new URL(r.url).pathname))
+        .map((r) => cache.delete(r)),
+    );
+  } catch (err) {
+    /* best effort; the page purges too */
+  }
+}
+
+function markFromCache(response) {
+  const headers = new Headers(response.headers);
+  headers.set(FROM_CACHE_HEADER, "1");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -65,17 +116,27 @@ async function pruneStatic() {
 
 /** Network first; successes refresh DATA_CACHE, failures fall back to it. */
 function networkFirst(request, fallbackUrl) {
+  const epoch = dataEpoch;
   return fetch(request)
     .then((response) => {
       if (response && response.status === 200) {
-        const copy = response.clone();
-        caches.open(DATA_CACHE).then((cache) => cache.put(request, copy));
+        putData(request, response.clone(), epoch);
+      } else if (response && response.status === 401) {
+        // Signed out: nothing cached belongs to anyone signed in any more.
+        clearPersonalData();
+      } else if (response && response.status === 403) {
+        // Not this session's to see: the copy kept for whoever could see it
+        // must not keep answering offline.
+        caches
+          .open(DATA_CACHE)
+          .then((cache) => cache.delete(request))
+          .catch(() => undefined);
       }
       return response;
     })
     .catch(async () => {
       const cached = await caches.match(request, { ignoreSearch: false });
-      if (cached) return cached;
+      if (cached) return markFromCache(cached);
       if (fallbackUrl) {
         const fallback = await caches.match(fallbackUrl);
         if (fallback) return fallback;
@@ -102,13 +163,11 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     // Visited pages are cached, so the app opens offline to real content;
     // a never-visited page falls back to Today, then the offline screen.
+    const epoch = dataEpoch;
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response && response.status === 200) {
-            const copy = response.clone();
-            caches.open(DATA_CACHE).then((cache) => cache.put(request, copy));
-          }
+          if (response && response.status === 200) putData(request, response.clone(), epoch);
           return response;
         })
         .catch(async () => {
@@ -144,6 +203,12 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
+  // Sign-out (src/lib/offline.ts): drop the signed-in person's cached data,
+  // then answer on the port so the page knows it is gone.
+  if (event.data && event.data.type === "CLEAR_DATA") {
+    const port = event.ports && event.ports[0];
+    event.waitUntil(clearPersonalData().then(() => port && port.postMessage({ ok: true })));
+  }
 });
 
 self.addEventListener("push", (event) => {
@@ -162,8 +227,37 @@ self.addEventListener("push", (event) => {
       // status bar; a colour icon here shows up as a featureless box.
       badge: "/icons/badge-96.png",
       tag: data.tag,
+      // Reminders reuse one tag per task (task-<id>), so a repeat or a
+      // rescheduled reminder replaces the one still showing. Without this
+      // the replacement arrives silently: no sound, no vibration.
+      renotify: !!data.tag,
       data: { url: data.url },
     }),
+  );
+});
+
+// The browser can rotate a subscription while the app is closed; tell the
+// server now rather than on the next app load. Same body as pushApi.subscribe
+// (src/app/api/push/subscribe/route.ts).
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const resubscribe = event.newSubscription
+    ? Promise.resolve(event.newSubscription)
+    : event.oldSubscription && event.oldSubscription.options
+      ? // Some browsers hand over only the old one; subscribe again with its options.
+        self.registration.pushManager.subscribe(event.oldSubscription.options)
+      : Promise.resolve(null);
+  event.waitUntil(
+    resubscribe
+      .then((subscription) => {
+        if (!subscription) return undefined;
+        return fetch("/api/push/subscribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ subscription: subscription.toJSON() }),
+        });
+      })
+      .catch(() => undefined),
   );
 });
 

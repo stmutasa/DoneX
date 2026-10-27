@@ -202,6 +202,14 @@ describe("shouldSendWeekAhead", () => {
     expect(shouldSendWeekAhead({ ...base, nowTime: "17:59", schedule: on })).toBe(false);
   });
 
+  it("catches up a late or skipped tick, but not once the evening has moved on", () => {
+    const base = { schedule: on, weekday: 0, weekKey: "2026-W38", lastSent: null };
+    expect(shouldSendWeekAhead({ ...base, nowTime: "18:01" })).toBe(true);
+    expect(shouldSendWeekAhead({ ...base, nowTime: "19:59" })).toBe(true);
+    expect(shouldSendWeekAhead({ ...base, nowTime: "20:00" })).toBe(false);
+    expect(shouldSendWeekAhead({ ...base, nowTime: "18:30", lastSent: "2026-W38" })).toBe(false);
+  });
+
   it("reads a sloppily stored time", () => {
     expect(
       shouldSendWeekAhead({
@@ -232,5 +240,73 @@ describe("weekWindow", () => {
   it("crosses a month and a year without help", () => {
     expect(weekWindow("2026-08-30")).toEqual({ fromKey: "2026-08-31", toKey: "2026-09-07" });
     expect(weekWindow("2026-12-27")).toEqual({ fromKey: "2026-12-28", toKey: "2027-01-04" });
+  });
+});
+
+describe("in the user's timezone", () => {
+  // vitest runs in UTC here, like the server. The user is in New York.
+  const TZ = "America/New_York";
+
+  it("doesn't count Sunday's all-day tasks late at 8 PM, when UTC is already Monday", () => {
+    const sunday = task({ assignedTo: "owner", dueAt: "2026-10-25T04:00:00.000Z", allDay: true });
+    const saturday = task({ assignedTo: "owner", dueAt: "2026-10-24T04:00:00.000Z", allDay: true });
+    const ctx = weekAheadContext({
+      tasks: [sunday, saturday],
+      events: [],
+      role: "owner",
+      tz: TZ,
+      now: new Date("2026-10-26T00:00:00Z"), // Sun 8:00 PM EDT
+    });
+    expect(ctx.overdueCount).toBe(1);
+  });
+
+  it("dates evening tasks and events on the local day, with the local time", () => {
+    const ctx = weekAheadContext({
+      tasks: [
+        task({ title: "book the sitter", dueAt: "2026-10-28T00:30:00.000Z" }), // Tue 8:30 PM EDT
+        task({ title: "school form", dueAt: "2026-10-29T04:00:00.000Z", allDay: true }), // Thu
+      ],
+      events: [
+        { ...ev("Dinner out", "2026-10-31T00:30:00.000Z") }, // Fri 8:30 PM EDT, from an ICS feed
+        { ...ev("Pumpkin patch", "2026-10-31"), allDay: true }, // Google all-day
+      ],
+      role: "owner",
+      tz: TZ,
+      now: new Date("2026-10-25T22:00:00Z"),
+    });
+    const lines = contextLines(ctx);
+    expect(lines.ours).toBe(
+      "- book the sitter (due 2026-10-27 at 8:30 PM)\n- school form (due 2026-10-29)",
+    );
+    expect(lines.events).toContain("- Dinner out on 2026-10-30 at 8:30 PM");
+    expect(lines.events).toContain("- Pumpkin patch (all day) on 2026-10-31");
+  });
+
+  it("puts the calendar in time order across forms, so the cut keeps the earliest", () => {
+    const ctx = weekAheadContext({
+      tasks: [],
+      events: [
+        { ...ev("Saturday market", "2026-10-31"), allDay: true }, // all-day, from midnight EDT
+        ev("Friday dinner", "2026-10-31T01:00:00Z"), // Fri 9:00 PM EDT
+        ev("Friday lunch", "2026-10-30T12:00:00-04:00"),
+      ],
+      role: "owner",
+      tz: TZ,
+    });
+    expect(ctx.events.map((e) => e.title)).toEqual([
+      "Friday lunch",
+      "Friday dinner",
+      "Saturday market",
+    ]);
+  });
+
+  it("keeps the local date right across the end of daylight time", () => {
+    const ctx = weekAheadContext({
+      tasks: [],
+      events: [ev("Movie night", "2026-11-02T00:30:00.000Z")], // Sun Nov 1, 7:30 PM EST
+      role: "owner",
+      tz: TZ,
+    });
+    expect(contextLines(ctx).events).toBe("- Movie night on 2026-11-01 at 7:30 PM");
   });
 });

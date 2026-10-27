@@ -51,6 +51,32 @@ describe("salvageJson / extractJsonObject", () => {
     expect(extractJsonObject(raw)).toEqual({ a: 'he said "hi {ok}" twice', b: [1, 2] });
   });
 
+  describe("a payload whose strings carry code fences of their own", () => {
+    const NOTE = {
+      decision: "note",
+      note: { title: "x", content: "Run:\n```bash\nnpm i\n```\nthanks" },
+    };
+
+    it("reads bare JSON as it is", () => {
+      expect(extractJsonObject(JSON.stringify(NOTE))).toEqual(NOTE);
+      expect(extractJsonObject(JSON.stringify(NOTE, null, 2))).toEqual(NOTE);
+    });
+
+    it("unwraps an outer fence up to the last closing one", () => {
+      expect(extractJsonObject("```json\n" + JSON.stringify(NOTE) + "\n```")).toEqual(NOTE);
+      expect(extractJsonObject("```\n" + JSON.stringify(NOTE, null, 2) + "\n```")).toEqual(NOTE);
+    });
+
+    it("still finds it inside prose around a fence", () => {
+      expect(extractJsonObject("Here it is:\n```json\n" + JSON.stringify(NOTE) + "\n```\nDone.")).toEqual(NOTE);
+    });
+
+    it("still salvages a fenced reply cut off before its closing fence", () => {
+      const cut = "```json\n" + '{"tasks": [{"title": "A"}, {"title": "B';
+      expect((extractJsonObject(cut) as { tasks: unknown[] }).tasks).toEqual([{ title: "A" }]);
+    });
+  });
+
   it("returns null when nothing is recoverable", () => {
     expect(salvageJson("no json here at all")).toBeNull();
     expect(extractJsonObject("")).toBeNull();

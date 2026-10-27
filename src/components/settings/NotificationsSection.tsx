@@ -1,86 +1,33 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { pushApi } from "@/lib/api";
+import { ApiError, pushApi } from "@/lib/api";
 import { WEEKDAY_NAMES } from "@/lib/format";
+import { pushSupported, usePushDevice } from "@/lib/pushClient";
 import { Button } from "@/components/ui/Button";
 import { Select, SwitchRow } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { SettingsCard, Divider, useSettingsPatch, type SectionProps } from "./common";
-
-function urlBase64ToUint8Array(base64: string) {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const normalized = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = window.atob(normalized);
-  const out = new Uint8Array(new ArrayBuffer(raw.length));
-  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
-  if (!("serviceWorker" in navigator)) return null;
-  const existing = await navigator.serviceWorker.getRegistration();
-  if (existing) return existing;
-  try {
-    return await navigator.serviceWorker.register("/sw.js");
-  } catch {
-    return null;
-  }
-}
 
 export function NotificationsSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
   const toast = useToast();
   const n = settings.notifications;
 
+  // Re-posts this device's subscription on mount (shared with the shell's,
+  // so it happens once), so "Enabled" means the server has it too.
+  const push = usePushDevice(true);
   const [supported, setSupported] = useState(true);
-  const [subscribed, setSubscribed] = useState(false);
-  const [working, setWorking] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  useEffect(() => {
-    const ok =
-      typeof window !== "undefined" &&
-      "Notification" in window &&
-      "serviceWorker" in navigator &&
-      "PushManager" in window;
-    setSupported(ok);
-    if (!ok) return;
-    void (async () => {
-      const reg = await navigator.serviceWorker.getRegistration();
-      const sub = await reg?.pushManager.getSubscription();
-      setSubscribed(!!sub && Notification.permission === "granted");
-    })();
-  }, []);
+  useEffect(() => setSupported(pushSupported()), []);
 
   const enable = async () => {
-    setWorking(true);
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        toast.error("Notifications are blocked for this site.");
-        return;
-      }
-      const reg = await getRegistration();
-      if (!reg) {
-        toast.error("Service worker unavailable — try after a reload.");
-        return;
-      }
-      const { publicKey } = await pushApi.vapid();
-      const existing = await reg.pushManager.getSubscription();
-      const sub =
-        existing ??
-        (await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
-        }));
-      await pushApi.subscribe(sub.toJSON());
-      setSubscribed(true);
+      await push.enable();
       toast.success("Notifications on");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not enable notifications");
-    } finally {
-      setWorking(false);
     }
   };
 
@@ -91,10 +38,17 @@ export function NotificationsSection({ settings, mutate }: SectionProps) {
       toast.success("Test notification sent");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not send a test");
+      // Nothing arrived (or nothing was signed up), so offer the way to sign
+      // this device up again.
+      if (err instanceof ApiError && (err.status === 409 || err.status === 502)) {
+        push.setSubscribed(false);
+      }
     } finally {
       setTesting(false);
     }
   };
+
+  const { subscribed, working } = push;
 
   return (
     <SettingsCard

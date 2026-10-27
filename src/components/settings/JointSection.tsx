@@ -12,6 +12,7 @@ import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { Segmented } from "@/components/ui/Segmented";
 import { IconCheck } from "@/components/ui/icons";
+import { DraftTimeInput } from "@/components/joint/DraftTimeInput";
 import { Divider, SettingsCard, useSettingsPatch, type SectionProps } from "./common";
 
 type PartnerCalKind = "shared" | "icloud" | "google";
@@ -229,14 +230,21 @@ export function JointSection({ settings, mutate }: SectionProps) {
                   autoCapitalize="none"
                   value={partnerGoogleId}
                   onChange={(e) => setPartnerGoogleId(e.target.value.trim())}
-                  onBlur={() => {
+                  onBlur={async () => {
                     const v = partnerGoogleId.trim();
-                    if (!v || v === settings.joint.partnerGoogleId) return;
+                    if (v === settings.joint.partnerGoogleId) return;
+                    if (!v) {
+                      // An emptied field means stop reading her calendar.
+                      void patch({ joint: { partnerGoogleId: "__clear__" } }, "Address removed");
+                      return;
+                    }
                     // A pasted link would otherwise keep winning over the address.
-                    void patch(
+                    const ok = await patch(
                       { joint: { partnerGoogleId: v, partnerIcsUrl: "__clear__" } },
                       "Saved — now tap Test",
                     );
+                    // The link is gone on the server, so a stale draft mustn't re-save it.
+                    if (ok) setPartnerIcs("");
                   }}
                 />
               ) : (
@@ -247,16 +255,34 @@ export function JointSection({ settings, mutate }: SectionProps) {
                   }
                   value={partnerIcs}
                   onChange={(e) => setPartnerIcs(e.target.value)}
-                  onBlur={() => {
+                  onBlur={async () => {
                     const v = partnerIcs.trim();
                     if (!v) return;
-                    void patch(
+                    const ok = await patch(
                       { joint: { partnerIcsUrl: v, partnerGoogleId: "__clear__" } },
                       "Saved — now tap Test",
                     );
+                    // The address is gone on the server, so a stale draft mustn't re-save it.
+                    if (ok) {
+                      setPartnerIcs("");
+                      setPartnerGoogleId("");
+                    }
                   }}
                 />
               )}
+              {partnerCalKind !== "shared" && settings.joint.partnerIcsSet ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    if (await patch({ joint: { partnerIcsUrl: "__clear__" } }, "Link removed")) {
+                      setPartnerIcs("");
+                    }
+                  }}
+                >
+                  Remove {partnerLabel}&apos;s link
+                </Button>
+              ) : null}
 
               <div className="flex items-center gap-2">
                 <Button size="sm" loading={testing === "partner"} onClick={() => void runTest("partner")}>
@@ -282,11 +308,26 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 placeholder={settings.joint.ownerIcsSet ? "Saved — paste to replace" : "Leave empty to use Google"}
                 value={ownerIcs}
                 onChange={(e) => setOwnerIcs(e.target.value)}
-                onBlur={() => {
+                onBlur={async () => {
                   const v = ownerIcs.trim();
-                  if (v) void patch({ joint: { ownerIcsUrl: v } }, "Your calendar link saved");
+                  if (v && (await patch({ joint: { ownerIcsUrl: v } }, "Your calendar link saved"))) {
+                    setOwnerIcs("");
+                  }
                 }}
               />
+              {settings.joint.ownerIcsSet ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    if (await patch({ joint: { ownerIcsUrl: "__clear__" } }, "Back to your Google calendar")) {
+                      setOwnerIcs("");
+                    }
+                  }}
+                >
+                  Remove your link and use Google
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -306,7 +347,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 enabled={settings.joint.ownerDigestEnabled}
                 time={settings.joint.ownerDigestTime}
                 onEnabled={(v) => void patch({ joint: { ownerDigestEnabled: v } }, "Digest updated")}
-                onTime={(v) => void patch({ joint: { ownerDigestTime: v } }, "Digest time saved")}
+                onTime={(v) => patch({ joint: { ownerDigestTime: v } }, "Digest time saved")}
               />
               <DigestControls
                 label={`${partnerLabel}’s`}
@@ -314,7 +355,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 enabled={settings.joint.partnerDigestEnabled}
                 time={settings.joint.partnerDigestTime}
                 onEnabled={(v) => void patch({ joint: { partnerDigestEnabled: v } }, "Digest updated")}
-                onTime={(v) => void patch({ joint: { partnerDigestTime: v } }, "Digest time saved")}
+                onTime={(v) => patch({ joint: { partnerDigestTime: v } }, "Digest time saved")}
               />
             </div>
           </div>
@@ -337,9 +378,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
                 onEnabled={(v) =>
                   void patch({ joint: { ownerWeekAheadEnabled: v } }, "Week ahead updated")
                 }
-                onTime={(v) =>
-                  void patch({ joint: { ownerWeekAheadTime: v } }, "Week ahead time saved")
-                }
+                onTime={(v) => patch({ joint: { ownerWeekAheadTime: v } }, "Week ahead time saved")}
               />
               <DigestControls
                 label={`${partnerLabel}’s`}
@@ -350,7 +389,7 @@ export function JointSection({ settings, mutate }: SectionProps) {
                   void patch({ joint: { partnerWeekAheadEnabled: v } }, "Week ahead updated")
                 }
                 onTime={(v) =>
-                  void patch({ joint: { partnerWeekAheadTime: v } }, "Week ahead time saved")
+                  patch({ joint: { partnerWeekAheadTime: v } }, "Week ahead time saved")
                 }
               />
             </div>
@@ -375,11 +414,10 @@ export function JointSection({ settings, mutate }: SectionProps) {
               />
               <div className="mt-2.5 flex items-center justify-between gap-3">
                 <span className="text-[13px] text-muted">Checked at</span>
-                <input
-                  type="time"
+                <DraftTimeInput
                   value={normalizeTime(settings.joint.nudgeTime)}
                   disabled={!settings.joint.nudgeEnabled}
-                  onChange={(e) => void patch({ joint: { nudgeTime: e.target.value } }, "Nudge time saved")}
+                  onSave={(v) => patch({ joint: { nudgeTime: v } }, "Nudge time saved")}
                   className="min-h-[40px] rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none focus:border-stroke-strong disabled:opacity-50"
                 />
               </div>
@@ -450,18 +488,18 @@ function DigestControls({
   enabled: boolean;
   time: string;
   onEnabled: (next: boolean) => void;
-  onTime: (next: string) => void;
+  /** Resolves true once the time is saved. */
+  onTime: (next: string) => Promise<boolean>;
 }) {
   return (
     <div className="rounded-2xl border border-stroke bg-sunken p-3">
       <SwitchRow label={`${label} ${what}`} checked={enabled} onChange={onEnabled} />
       <div className="mt-2.5 flex items-center justify-between gap-3">
         <span className="text-[13px] text-muted">Sent at</span>
-        <input
-          type="time"
+        <DraftTimeInput
           value={normalizeTime(time)}
           disabled={!enabled}
-          onChange={(e) => onTime(e.target.value)}
+          onSave={onTime}
           className="min-h-[40px] rounded-xl border border-stroke bg-elev px-3 text-[15px] text-ink outline-none focus:border-stroke-strong disabled:opacity-50"
         />
       </div>

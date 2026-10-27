@@ -67,6 +67,37 @@ describe("selectGeminiModels", () => {
     expect(list.find((m) => m.id === GEMINI_ARGON_ID)?.label).toBe("Gemini 4 Argon");
   });
 
+  it("puts the highest version first, not whatever sorts last as a string", () => {
+    const list = selectGeminiModels(
+      raw(
+        "models/gemini-3.8-pro",
+        "models/gemini-4-argon",
+        "models/gemini-flash-lite-latest",
+        "models/gemini-pro-latest",
+        "models/gemini-robotics-er-1.5-preview",
+        "models/gemini-2.5-computer-use-preview-10-2025",
+      ),
+    ).map((m) => m.id);
+    expect(list[0]).toBe(GEMINI_ARGON_ID);
+    expect(list.slice(0, 2)).toEqual(["gemini-4-argon", "gemini-3.8-pro"]);
+    // aliases with no version of their own go after every numbered release
+    expect(list.slice(2).sort()).toEqual(["gemini-flash-lite-latest", "gemini-pro-latest"]);
+    expect(list.some((id) => /robotics|computer-use/.test(id))).toBe(false);
+  });
+
+  it("reads versions as numbers, and prefers a stable release to a preview of it", () => {
+    const ids = selectGeminiModels(
+      raw("gemini-9-pro", "gemini-10-flash-preview", "gemini-10-flash", "gemini-3.10-pro", "gemini-3.8-pro"),
+    ).map((m) => m.id);
+    expect(ids.slice(0, 5)).toEqual([
+      "gemini-10-flash",
+      "gemini-10-flash-preview",
+      "gemini-9-pro",
+      "gemini-3.10-pro",
+      "gemini-3.8-pro",
+    ]);
+  });
+
   it("still offers an Argon slot when this key isn't given it — but last, and saying so", () => {
     const list = selectGeminiModels(raw("gemini-3.8-flash", "gemini-3.8-pro"));
     expect(list.at(-1)).toEqual({ id: "gemini-4-argon", label: "Gemini 4 Argon — not offered to this key yet" });

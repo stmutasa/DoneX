@@ -22,6 +22,8 @@ export interface InboxNoteSource {
   receivedAt: string;
   /** why a deadline was chosen, when the message didn't name one — null when it did */
   suggestedDeadline?: string | null;
+  /** the user's zone (settings.tz), so the date is the day they received it */
+  tz?: string;
 }
 
 function collapse(text: string): string {
@@ -37,10 +39,17 @@ function excerpt(content: string): string {
   return `${(stop >= MAX_EXCERPT / 2 ? cut.slice(0, stop + 1) : cut).trim()}…`;
 }
 
-function whenLabel(receivedAt: string): string {
+function whenLabel(receivedAt: string, tz?: string): string {
   const ms = Date.parse(receivedAt);
   if (!Number.isFinite(ms)) return "";
-  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  // This runs on the server, whose clock is UTC: without the user's zone an
+  // evening email would be dated the next day.
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  try {
+    return new Date(ms).toLocaleDateString("en-US", tz ? { ...opts, timeZone: tz } : opts);
+  } catch {
+    return new Date(ms).toLocaleDateString("en-US", opts);
+  }
 }
 
 function sourceLabel(source: string): string {
@@ -55,7 +64,7 @@ export function composeInboxNotes(input: InboxNoteSource): string {
   const body = summary || excerpt(input.content);
 
   const who = collapse(input.fromLabel).slice(0, 120);
-  const when = whenLabel(input.receivedAt);
+  const when = whenLabel(input.receivedAt, input.tz);
   const parts = [`From ${who || "an unknown sender"}`, sourceLabel(input.source), when].filter(
     Boolean,
   );

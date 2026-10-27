@@ -5,11 +5,11 @@ import useSWR from "swr";
 import { differenceInCalendarDays } from "date-fns";
 import { fetcher, keys } from "@/lib/api";
 import type { Project, Task } from "@/lib/types";
-import { dateKey, dayHeading, monthHeading } from "@/lib/format";
+import { allDayKey, dateKey, dayHeading, keyToDate, monthHeading } from "@/lib/format";
 import { Page } from "@/components/shell/Page";
 import { PageHeader, EmptyState, SkeletonRows } from "@/components/ui/Misc";
 import { Button } from "@/components/ui/Button";
-import { IconPlus } from "@/components/ui/icons";
+import { IconPlus, IconRefresh } from "@/components/ui/icons";
 import { TaskEditor } from "@/components/tasks/TaskEditor";
 import { TaskGroup, TaskList } from "@/components/tasks/TaskList";
 import { QuickAddSheet } from "@/components/tasks/QuickAdd";
@@ -26,8 +26,9 @@ function buildBuckets(tasks: Task[]): Bucket[] {
 
   for (const task of tasks) {
     if (!task.dueAt) continue;
-    const key = dateKey(task.dueAt);
-    const diff = differenceInCalendarDays(new Date(task.dueAt), new Date());
+    // An all-day task names a day in the user's zone, not an instant.
+    const key = task.allDay ? allDayKey(task.dueAt) : dateKey(task.dueAt);
+    const diff = differenceInCalendarDays(keyToDate(key), new Date());
     if (diff <= 13) {
       const list = days.get(key) ?? [];
       list.push(task);
@@ -52,11 +53,15 @@ function buildBuckets(tasks: Task[]): Bucket[] {
 }
 
 export default function UpcomingPage() {
-  const { data, isLoading } = useSWR<{ tasks: Task[] }>(
+  const { data, error, isLoading, mutate } = useSWR<{ tasks: Task[] }>(
     keys.tasks({ view: "upcoming", excludeProjects: true }),
     fetcher,
   );
-  const { data: anytimeData } = useSWR<{ tasks: Task[] }>(
+  const {
+    data: anytimeData,
+    error: anytimeError,
+    mutate: mutateAnytime,
+  } = useSWR<{ tasks: Task[] }>(
     keys.tasks({ view: "anytime", excludeProjects: true }),
     fetcher,
   );
@@ -74,6 +79,8 @@ export default function UpcomingPage() {
   const buckets = useMemo(() => buildBuckets(upcoming), [upcoming]);
 
   const empty = !isLoading && buckets.length === 0 && anytime.length === 0;
+  // A failed load is not an empty schedule.
+  const failed = (!!error && !data) || (!!anytimeError && !anytimeData);
 
   return (
     <Page>
@@ -84,6 +91,23 @@ export default function UpcomingPage() {
 
       {isLoading ? (
         <SkeletonRows rows={5} />
+      ) : failed ? (
+        <EmptyState
+          emoji="📡"
+          title="Could not load what’s coming up"
+          message="Check your connection and try again."
+          action={
+            <Button
+              icon={<IconRefresh className="h-4 w-4" />}
+              onClick={() => {
+                void mutate();
+                void mutateAnytime();
+              }}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : empty ? (
         <EmptyState
           emoji="🗓️"

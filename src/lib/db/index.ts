@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS completions (
   task_id TEXT NOT NULL,
   title TEXT DEFAULT '',
   completed_at TEXT NOT NULL,
-  date_local TEXT NOT NULL
+  date_local TEXT NOT NULL,
+  completed_by TEXT NOT NULL DEFAULT 'owner'
 );
 CREATE INDEX IF NOT EXISTS idx_completions_date ON completions(date_local);
 CREATE INDEX IF NOT EXISTS idx_completions_task ON completions(task_id);
@@ -196,6 +197,47 @@ function migrate(db: Database.Database): void {
   if (!pushCols.has("role")) {
     db.exec("ALTER TABLE push_subscriptions ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'");
   }
+  const completionCols = new Set(
+    (db.pragma("table_info(completions)") as { name: string }[]).map((c) => c.name)
+  );
+  if (!completionCols.has("completed_by")) {
+    // Who ticked it, so the owner's stats leave the partner's joint ticks out.
+    // Older rows can't say, and count as the owner's.
+    db.exec("ALTER TABLE completions ADD COLUMN completed_by TEXT NOT NULL DEFAULT 'owner'");
+  }
+  // Data fixes that need to run once per database, tracked in user_version.
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version < 1) {
+    // Older builds filed the subtasks of a joint task as personal, which left
+    // the partner unable to tick them.
+    db.transaction(() => {
+      alignSubtaskSpaces(db);
+      db.pragma("user_version = 1");
+    })();
+  }
+}
+
+/**
+ * Put every subtask on its parent's list, dropping the hand-off from any that
+ * land on the personal list (only the shared list has someone to hand it to).
+ * Imports and restores call it too, since an older file can carry the old
+ * mistake back in. Returns how many rows moved.
+ */
+export function alignSubtaskSpaces(db: Database.Database = getDb()): number {
+  const parentSpace = "(SELECT p.space FROM tasks p WHERE p.id = tasks.parent_id)";
+  const stmt = db.prepare(
+    `UPDATE tasks SET space = ${parentSpace},
+       assigned_to = CASE WHEN ${parentSpace} = 'personal' THEN NULL ELSE assigned_to END
+     WHERE parent_id IS NOT NULL AND space <> ${parentSpace}`
+  );
+  // One level per pass; deeper chains only exist in old or imported data.
+  let moved = 0;
+  for (let pass = 0; pass < 5; pass++) {
+    const changes = stmt.run().changes;
+    moved += changes;
+    if (changes === 0) break;
+  }
+  return moved;
 }
 
 function open(): Database.Database {

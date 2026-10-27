@@ -1,5 +1,7 @@
 "use client";
 
+import { useSWRConfig } from "swr";
+import { keys } from "@/lib/api";
 import { SettingsCard, useSettingsPatch, type SectionProps } from "./common";
 import { SwitchRow } from "@/components/ui/Field";
 
@@ -10,9 +12,14 @@ import { SwitchRow } from "@/components/ui/Field";
  */
 export function FeaturesSection({ settings, mutate }: SectionProps) {
   const patch = useSettingsPatch(mutate);
+  const { mutate: mutateKey } = useSWRConfig();
   const f = settings.features;
-  const set = (key: "assistant" | "nearby" | "walkMode", on: boolean, label: string) =>
-    void patch({ features: { [key]: on } }, on ? `${label} on` : `${label} off`);
+  const set = async (key: "assistant" | "nearby" | "walkMode", on: boolean, label: string) => {
+    // The nav and the disabled-page guard read features from /api/auth/me.
+    if (await patch({ features: { [key]: on } }, on ? `${label} on` : `${label} off`)) {
+      void mutateKey(keys.me());
+    }
+  };
 
   return (
     <SettingsCard
@@ -24,19 +31,19 @@ export function FeaturesSection({ settings, mutate }: SectionProps) {
         label="Assistant"
         description="The chat page, where you can talk to DoneX about your list. Your morning briefing and weekly review are separate and keep working either way."
         checked={f.assistant}
-        onChange={(v) => set("assistant", v, "Assistant")}
+        onChange={(v) => void set("assistant", v, "Assistant")}
       />
       <SwitchRow
         label="Nearby"
         description="The page that shows tasks with a location near where you are. Locations on individual tasks still work."
         checked={f.nearby}
-        onChange={(v) => set("nearby", v, "Nearby")}
+        onChange={(v) => void set("nearby", v, "Nearby")}
       />
       <SwitchRow
         label="Walk mode"
         description="The hands-free voice page, for talking to DoneX while walking. Turning it off also hides its voice settings."
         checked={f.walkMode}
-        onChange={(v) => set("walkMode", v, "Walk mode")}
+        onChange={(v) => void set("walkMode", v, "Walk mode")}
       />
     </SettingsCard>
   );

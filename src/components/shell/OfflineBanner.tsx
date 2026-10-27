@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useSWRConfig } from "swr";
 import { matchKey } from "@/lib/api";
-import { outboxCount, outboxSyncing, subscribeOutbox, syncOutbox } from "@/lib/offline";
+import {
+  outboxCount,
+  outboxSessionRole,
+  outboxSyncing,
+  subscribeOutbox,
+  syncOutbox,
+} from "@/lib/offline";
 import { useToast } from "@/components/ui/Toast";
 
 function subscribeOnline(cb: () => void): () => void {
@@ -20,12 +26,15 @@ const isOnline = () => navigator.onLine;
 /**
  * Slim status strip under the header: shows when you're offline (with the
  * count of changes waiting) and quietly replays the outbox once the
- * connection returns.
+ * connection returns. The count and the replay cover only the signed-in
+ * role's changes; syncOutbox checks with the server whose session it is
+ * before replaying anything.
  */
 export function OfflineBanner() {
   const online = useSyncExternalStore(subscribeOnline, isOnline, () => true);
   const pending = useSyncExternalStore(subscribeOutbox, outboxCount, () => 0);
   const syncing = useSyncExternalStore(subscribeOutbox, outboxSyncing, () => false);
+  const role = useSyncExternalStore(subscribeOutbox, outboxSessionRole, () => null);
   const { mutate } = useSWRConfig();
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -66,6 +75,12 @@ export function OfflineBanner() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [runSync]);
+
+  // Once the shell learns who is signed in (or someone else signs in), that
+  // role's waiting changes can go.
+  useEffect(() => {
+    if (role) void runSync();
+  }, [role, runSync]);
 
   if (online && pending === 0) return null;
 

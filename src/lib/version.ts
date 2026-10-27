@@ -2,7 +2,9 @@
  * Release identity. APP_VERSION is bumped by hand for each release; BUILD_ID is
  * stamped per image build and is what the update check compares.
  */
-export const APP_VERSION = "1.32.0";
+import { DATA_CACHE } from "@/lib/offline";
+
+export const APP_VERSION = "1.33.0";
 
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 
@@ -35,12 +37,16 @@ export async function isUpdateAvailable(): Promise<boolean> {
   return !!server && server !== "dev" && server !== BUILD_ID;
 }
 
-/** Drop cached bundles so the reload genuinely picks up the new build. */
+/**
+ * Drop cached bundles so the reload genuinely picks up the new build. The
+ * offline data cache stays: it is what the app runs on offline, and its
+ * bundles are content-hashed, so none of them can be stale.
+ */
 export async function applyUpdate(): Promise<void> {
   try {
     if (typeof caches !== "undefined") {
       const names = await caches.keys();
-      await Promise.all(names.map((n) => caches.delete(n)));
+      await Promise.all(names.filter((n) => n !== DATA_CACHE).map((n) => caches.delete(n)));
     }
     if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
       const reg = await navigator.serviceWorker.getRegistration();

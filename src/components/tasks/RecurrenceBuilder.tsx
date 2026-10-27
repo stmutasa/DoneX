@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { RecurrenceRule } from "@/lib/types";
 import { WEEKDAY_INITIALS, WEEKDAY_NAMES, describeRecurrence } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,9 @@ export function RecurrenceBuilder({
   value: RecurrenceRule | null;
   onChange: (next: RecurrenceRule | null) => void;
 }) {
+  // What's typed in "Day of month" while editing, so the field can be empty
+  // between keystrokes. null means show the rule's own value.
+  const [dayDraft, setDayDraft] = useState<string | null>(null);
   const interval = Math.max(1, value?.interval ?? 1);
   const freq: Freq = !value
     ? "none"
@@ -42,6 +46,7 @@ export function RecurrenceBuilder({
       : value.freq;
 
   const setFreq = (next: Freq) => {
+    setDayDraft(null);
     if (next === "none") {
       onChange(null);
       return;
@@ -158,10 +163,24 @@ export function RecurrenceBuilder({
                 min={1}
                 max={31}
                 inputMode="numeric"
-                value={value.byMonthDay ?? 1}
-                onChange={(e) =>
-                  patch({ byMonthDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })
-                }
+                value={dayDraft ?? String(value.byMonthDay ?? 1)}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setDayDraft(raw);
+                  const n = Number(raw);
+                  if (raw.trim() && Number.isInteger(n) && n >= 1 && n <= 31) {
+                    patch({ byMonthDay: n });
+                  }
+                }}
+                onBlur={() => {
+                  // Out of range snaps to 1–31; empty keeps the last valid day.
+                  const n = Math.round(Number(dayDraft));
+                  if (dayDraft?.trim() && Number.isFinite(n)) {
+                    const day = Math.min(31, Math.max(1, n));
+                    if (day !== value.byMonthDay) patch({ byMonthDay: day });
+                  }
+                  setDayDraft(null);
+                }}
                 className="h-10 w-20 rounded-xl border border-stroke bg-elev px-3 text-center text-[15px] tabular-nums text-ink outline-none"
               />
             </div>

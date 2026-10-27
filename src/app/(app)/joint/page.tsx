@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import useSWR from "swr";
-import { fetcher, keys, tasksApi } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
+import { fetcher, keys, matchKey, tasksApi } from "@/lib/api";
 import type { SessionRole, Task } from "@/lib/types";
 import { Page } from "@/components/shell/Page";
 import { EmptyState, PageHeader, SkeletonRows } from "@/components/ui/Misc";
@@ -69,9 +69,27 @@ export default function JointPage() {
   // A grid wants the whole window; the agenda is happy beside the list.
   const gridTakesOver = calMode !== "agenda";
 
+  const { mutate: globalMutate } = useSWRConfig();
+  // The calendar beside the list shows dated joint tasks too, so any change
+  // to the list (an add, a tick, an edit, the other person's changes)
+  // refreshes it rather than leaving it stale for minutes.
+  const seenList = useRef(false);
+  useEffect(() => {
+    if (!data) return;
+    if (!seenList.current) {
+      seenList.current = true;
+      return;
+    }
+    void globalMutate(matchKey("/api/joint/calendar"));
+  }, [data, globalMutate]);
+
   const tasks = useMemo(() => (data?.tasks ?? []).filter((t) => !t.parentId), [data]);
   const open = tasks.filter((t) => t.status !== "done");
-  const done = tasks.filter((t) => t.status === "done").slice(0, 20);
+  // Most recently finished first, so a mistaken tick is right there to undo.
+  const done = tasks
+    .filter((t) => t.status === "done")
+    .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""))
+    .slice(0, 20);
 
   const names = { owner: me?.ownerName || "Me", partner: me?.partnerName || "Partner" };
   const colors = { owner: me?.ownerColor, partner: me?.partnerColor };

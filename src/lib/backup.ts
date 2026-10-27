@@ -7,11 +7,14 @@
  * read back and parsed — a backup nobody has verified is a rumour.
  */
 import "server-only";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
-import { getDb } from "@/lib/db";
-import { settingsRepo } from "@/lib/db/repos";
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
+import { alignSubtaskSpaces, getDb } from "@/lib/db";
+import { settingsRepo, tableColumns } from "@/lib/db/repos";
 import { localDateKey, nowIso } from "@/lib/utils";
 
 /** Everything worth carrying forward. Sessions and push subscriptions are
@@ -98,20 +101,40 @@ export function buildSnapshot(kind: string): { manifest: SnapshotManifest; body:
   return { manifest, body: JSON.stringify({ ...manifest, data }) };
 }
 
+/**
+ * Date and time both on the owner's clock (the server's is UTC), down to the
+ * second, plus a random tag: two snapshots in the same second still get
+ * different names.
+ */
 function fileNameFor(kind: string, at: Date, tz: string): string {
   const date = localDateKey(at, tz);
-  const time = `${String(at.getHours()).padStart(2, "0")}${String(at.getMinutes()).padStart(2, "0")}`;
-  return `donex-${date}-${time}-${kind}.json.gz`;
+  const time = format(new TZDate(at, tz), "HHmmss");
+  const tag = crypto.randomBytes(2).toString("hex");
+  return `donex-${date}-${time}-${tag}-${kind}.json.gz`;
 }
 
-/** Write a snapshot, read it back, and only then call it done. */
-export function writeSnapshot(kind: string): SnapshotFile {
+/**
+ * Write a snapshot, read it back, and only then call it done. A new file
+ * never replaces an existing one. `prune: false` leaves the retention window
+ * alone, for a caller that prunes once its own work has succeeded.
+ */
+export function writeSnapshot(kind: string, opts: { prune?: boolean } = {}): SnapshotFile {
   const tz = settingsRepo.getApp().tz;
   const { manifest, body } = buildSnapshot(kind);
-  const name = fileNameFor(kind, new Date(), tz);
-  const full = path.join(backupDir(), name);
+  const gz = zlib.gzipSync(Buffer.from(body, "utf8"));
 
-  fs.writeFileSync(full, zlib.gzipSync(Buffer.from(body, "utf8")));
+  let name = "";
+  let full = "";
+  for (let attempt = 0; ; attempt++) {
+    name = fileNameFor(kind, new Date(), tz);
+    full = path.join(backupDir(), name);
+    try {
+      fs.writeFileSync(full, gz, { flag: "wx" });
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 4) throw err;
+    }
+  }
 
   // Verify: unzip, parse, and check the row counts survived the round trip.
   const roundTrip = JSON.parse(zlib.gunzipSync(fs.readFileSync(full)).toString("utf8")) as {
@@ -126,12 +149,14 @@ export function writeSnapshot(kind: string): SnapshotFile {
     }
   }
 
-  pruneSnapshots();
+  const bytes = fs.statSync(full).size;
+  // Never the file just written, even if a clock step makes it sort as old.
+  if (opts.prune !== false) pruneSnapshots({ protect: [name] });
   return {
     name,
     createdAt: manifest.createdAt,
     kind,
-    bytes: fs.statSync(full).size,
+    bytes,
     counts: manifest.counts,
   };
 }
@@ -167,8 +192,12 @@ export function listSnapshots(): SnapshotFile[] {
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** Keep a useful window of each kind rather than a fixed total. */
-export function pruneSnapshots(): number {
+/**
+ * Keep a useful window of each kind rather than a fixed total. Names in
+ * `protect` are never removed, whatever their age.
+ */
+export function pruneSnapshots(opts: { protect?: string[] } = {}): number {
+  const protect = new Set(opts.protect ?? []);
   const byKind = new Map<string, SnapshotFile[]>();
   for (const snap of listSnapshots()) {
     byKind.set(snap.kind, [...(byKind.get(snap.kind) ?? []), snap]);
@@ -177,6 +206,7 @@ export function pruneSnapshots(): number {
   for (const [kind, snaps] of byKind) {
     const keep = KEEP_PER_KIND[kind] ?? 3;
     for (const snap of snaps.slice(keep)) {
+      if (protect.has(snap.name)) continue;
       try {
         fs.unlinkSync(path.join(backupDir(), snap.name));
         removed++;
@@ -208,20 +238,34 @@ export interface RestoreResult {
 }
 
 /**
+ * Settings rows that describe this box rather than your data: what the
+ * scheduler has already sent and how the last backup went. A restore puts
+ * this box's own values back over the snapshot's, key by key, so an older
+ * "last sent" can't make a job that is still inside its catch-up window fire
+ * a second time. A key this box has never written keeps the snapshot's value,
+ * which can only hold back a job that was already sent.
+ */
+const LOCAL_STATE = "key LIKE 'sched.%' OR key LIKE 'backup.%'";
+
+/**
  * Put a snapshot back. Everything is replaced table by table inside one
  * transaction, and a "pre-restore" snapshot is taken first so a restore is
  * itself undoable. `includeSettings` also brings back your configuration and
  * Google connection — powerful, and not what you want when you are only
  * undoing a bad import.
+ *
+ * The target is read into memory before the safety copy is written, and the
+ * retention window is only applied once the restore has gone through — so
+ * restoring an earlier safety copy, even the oldest one kept, can't lose it.
  */
 export function restoreSnapshot(name: string, includeSettings: boolean): RestoreResult {
-  const safety = writeSnapshot("pre-restore");
-
   const parsed = JSON.parse(zlib.gunzipSync(readSnapshot(name)).toString("utf8")) as {
     version?: number;
     data?: Record<string, Record<string, unknown>[]>;
   };
   if (!parsed.data) throw new Error("That file is not a DoneX snapshot");
+
+  const safety = writeSnapshot("pre-restore", { prune: false });
 
   const db = getDb();
   const tables = includeSettings ? [...TABLES] : [...DATA_TABLES];
@@ -232,22 +276,50 @@ export function restoreSnapshot(name: string, includeSettings: boolean): Restore
       const rows = parsed.data?.[table];
       if (!Array.isArray(rows)) continue;
       try {
+        const local =
+          table === "settings"
+            ? (db.prepare(`SELECT key, value FROM settings WHERE ${LOCAL_STATE}`).all() as {
+                key: string;
+                value: string;
+              }[])
+            : [];
+        // Only this build's real columns, quoted: names from a file never
+        // reach SQL unchecked, and a newer snapshot's extra columns are dropped.
+        const allowed = tableColumns(table);
         db.prepare(`DELETE FROM ${table}`).run();
         for (const row of rows) {
-          const cols = Object.keys(row);
+          const cols = Object.keys(row).filter((c) => allowed.has(c));
           if (cols.length === 0) continue;
+          const names = cols.map((c) => `"${c}"`).join(",");
           db.prepare(
-            `INSERT OR REPLACE INTO ${table}(${cols.join(",")}) VALUES(${cols.map(() => "?").join(",")})`,
+            `INSERT OR REPLACE INTO ${table}(${names}) VALUES(${cols.map(() => "?").join(",")})`,
           ).run(...cols.map((c) => row[c] as never));
         }
+        const put = db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)");
+        for (const row of local) put.run(row.key, row.value);
         restored[table] = rows.length;
       } catch (err) {
         throw new Error(`Could not restore ${table}: ${(err as Error).message}`);
       }
     }
+    // An older snapshot can carry subtasks filed on a different list from
+    // their parent; put each back on its parent's.
+    alignSubtaskSpaces(db);
   });
-  run();
+  try {
+    run();
+  } catch (err) {
+    // Nothing changed, so the safety copy is a duplicate of what is live.
+    // Dropping it keeps a failed retry from pushing a real undo point out.
+    try {
+      fs.unlinkSync(path.join(backupDir(), safety.name));
+    } catch {
+      // already gone
+    }
+    throw err;
+  }
 
+  pruneSnapshots({ protect: [name, safety.name] });
   return { restored, safetyCopy: safety.name };
 }
 

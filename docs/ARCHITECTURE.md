@@ -87,7 +87,7 @@ Push / Google
 - `POST /api/push/subscribe` `{subscription}` → `{ok:true}` · `POST /api/push/test` → `{ok:true}`
 - `GET /api/google/status` → `GoogleStatus`
 - `GET /api/google/connect` → 302 to Google consent (uses APP_URL or request origin for redirect_uri `/api/google/callback`)
-- `GET /api/google/callback` → exchanges code, stores tokens, 302 → `/settings?google=connected`
+- `GET /api/google/callback` → exchanges code, stores tokens, 302 → `/settings/google?google=connected` (or `?google=error&reason=<code>`)
 - `POST /api/google/disconnect` → `{ok:true}` · `POST /api/google/scan` → `{created: number}` (Gmail → inbox items)
 - `GET /api/calendar/today` → `{events: CalendarEvent[], connected: boolean}`
 

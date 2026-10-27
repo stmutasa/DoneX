@@ -7,6 +7,8 @@ import {
   statsRepo,
   tasksRepo,
 } from "@/lib/db/repos";
+import { getDb } from "@/lib/db";
+import { anchorRule, describeRecurrence } from "@/lib/recurrence";
 import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, newId, nowIso } from "@/lib/utils";
 import type { Priority, RecurrenceRule, Task } from "@/lib/types";
 import { asArray, asNumber, asRecord, asString } from "@/lib/ai/json";
@@ -102,27 +104,75 @@ export function instantOf(iso: string): number {
 /**
  * Models emit due dates in several shapes. Bare dates become all-day local
  * days; zone-less datetimes are read as wall-clock time in the user's tz.
+ * Junk reads as "no due date" here; the tools use readDueInput, which keeps
+ * junk apart from an explicit clear.
  */
 export function parseDueInput(
   raw: unknown,
   tz: string
 ): { dueAt: string | null; allDay: boolean } | undefined {
+  const due = readDueInput(raw, tz);
+  return due === "invalid" ? { dueAt: null, allDay: false } : due;
+}
+
+/**
+ * Like parseDueInput, but a value it cannot read comes back as "invalid".
+ * Only null, "" and "none" (or "null", "never") clear the date. The whole
+ * string must be a date, or a date and time with an optional zone (Z, UTC,
+ * GMT, ±HH[:MM] or the user's own zone name); anything after it is junk, not
+ * something to drop. Zone-less times are wall-clock time in `tz`.
+ */
+export function readDueInput(
+  raw: unknown,
+  tz: string
+): { dueAt: string | null; allDay: boolean } | "invalid" | undefined {
   if (raw === undefined) return undefined;
   if (raw === null) return { dueAt: null, allDay: false };
-  const value = typeof raw === "string" ? raw.trim() : "";
+  if (typeof raw !== "string") return "invalid";
+  let value = raw.trim();
   if (!value || /^(null|none|never)$/i.test(value)) return { dueAt: null, allDay: false };
+  // Naming the user's own zone adds nothing; any other zone name is junk.
+  if (value.toLowerCase().endsWith(` ${tz.toLowerCase()}`)) value = value.slice(0, -tz.length).trimEnd();
 
   const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(value);
-  if (dateOnly) return { dueAt: utcFromLocal(dateOnly[1], "00:00", tz), allDay: true };
+  if (dateOnly) {
+    if (!isCalendarDate(dateOnly[1])) return "invalid";
+    return { dueAt: utcFromLocal(dateOnly[1], "00:00", tz), allDay: true };
+  }
 
-  const naive = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value);
-  const zoned = /(Z|z|[+-]\d{2}:?\d{2})$/.test(value);
-  if (naive && !zoned) return { dueAt: utcFromLocal(naive[1], naive[2], tz), allDay: false };
+  const m =
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(?:([ap])\.?m\.?)?\s*(Z|UTC|GMT|[+-]\d{2}(?::?\d{2})?)?$/i.exec(
+      value
+    );
+  if (!m || !isCalendarDate(m[1])) return "invalid";
+  let hour = Number(m[2]);
+  const minute = Number(m[3]);
+  const second = Number(m[4] ?? 0);
+  const meridiem = m[5]?.toLowerCase();
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return "invalid";
+    hour = (hour % 12) + (meridiem === "p" ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59 || second > 59) return "invalid";
+  const zone = m[6];
+  if (!zone) return { dueAt: utcFromLocal(m[1], `${hour}:${minute}`, tz), allDay: false };
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return { dueAt: null, allDay: false };
-  return { dueAt: parsed.toISOString(), allDay: false };
+  const two = (n: number) => String(n).padStart(2, "0");
+  const digits = zone.replace(":", "");
+  const offset = /^[+-]/.test(zone) ? `${digits.slice(0, 3)}:${digits.slice(3) || "00"}` : "Z";
+  const instant = new Date(`${m[1]}T${two(hour)}:${two(minute)}:${two(second)}${offset}`);
+  if (Number.isNaN(instant.getTime())) return "invalid";
+  return { dueAt: instant.toISOString(), allDay: false };
 }
+
+/** A YYYY-MM-DD key that names a real day (no Feb 30). */
+function isCalendarDate(key: string): boolean {
+  const [y, m, d] = key.split("-").map(Number);
+  return m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+const DUE_FORMAT_ERROR =
+  "Could not read dueAt. Send ISO 8601 like 2026-08-09T15:00, or YYYY-MM-DD for an all-day task, after resolving relative dates such as 'next Friday'.";
 
 function parseRecurrence(raw: unknown): RecurrenceRule | null | undefined {
   if (raw === undefined) return undefined;
@@ -189,12 +239,27 @@ function compactTask(task: Task, tz: string): Record<string, unknown> {
     priority: task.priority,
     project: projectName(task.projectId),
     tags: task.tags,
+    repeat: task.recurrence ? describeRecurrence(task.recurrence) : null,
   };
 }
 
 function taskLabel(id: string): string {
   const task = tasksRepo.get(id);
   return task ? quote(task.title) : `task ${id}`;
+}
+
+function listName(space: "personal" | "joint"): string {
+  return space === "joint" ? "the joint list" : "your personal list";
+}
+
+const JOINT_PROJECT_NOTE = "Shared tasks can't be in a project, so the project was left off.";
+
+/** The newest Logbook entry for a task, if it has one. */
+function latestCompletion(taskId: string): { id: string; completedAt: string } | null {
+  const row = getDb()
+    .prepare("SELECT id, completed_at FROM completions WHERE task_id=? ORDER BY completed_at DESC LIMIT 1")
+    .get(taskId) as { id: string; completed_at: string } | undefined;
+  return row ? { id: row.id, completedAt: row.completed_at } : null;
 }
 
 // ── Tool definitions ───────────────────────────────────────────────────────
@@ -239,7 +304,13 @@ const TASK_FIELDS: Record<string, JsonSchema> = {
         description: "Weekly only: 0=Sunday … 6=Saturday",
         items: { type: "integer", minimum: 0, maximum: 6 },
       },
-      byMonthDay: { type: "integer", description: "Monthly only: day of month", minimum: 1, maximum: 31 },
+      byMonthDay: {
+        type: "integer",
+        description:
+          "Monthly only: day of month. Moving dueAt on a repeating task makes the new date's day the repeat day unless this is sent too.",
+        minimum: 1,
+        maximum: 31,
+      },
     },
     required: ["freq"],
   },
@@ -258,17 +329,26 @@ export const TOOLS: ToolSpec[] = [
     mutating: true,
     label(args, ctx) {
       const title = readString(args, "title") ?? "task";
-      const due = parseDueInput(args.dueAt, ctx.tz);
-      const suffix = due?.dueAt
-        ? ` · ${describeDue(due.dueAt, readBoolean(args, "allDay") ?? due.allDay, ctx.tz)}`
-        : "";
+      const due = readDueInput(args.dueAt, ctx.tz);
+      const suffix =
+        due && due !== "invalid" && due.dueAt
+          ? ` · ${describeDue(due.dueAt, readBoolean(args, "allDay") ?? due.allDay, ctx.tz)}`
+          : "";
       return `Added ${quote(title)}${suffix}`;
     },
     async run(args, ctx) {
       const title = readString(args, "title");
       if (!title) return { ok: false, payload: { error: "title is required" } };
-      const due = parseDueInput(args.dueAt, ctx.tz);
+      const due = readDueInput(args.dueAt, ctx.tz);
+      if (due === "invalid") {
+        return {
+          ok: false,
+          label: `Couldn't read the date for ${quote(title)}`,
+          payload: { error: `${DUE_FORMAT_ERROR} The task was not created.` },
+        };
+      }
       const allDay = readBoolean(args, "allDay") ?? due?.allDay ?? false;
+      const recurrence = parseRecurrence(args.recurrence) ?? null;
 
       // Best-effort place resolution — a failed lookup never blocks the task.
       let location: Task["location"] = null;
@@ -285,23 +365,27 @@ export const TOOLS: ToolSpec[] = [
         }
       }
 
+      const space = readString(args, "space") === "joint" ? "joint" : "personal";
+      const project = readString(args, "projectName");
+      const projectNote = project && space === "joint" ? JOINT_PROJECT_NOTE : undefined;
       const task = tasksRepo.create({
         title,
         notes: readString(args, "notes") ?? "",
-        space: readString(args, "space") === "joint" ? "joint" : "personal",
+        space,
         dueAt: due?.dueAt ?? null,
         dueKind: readString(args, "dueKind") === "by" ? "by" : "on",
         allDay,
         priority: readPriority(args) ?? 0,
-        projectId: resolveProject(readString(args, "projectName")),
+        projectId: space === "joint" ? null : resolveProject(project),
         tags: readTags(args) ?? [],
-        recurrence: parseRecurrence(args.recurrence) ?? null,
+        recurrence:
+          recurrence && due?.dueAt ? anchorRule(recurrence, new Date(due.dueAt), ctx.tz) : recurrence,
         location,
       });
       const placeSuffix = location ? ` · 📍 ${location.name}` : "";
       return {
         label: `Added ${quote(task.title)}${task.dueAt ? ` · ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : ""}${placeSuffix}`,
-        payload: { created: compactTask(task, ctx.tz), locationNote },
+        payload: { created: compactTask(task, ctx.tz), locationNote, projectNote },
       };
     },
   },
@@ -327,12 +411,30 @@ export const TOOLS: ToolSpec[] = [
       if (!existing) {
         return { ok: false, label: `Task ${id} not found`, payload: { error: "No task with that id" } };
       }
+      const due = readDueInput(args.dueAt, ctx.tz);
+      if (due === "invalid") {
+        return {
+          ok: false,
+          label: `Couldn't read the date for ${quote(existing.title)}`,
+          payload: { error: `${DUE_FORMAT_ERROR} The task was not changed.` },
+        };
+      }
+      const spaceArg = readString(args, "space");
+      const space = spaceArg === "joint" || spaceArg === "personal" ? spaceArg : undefined;
+      if (space && space !== existing.space && existing.parentId) {
+        return {
+          ok: false,
+          label: `Couldn't move ${quote(existing.title)} to ${listName(space)}`,
+          payload: {
+            error: "A subtask stays on its parent's list. Move the parent task instead. Nothing was changed.",
+          },
+        };
+      }
       const patch: Parameters<typeof tasksRepo.update>[1] = {};
       const title = readString(args, "title");
       if (title) patch.title = title;
       const notes = asString(args.notes);
       if (notes !== null) patch.notes = notes;
-      const due = parseDueInput(args.dueAt, ctx.tz);
       if (due) {
         patch.dueAt = due.dueAt;
         patch.allDay = readBoolean(args, "allDay") ?? due.allDay;
@@ -342,29 +444,65 @@ export const TOOLS: ToolSpec[] = [
       }
       const dueKind = readString(args, "dueKind");
       if (dueKind === "by" || dueKind === "on") patch.dueKind = dueKind;
-      const space = readString(args, "space");
-      if (space === "joint" || space === "personal") patch.space = space;
+      if (space && space !== existing.space) patch.space = space;
       const priority = readPriority(args);
       if (priority !== undefined) patch.priority = priority;
       const project = readString(args, "projectName");
-      if (project !== undefined) patch.projectId = resolveProject(project);
+      let projectNote: string | undefined;
+      if (project !== undefined) {
+        if ((patch.space ?? existing.space) === "joint") projectNote = JOINT_PROJECT_NOTE;
+        else patch.projectId = resolveProject(project);
+      }
       const tags = readTags(args);
       if (tags !== undefined) patch.tags = tags;
       const recurrence = parseRecurrence(args.recurrence);
       if (recurrence !== undefined) patch.recurrence = recurrence;
+      if ("recurrence" in patch || "dueAt" in patch) {
+        // Pin the anchor day so a short month never shifts later repeats. A
+        // moved date sets the repeat day too, unless the model sent one.
+        const rule = "recurrence" in patch ? patch.recurrence : existing.recurrence;
+        const dueAt = "dueAt" in patch ? patch.dueAt : existing.dueAt;
+        if (rule && dueAt) {
+          const repin =
+            "dueAt" in patch &&
+            recurrence?.byMonthDay === undefined &&
+            (rule.freq === "monthly" || rule.freq === "yearly");
+          const anchored = anchorRule(repin ? { ...rule, byMonthDay: undefined } : rule, new Date(dueAt), ctx.tz);
+          if ("recurrence" in patch || JSON.stringify(anchored) !== JSON.stringify(rule)) {
+            patch.recurrence = anchored;
+          }
+        }
+      }
 
+      if (Object.keys(patch).length === 0) {
+        return {
+          label: `No changes to ${quote(existing.title)}`,
+          payload: { unchanged: compactTask(existing, ctx.tz), note: projectNote ?? "The task already matches" },
+        };
+      }
       const task = tasksRepo.update(id, patch);
       if (!task) return { ok: false, payload: { error: "Update failed" } };
+      if (patch.space && task.space !== patch.space) {
+        return {
+          ok: false,
+          label: `Couldn't move ${quote(task.title)} to ${listName(patch.space)}`,
+          payload: {
+            error: "Moving the task between lists failed. Any other changes were saved.",
+            updated: compactTask(task, ctx.tz),
+          },
+        };
+      }
       return {
         label: `Updated ${quote(task.title)}`,
-        payload: { updated: compactTask(task, ctx.tz) },
+        payload: { updated: compactTask(task, ctx.tz), projectNote },
       };
     },
   },
 
   {
     name: "complete_task",
-    description: "Mark a task done, or reopen it with done=false.",
+    description:
+      "Mark a task done, or reopen it with done=false. A repeating task stays open: done=false removes its latest completion and keeps its next date.",
     parameters: {
       type: "object",
       properties: {
@@ -386,6 +524,45 @@ export const TOOLS: ToolSpec[] = [
       const before = tasksRepo.get(id);
       if (!before) {
         return { ok: false, label: `Task ${id} not found`, payload: { error: "No task with that id" } };
+      }
+      if (done && before.status === "done") {
+        return {
+          label: `${quote(before.title)} was already done`,
+          payload: { task: compactTask(before, ctx.tz), alreadyDone: true },
+        };
+      }
+      if (!done && before.status === "open") {
+        if (before.recurrence && !before.parentId) {
+          // A repeating task never closes, so undoing a tick means taking its
+          // latest Logbook entry back out. The next date stays as it is.
+          const latest = latestCompletion(before.id);
+          const undone = latest ? tasksRepo.unlog(latest.id) : null;
+          if (!latest || !undone?.removed) {
+            return {
+              ok: false,
+              label: `Can't reopen ${quote(before.title)}`,
+              payload: {
+                error:
+                  "This task repeats and has no completion to remove, so it is already open. update_task can change its due date.",
+                task: compactTask(before, ctx.tz),
+              },
+            };
+          }
+          const task = undone.task ?? before;
+          const next = task.dueAt ? ` · next ${describeDue(task.dueAt, task.allDay, ctx.tz)}` : "";
+          return {
+            label: `Removed the last completion of ${quote(task.title)}${next}`,
+            payload: {
+              task: compactTask(task, ctx.tz),
+              removedCompletion: describeDue(latest.completedAt, false, ctx.tz),
+              note: "A repeating task stays open, and its next date is unchanged.",
+            },
+          };
+        }
+        return {
+          label: `${quote(before.title)} is already open`,
+          payload: { task: compactTask(before, ctx.tz), alreadyOpen: true },
+        };
       }
       const { task, recurred } = tasksRepo.setDone(id, done);
       if (!task) return { ok: false, payload: { error: "No task with that id" } };
@@ -438,7 +615,7 @@ export const TOOLS: ToolSpec[] = [
         view: { type: "string", enum: ["today", "upcoming", "anytime", "all"] },
         q: { type: "string", description: "Text search over title and notes" },
         projectName: { type: "string" },
-        tag: { type: "string" },
+        tag: { type: "string", description: "Plain tag word, no # prefix" },
         list: {
           type: "string",
           enum: ["personal", "joint"],
@@ -458,7 +635,9 @@ export const TOOLS: ToolSpec[] = [
           ? viewRaw
           : undefined;
       const projectNameArg = readString(args, "projectName");
-      const project = projectNameArg ? projectsRepo.findByName(projectNameArg) : null;
+      const project = projectNameArg
+        ? projectsRepo.findByName(projectNameArg, { restore: false })
+        : null;
       if (projectNameArg && !project) {
         return { payload: { count: 0, tasks: [], note: `No project named ${projectNameArg}` } };
       }
@@ -466,7 +645,7 @@ export const TOOLS: ToolSpec[] = [
         view,
         q: readString(args, "q"),
         projectId: project?.id,
-        tag: readString(args, "tag"),
+        tag: readString(args, "tag")?.replace(/^#/, "") || undefined,
         space: readString(args, "list") === "joint" ? "joint" : "personal",
         includeDone: readBoolean(args, "includeDone") ?? false,
       });
@@ -580,7 +759,8 @@ export const TOOLS: ToolSpec[] = [
 
   {
     name: "append_checklist",
-    description: "Add unchecked items to a checklist note, creating the checklist when missing.",
+    description:
+      "Add unchecked items to a checklist note, creating the checklist when missing. On a plain note the items are added as new lines.",
     parameters: {
       type: "object",
       properties: {
@@ -603,6 +783,17 @@ export const TOOLS: ToolSpec[] = [
       if (texts.length === 0) return { ok: false, payload: { error: "items is empty" } };
       const fresh = texts.map((text) => ({ id: newId(), text, done: false }));
       const existing = notesRepo.findByTitle(title);
+      if (existing && existing.kind !== "checklist" && existing.content.trim()) {
+        // A plain note keeps its kind: a checklist would hide its text.
+        const body = existing.content.trimEnd();
+        const bullet = /^\s*[-*•]\s+/.exec(body.split("\n").pop() ?? "")?.[0] ?? "";
+        const content = `${body}\n${texts.map((text) => `${bullet}${text}`).join("\n")}`;
+        notesRepo.update(existing.id, { content });
+        return {
+          label: `Added ${texts.length} item${texts.length === 1 ? "" : "s"} to ${quote(existing.title)}`,
+          payload: { noteId: existing.id, added: texts.length, kind: "note" },
+        };
+      }
       if (existing) {
         notesRepo.update(existing.id, { kind: "checklist", items: [...existing.items, ...fresh] });
         return {

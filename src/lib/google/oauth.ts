@@ -10,6 +10,8 @@ const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo";
 const STATE_KEY = "google.oauthState";
+/** No Google call may hang a request or the scheduler for long. */
+const GOOGLE_TIMEOUT_MS = 30_000;
 
 export const GOOGLE_SCOPES = [
   "openid",
@@ -20,8 +22,10 @@ export const GOOGLE_SCOPES = [
 
 export const GOOGLE_NOT_CONNECTED = "Google is not connected — connect it in Settings";
 export const GOOGLE_EXPIRED = "Google connection expired — reconnect in Settings";
-const GOOGLE_NOT_CONFIGURED =
+export const GOOGLE_NOT_CONFIGURED =
   "Google client ID / secret are missing — add them in Settings";
+export const GOOGLE_NO_REFRESH_TOKEN =
+  "Google did not return a refresh token — revoke DoneX access in your Google account and retry";
 
 interface TokenResponse {
   access_token?: string;
@@ -114,6 +118,7 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
+    signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
   });
   let parsed: TokenResponse = {};
   try {
@@ -153,17 +158,17 @@ export async function exchangeCode(code: string, request: Request): Promise<Goog
     })
   );
   if (!body.access_token) {
-    throw new Error(body.error_description || body.error || "Token exchange failed");
+    // Keep Google's error code ("invalid_client") ahead of its description
+    // ("Unauthorized"): the callback reads the code.
+    throw new Error(
+      [body.error, body.error_description].filter(Boolean).join(": ") || "Token exchange failed"
+    );
   }
 
   const existing = googleRepo.get();
   // Google omits refresh_token on silent re-consent — keep the stored one.
   const refreshToken = body.refresh_token || existing?.refreshToken || "";
-  if (!refreshToken) {
-    throw new Error(
-      "Google did not return a refresh token — revoke DoneX access in your Google account and retry"
-    );
-  }
+  if (!refreshToken) throw new Error(GOOGLE_NO_REFRESH_TOKEN);
 
   const tokens: GoogleTokens = {
     accessToken: body.access_token,
@@ -188,6 +193,13 @@ async function refreshTokens(tokens: GoogleTokens): Promise<string> {
       grant_type: "refresh_token",
     })
   );
+  // The row can change while the request is out: a disconnect deletes it, a
+  // reconnect replaces it. Only write back over the connection this refresh
+  // started from, or the old tokens come back from the dead.
+  const current = googleRepo.get();
+  if (!current) throw new Error(GOOGLE_NOT_CONNECTED);
+  if (current.refreshToken !== tokens.refreshToken) return current.accessToken;
+
   if (!body.access_token) {
     if (body.error === "invalid_grant") {
       googleRepo.clear();
@@ -222,6 +234,7 @@ export async function googleFetch(url: string, init: RequestInit = {}): Promise<
     fetch(url, {
       ...init,
       headers: { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${token}` },
+      signal: init.signal ?? AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
     });
 
   const res = await send(await getAccessToken());

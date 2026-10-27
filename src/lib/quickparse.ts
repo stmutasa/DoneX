@@ -8,7 +8,8 @@
 import * as chrono from "chrono-node";
 import { tzOffset } from "@date-fns/tz";
 import type { Priority, RecurrenceRule, TaskDraft } from "@/lib/types";
-import { clamp, isoFromLocal, localDateKey } from "@/lib/utils";
+import { PRIORITY_MAP, PRIORITY_RE, PROJECT_RE, TAG_RE } from "@/lib/quickTokens";
+import { addDaysToDateKey, clamp, isoFromLocal, localDateKey, localTimeKey } from "@/lib/utils";
 
 export interface QuickAddMatch {
   due?: string;
@@ -23,21 +24,8 @@ export interface QuickAddResult {
   matchedText: QuickAddMatch;
 }
 
-const TAG_RE = /@([A-Za-z0-9][\w-]*)/g;
-const PROJECT_RE = /#"([^"]+)"|#([A-Za-z0-9][\w-]*)/g;
-const PRIORITY_RE = /!(p[123]|high|med(?:ium)?|low)\b/gi;
 /** "… by Friday" / "before June 3" / "until Monday" → deadline (dueKind "by") */
 const DEADLINE_PREFIX_RE = /(\b(?:due\s+by|by|before|until)\s+)$/i;
-
-const PRIORITY_MAP: Record<string, Priority> = {
-  p1: 3,
-  p2: 2,
-  p3: 1,
-  high: 3,
-  med: 2,
-  medium: 2,
-  low: 1,
-};
 
 const WEEKDAY_MAP: Record<string, number> = {
   sunday: 0,
@@ -126,6 +114,54 @@ function extractRecurrence(text: string): RecurrenceMatch | null {
   return null;
 }
 
+/** Weekday (0 = Sunday) of a "YYYY-MM-DD" key. */
+function weekdayOfKey(key: string): number {
+  return new Date(`${key}T00:00:00Z`).getUTCDay();
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * The first day on or after `fromKey` that the rule lands on. A repeat needs
+ * a first date to roll forward from, and "every friday" must not start on a
+ * Tuesday just because that is when it was typed.
+ */
+function firstOccurrenceKey(rule: RecurrenceRule, fromKey: string): string {
+  const weekdays = rule.freq === "weekly" ? (rule.byWeekday ?? []) : [];
+  if (weekdays.length) {
+    for (let i = 0; i < 7; i++) {
+      const key = addDaysToDateKey(fromKey, i);
+      if (weekdays.includes(weekdayOfKey(key))) return key;
+    }
+  }
+  if (rule.freq === "monthly" && rule.byMonthDay) {
+    let [y, m] = fromKey.split("-").map(Number);
+    for (let i = 0; i < 2; i++) {
+      // Short months land on their last day, as nextOccurrence does.
+      const day = Math.min(rule.byMonthDay, daysInMonth(y, m));
+      const key = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (key >= fromKey) return key;
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+  }
+  return fromKey;
+}
+
+/** The wall-clock date and time chrono read, before it turns them into an instant. */
+function wallClock(c: chrono.ParsedComponents): { dateKey: string; time: string } {
+  const pad = (n: number | null, width = 2) => String(n ?? 0).padStart(width, "0");
+  return {
+    dateKey: `${pad(c.get("year"), 4)}-${pad(c.get("month"))}-${pad(c.get("day"))}`,
+    time: `${pad(c.get("hour"))}:${pad(c.get("minute"))}`,
+  };
+}
+
 function cleanTitle(text: string): string {
   let t = text.replace(/\s+/g, " ").trim();
   t = t.replace(/^[,\s]+/, "").replace(/[,\s]+$/, "");
@@ -134,22 +170,26 @@ function cleanTitle(text: string): string {
 }
 
 export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddResult {
-  let text = input;
+  // One form for accented text, so "café" typed either way reads the same.
+  let text = input.normalize("NFC");
   const matchedText: QuickAddMatch = { tags: [] };
 
-  text = text.replace(TAG_RE, (_m, tag: string) => {
+  text = text.replace(TAG_RE, (_m, _lead: string, tag: string) => {
     matchedText.tags.push(tag);
     return " ";
   });
 
-  text = text.replace(PROJECT_RE, (_m, quoted: string | undefined, word: string | undefined) => {
-    const name = (quoted ?? word ?? "").trim();
-    if (name && matchedText.project === undefined) matchedText.project = name;
-    return " ";
-  });
+  text = text.replace(
+    PROJECT_RE,
+    (_m, _lead: string, quoted: string | undefined, word: string | undefined) => {
+      const name = (quoted ?? word ?? "").trim();
+      if (name && matchedText.project === undefined) matchedText.project = name;
+      return " ";
+    },
+  );
 
   let priority: Priority | undefined;
-  text = text.replace(PRIORITY_RE, (_m, token: string) => {
+  text = text.replace(PRIORITY_RE, (_m, _lead: string, token: string) => {
     const norm = token.toLowerCase();
     if (priority === undefined) {
       priority = PRIORITY_MAP[norm];
@@ -184,14 +224,32 @@ export function parseQuickAdd(input: string, tz: string, ref?: Date): QuickAddRe
     matchedText.due = text.slice(startIdx, result.index + result.text.length).trim();
     text = text.slice(0, startIdx) + " " + text.slice(result.index + result.text.length);
 
-    const parsedDate = result.date();
+    // chrono turns what it read into an instant with today's UTC offset, which
+    // is an hour out on the far side of a DST change. So rebuild the instant
+    // from the wall-clock date and time in tz, unless the text gave a real
+    // instant itself: an explicit zone ("3pm PT") or a span ("in 2 hours").
+    const { dateKey, time } = wallClock(result.start);
     if (result.start.isCertain("hour")) {
-      dueAt = parsedDate.toISOString();
+      dueAt = result.start.isCertain("timezoneOffset")
+        ? result.date().toISOString()
+        : isoFromLocal(dateKey, time, tz);
       allDay = false;
     } else {
-      const dateKey = localDateKey(parsedDate, tz);
       dueAt = isoFromLocal(dateKey, "00:00", tz);
       allDay = true;
+    }
+  }
+
+  if (recurrence) {
+    // Repeats roll forward from their due date, so one without a date would
+    // be done for good the first time it was ticked off.
+    const fromKey = localDateKey(dueAt ?? refInstant, tz);
+    const firstKey = firstOccurrenceKey(recurrence, fromKey);
+    if (!dueAt) {
+      dueAt = isoFromLocal(firstKey, "00:00", tz);
+      allDay = true;
+    } else if (firstKey !== fromKey) {
+      dueAt = isoFromLocal(firstKey, allDay ? "00:00" : localTimeKey(dueAt, tz), tz);
     }
   }
 

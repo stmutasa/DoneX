@@ -16,11 +16,18 @@ export interface TTSApi {
   cancel: () => void;
 }
 
+/**
+ * A sentence runs to . ! ? or … followed by a space or the end. Punctuation
+ * with more text straight after it ("0.3", "$4.99", "example.com") is part
+ * of the sentence, not its end.
+ */
+const SENTENCE = /(?:[^.!?…]|[.!?…]+(?=[^\s.!?…]))*[.!?…]*\s*/g;
+
 /** Split into utterance-sized chunks so mobile Chrome doesn't truncate. */
 export function chunkForSpeech(text: string, max = 180): string[] {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return [];
-  const sentences = clean.match(/[^.!?…]+[.!?…]*\s*/g) ?? [clean];
+  const sentences = clean.match(SENTENCE) ?? [clean];
   const chunks: string[] = [];
   let current = "";
   for (const raw of sentences) {
@@ -31,7 +38,15 @@ export function chunkForSpeech(text: string, max = 180): string[] {
         chunks.push(current);
         current = "";
       }
-      for (let i = 0; i < s.length; i += max) chunks.push(s.slice(i, i + max));
+      // Break an overlong sentence at word boundaries where there are any.
+      let rest = s;
+      while (rest.length > max) {
+        const space = rest.lastIndexOf(" ", max);
+        const cut = space > 0 ? space : max;
+        chunks.push(rest.slice(0, cut).trim());
+        rest = rest.slice(cut).trim();
+      }
+      if (rest) chunks.push(rest);
       continue;
     }
     if ((current ? current.length + 1 : 0) + s.length > max) {
@@ -60,6 +75,9 @@ export function useTTS(): TTSApi {
     window.speechSynthesis.addEventListener("voiceschanged", load);
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", load);
+      // Invalidate the running reply first: cancel() fires end/error on the
+      // current utterance, and with a live token that would queue the next one.
+      tokenRef.current += 1;
       try {
         window.speechSynthesis.cancel();
       } catch {

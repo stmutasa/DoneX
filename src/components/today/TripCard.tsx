@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { fetcher, tripsApi } from "@/lib/api";
 import type { Trip } from "@/lib/trips";
 import { offsetGapHours, tripNights } from "@/lib/trips";
-import { dueLabel } from "@/lib/format";
+import { dueLabel, keyToDate } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 
@@ -14,11 +14,19 @@ interface Payload {
   active: Trip | null;
   upcoming: Trip | null;
   upcomingPacking: string[];
+  /** home's UTC offset right now, from the account's time zone */
+  homeOffsetMinutes?: number | null;
 }
 
-/** Minutes the browser is currently offset from UTC, as a home baseline. */
-function homeOffsetMinutes(): number {
+/** Minutes the browser is currently offset from UTC. Only a fallback for home:
+ *  a phone set to update its clock takes the destination's zone with it. */
+function deviceOffsetMinutes(): number {
   return -new Date().getTimezoneOffset();
+}
+
+/** "Tomorrow 8:00 AM", or just the day when the trip ends on an all-day booking. */
+function whenLabel(iso: string, day: string | undefined): string {
+  return day ? dueLabel(keyToDate(day).toISOString(), true) : dueLabel(iso, false);
 }
 
 /**
@@ -36,15 +44,19 @@ export function TripCard() {
   if (!trip) return null;
   const away = !!data?.active;
 
-  const gap =
-    trip.offsetMinutes !== null ? offsetGapHours(homeOffsetMinutes(), trip.offsetMinutes) : 0;
+  const home = data?.homeOffsetMinutes ?? deviceOffsetMinutes();
+  const gap = trip.offsetMinutes !== null ? offsetGapHours(home, trip.offsetMinutes) : 0;
 
   const makeList = async () => {
     setMaking(true);
     try {
-      const res = await tripsApi.packing();
+      const res = await tripsApi.packing(trip.start);
       setMadeId(res.noteId);
-      toast.success(res.added > 0 ? `Packing list ready — ${res.added} items` : "Already on your list");
+      toast.success(
+        res.added > 0
+          ? `Packing list for ${trip.destination} ready — ${res.added} items`
+          : `The ${trip.destination} list is already up to date`,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not build that list");
     } finally {
@@ -60,7 +72,7 @@ export function TripCard() {
         </span>
         <span className="text-[12.5px] text-muted">
           {away
-            ? `home ${dueLabel(trip.end, false)}`
+            ? `home ${whenLabel(trip.end, trip.endDay)}`
             : `${tripNights(trip)} ${tripNights(trip) === 1 ? "day" : "days"}`}
         </span>
       </div>
@@ -74,7 +86,7 @@ export function TripCard() {
 
       {!away ? (
         <p className="mt-1 text-[12.5px] text-muted">
-          Leaving {dueLabel(trip.start, false)}.
+          Leaving {whenLabel(trip.start, trip.startDay)}.
         </p>
       ) : null}
 

@@ -42,7 +42,9 @@ export function TaskItem({
   const [popping, setPopping] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => setDone(task.status === "done"), [task.status]);
+  // A repeating task stays "open" when completed and only its date and
+  // updatedAt move, so resync on those too.
+  useEffect(() => setDone(task.status === "done"), [task.status, task.dueAt, task.updatedAt]);
 
   const subtasks = task.subtasks ?? [];
   const doneSubs = subtasks.filter((s) => s.status === "done").length;
@@ -50,7 +52,7 @@ export function TaskItem({
   const isDeadline = task.dueKind === "by" && !!task.dueAt;
   const label = task.dueAt
     ? isDeadline && !overdue
-      ? deadlineChip(task.dueAt)
+      ? deadlineChip(task.dueAt, task.allDay)
       : dueLabel(task.dueAt, task.allDay)
     : "";
   const priority = done
@@ -81,7 +83,11 @@ export function TaskItem({
       setPopping(true);
       window.setTimeout(() => setPopping(false), 340);
     }
-    const ok = await complete(task, next);
+    const ok = await complete(task, next, (res) => {
+      // A repeat moves on to its next date and stays to do, and a refused
+      // tick leaves the task as it was: either way show the server's status.
+      if (res.recurred || !res.changed) setDone(res.task.status === "done");
+    });
     if (!ok) setDone(!next);
     setBusy(false);
   };

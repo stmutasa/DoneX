@@ -34,11 +34,24 @@ export function recallModel(provider: AIProviderKind, ai: AISettings): string {
  * equal to the active one — which does nothing at all, because failover
  * skips a standby that is already the thing that just failed.
  */
-export function resolveAiPatch(current: AISettings, patch: AiPatch): AiPatch {
+export function resolveAiPatch(current: AISettings, requested: AiPatch): AiPatch {
+  // Custom keeps its model in two fields: the Model id box writes customModel,
+  // the picker and Save write model. Whichever one moves, the other follows —
+  // otherwise the stale one is later written back over the new.
+  const patch: AiPatch =
+    (requested.provider ?? current.provider) === "custom" &&
+    requested.customModel !== undefined &&
+    requested.model === undefined
+      ? { ...requested, model: requested.customModel }
+      : requested;
   const next: AiPatch = { ...patch };
 
   if (patch.provider !== undefined && patch.provider !== current.provider) {
-    Object.assign(next, rememberModel(current.provider, current.model));
+    // Park what was really in use. For custom that is customModel when set,
+    // which an older version could leave out of step with model.
+    const outgoing =
+      current.provider === "custom" ? current.customModel || current.model : current.model;
+    Object.assign(next, rememberModel(current.provider, outgoing));
     // A model named in the same breath as the provider is a deliberate choice
     // and outranks whatever that provider was last set to.
     const chosen = patch.model !== undefined ? patch.model : recallModel(patch.provider, current);
@@ -49,15 +62,13 @@ export function resolveAiPatch(current: AISettings, patch: AiPatch): AiPatch {
   }
 
   // The backup's model belongs to the backup's provider, so changing that
-  // provider without naming a new model drops back to "newest available"
-  // rather than asking the new one for a model it has never heard of.
-  if (
-    patch.fallbackProvider !== undefined &&
-    patch.fallbackProvider !== current.fallbackProvider &&
-    patch.fallbackModelPinned === undefined
-  ) {
-    next.fallbackModelPinned = "";
-    next.fallbackModel = "";
+  // provider never carries the old one's model across: the resolved model is
+  // reset to the pin named with the change, and with no pin named (or an
+  // empty one, which is what Settings sends for auto) back to "newest
+  // available" rather than asking the new one for a model it has never heard of.
+  if (patch.fallbackProvider !== undefined && patch.fallbackProvider !== current.fallbackProvider) {
+    if (patch.fallbackModelPinned === undefined) next.fallbackModelPinned = "";
+    next.fallbackModel = (next.fallbackModelPinned ?? "").trim();
   }
 
   const provider = next.provider ?? current.provider;
