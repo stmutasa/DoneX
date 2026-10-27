@@ -46,7 +46,7 @@ export const KEY_ENV: Record<AIProviderKind, string> = {
   custom: "CUSTOM_AI_API_KEY",
 };
 
-/** A key saved in the app by an older version — honoured only until Railway has one. */
+/** A key saved in the app by an older version. Never used; only reported, so it can be deleted. */
 function storedKey(kind: AIProviderKind, ai: AISettings): string {
   if (kind === "openai") return ai.openaiKey.trim();
   if (kind === "anthropic") return ai.anthropicKey.trim();
@@ -54,16 +54,15 @@ function storedKey(kind: AIProviderKind, ai: AISettings): string {
   return "";
 }
 
-/** Where a provider's key comes from: Railway first, then an older stored copy. */
+/** A provider's key comes from its Railway variable and nowhere else. */
 export function keyFor(
   kind: AIProviderKind,
   ai: AISettings = settingsRepo.getApp().ai,
-): { key: string; source: "env" | "stored" | "none"; storedCopy: boolean } {
+): { key: string; source: "env" | "none"; storedCopy: boolean } {
   const env = (process.env[KEY_ENV[kind]] ?? "").trim();
-  const stored = storedKey(kind, ai);
-  if (env) return { key: env, source: "env", storedCopy: !!stored };
-  if (stored) return { key: stored, source: "stored", storedCopy: true };
-  return { key: "", source: "none", storedCopy: false };
+  const storedCopy = !!storedKey(kind, ai);
+  if (env) return { key: env, source: "env", storedCopy };
+  return { key: "", source: "none", storedCopy };
 }
 
 /** Resolve wire config for a provider; defaults to the active provider. */

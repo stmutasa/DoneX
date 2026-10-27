@@ -27,8 +27,8 @@ describe("keyFor — keys come from Railway", () => {
     });
   });
 
-  it("keeps an older stored key working until Railway has one, so nothing breaks on upgrade", () => {
-    expect(keyFor("openai", ai({ openaiKey: "sk-old" }))).toEqual({ key: "sk-old", source: "stored", storedCopy: true });
+  it("never uses a key stored in the app, but still reports it so it can be deleted", () => {
+    expect(keyFor("openai", ai({ openaiKey: "sk-old" }))).toEqual({ key: "", source: "none", storedCopy: true });
   });
 
   it("says plainly when there is none", () => {

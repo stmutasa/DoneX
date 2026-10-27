@@ -240,14 +240,10 @@ export function AiSection({ settings, mutate }: SectionProps) {
           <span
             className={cn(
               "text-[12px] font-medium",
-              secretMark.source === "env" ? "text-ok" : secretMark.source === "stored" ? "text-warn" : "text-danger",
+              secretMark.source === "env" ? "text-ok" : "text-danger",
             )}
           >
-            {secretMark.source === "env"
-              ? "Set in Railway"
-              : secretMark.source === "stored"
-                ? "Stored in the app"
-                : "Not set"}
+            {secretMark.source === "env" ? "Set in Railway" : "Not set"}
           </span>
         </div>
         <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
@@ -255,13 +251,6 @@ export function AiSection({ settings, mutate }: SectionProps) {
             <>
               Read from <code className="font-mono text-[12px] text-ink">{envVar}</code> (ending{" "}
               {secretMark.last4}). To change it, edit that variable in Railway.
-            </>
-          ) : secretMark.source === "stored" ? (
-            <>
-              Still using a key saved here by an earlier version. Move it to Railway: in your DoneX
-              service open <span className="text-ink">Variables</span>, add{" "}
-              <code className="font-mono text-[12px] text-ink">{envVar}</code>, and let it redeploy —
-              then delete the copy below.
             </>
           ) : (
             <>

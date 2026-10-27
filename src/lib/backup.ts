@@ -13,7 +13,7 @@ import path from "path";
 import zlib from "zlib";
 import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
-import { alignSubtaskSpaces, getDb } from "@/lib/db";
+import { alignSubtaskSpaces, dropStoredKeys, getDb } from "@/lib/db";
 import { settingsRepo, tableColumns } from "@/lib/db/repos";
 import { localDateKey, nowIso } from "@/lib/utils";
 
@@ -321,6 +321,7 @@ export function restoreSnapshot(name: string, includeSettings: boolean): Restore
     // An older snapshot can carry subtasks filed on a different list from
     // their parent; put each back on its parent's.
     alignSubtaskSpaces(db);
+    dropStoredKeys(db);
   });
   try {
     run();

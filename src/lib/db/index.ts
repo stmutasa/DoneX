@@ -219,6 +219,29 @@ function migrate(db: Database.Database): void {
   if (db.prepare("SELECT 1 FROM tasks WHERE parent_id = '' LIMIT 1").get()) {
     db.exec("UPDATE tasks SET parent_id = NULL WHERE parent_id = ''");
   }
+  dropStoredKeys(db);
+}
+
+/**
+ * Wipe API keys an older version saved in the app's settings. Keys come only
+ * from Railway's variables now, so a stored copy is dead weight that would
+ * otherwise ride along in every backup. Restores call it too, since an older
+ * snapshot can carry one back in.
+ */
+export function dropStoredKeys(db: Database.Database = getDb()): void {
+  const stored = db
+    .prepare(
+      `SELECT 1 FROM settings WHERE key = 'app' AND json_valid(value) AND (
+         COALESCE(json_extract(value, '$.ai.openaiKey'), '') <> '' OR
+         COALESCE(json_extract(value, '$.ai.anthropicKey'), '') <> '' OR
+         COALESCE(json_extract(value, '$.ai.customKey'), '') <> '')`,
+    )
+    .get();
+  if (!stored) return;
+  db.exec(
+    `UPDATE settings SET value = json_set(value, '$.ai.openaiKey', '', '$.ai.anthropicKey', '', '$.ai.customKey', '')
+     WHERE key = 'app' AND json_valid(value)`,
+  );
 }
 
 /**

@@ -421,7 +421,7 @@ export interface SecretMark {
   last4: string;
   /** where the key in use comes from: Railway's environment, an older copy in
    *  the app, or nowhere */
-  source?: "env" | "stored" | "none";
+  source?: "env" | "none";
   /** the environment variable that supplies it */
   envVar?: string;
   /** a copy saved in the app exists (in use only when the variable isn't set) */
